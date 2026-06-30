@@ -76,7 +76,19 @@ docker compose down
   "id": "uuid",
   "filename": "document.pdf",
   "size": 12345,
-  "status": "received"
+  "status": "received",
+  "sha256": "64-character lowercase hex digest",
+  "detected_mime_type": "application/pdf",
+  "original_artifact": {
+    "id": "artifact uuid",
+    "document_id": "uuid",
+    "kind": "original",
+    "storage_filename": "uuid.pdf",
+    "sha256": "64-character lowercase hex digest",
+    "mime_type": "application/pdf",
+    "size_bytes": 12345,
+    "created_at": "2026-06-30T18:00:00Z"
+  }
 }
 ```
 

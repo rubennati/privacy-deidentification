@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,10 @@ def test_list_documents_returns_uploaded_documents(client: TestClient) -> None:
     assert body[0]["filename"] == "report.pdf"
     assert body[0]["size"] == len(_PDF_BYTES)
     assert body[0]["content_type"] == "application/pdf"
+    assert body[0]["sha256"] == hashlib.sha256(_PDF_BYTES).hexdigest()
+    assert body[0]["detected_mime_type"] == "application/pdf"
+    assert body[0]["original_artifact"]["document_id"] == document_id
+    assert body[0]["original_artifact"]["kind"] == "original"
     assert body[0]["status"] == "received"
     assert body[0]["uploaded_at"]
 
