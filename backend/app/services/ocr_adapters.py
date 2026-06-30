@@ -35,7 +35,8 @@ class OcrUnavailableError(ApiError):
 class PaddleOcrAdapter:
     """CPU-only PaddleOCR adapter; imports and model initialization are lazy."""
 
-    def __init__(self) -> None:
+    def __init__(self, model_dir: Path | None) -> None:
+        self._model_dir = model_dir
         self._engine: _PaddleEngine | None = None
         self._lock = Lock()
 
@@ -58,11 +59,14 @@ class PaddleOcrAdapter:
         with self._lock:
             if self._engine is not None:
                 return self._engine
+            detection_model_dir, recognition_model_dir = self._local_model_directories()
             try:
                 module = import_module("paddleocr")
                 paddle_ocr = module.PaddleOCR
                 engine = paddle_ocr(
                     device="cpu",
+                    text_detection_model_dir=str(detection_model_dir),
+                    text_recognition_model_dir=str(recognition_model_dir),
                     use_doc_orientation_classify=False,
                     use_doc_unwarping=False,
                     use_textline_orientation=False,
@@ -72,11 +76,20 @@ class PaddleOcrAdapter:
             self._engine = cast(_PaddleEngine, engine)
             return self._engine
 
+    def _local_model_directories(self) -> tuple[Path, Path]:
+        if self._model_dir is None:
+            raise OcrUnavailableError
+        detection_model_dir = self._model_dir / "text_detection"
+        recognition_model_dir = self._model_dir / "text_recognition"
+        if not detection_model_dir.is_dir() or not recognition_model_dir.is_dir():
+            raise OcrUnavailableError
+        return detection_model_dir, recognition_model_dir
+
 
 @lru_cache
-def get_ocr_adapter() -> OcrAdapter:
-    """Provide one lazily initialized adapter instance to FastAPI."""
-    return PaddleOcrAdapter()
+def get_ocr_adapter(model_dir: str | None = None) -> OcrAdapter:
+    """Provide one lazy adapter per configured local model root."""
+    return PaddleOcrAdapter(Path(model_dir) if model_dir is not None else None)
 
 
 def _extract_recognized_texts(results: object) -> list[str]:

@@ -110,17 +110,46 @@ PDF text layers and DOCX body text are extracted without PaddleOCR. Image docume
 pages without a text layer require the optional PaddleOCR/PaddlePaddle runtime:
 
 ```bash
-INSTALL_OCR=true docker compose up -d --build
+INSTALL_OCR=true docker compose build backend
 ```
 
 The regular image deliberately omits those heavy packages and returns `503` only when a request
 actually needs PaddleOCR. Imports and model initialization are lazy, so startup and all quality
 gates remain model-free. Poppler is installed in the backend runtime for the encapsulated
-`pdf2image` PDF-page renderer. PaddlePaddle's published platform wheels determine which CPU
-architectures can build the optional image; on ARM hosts an amd64 container/emulation may be
-required. PaddleOCR can fetch model assets during its first real initialization; production
-deployments should pre-provision and cache the approved model assets instead of relying on an
-outbound runtime download.
+`pdf2image` PDF-page renderer. Rendered pages use the container's `/tmp` tmpfs and are never
+written to the persistent upload volume.
+
+Installing the optional packages is not sufficient to enable OCR. Approved model files must be
+prepared separately, made available inside the container, and selected with `OCR_MODEL_DIR`.
+The directory must contain both model directories:
+
+```text
+/models/ocr/
+├── text_detection/
+└── text_recognition/
+```
+
+The adapter passes both local paths to PaddleOCR and returns `503` before importing PaddleOCR if
+the configuration or directories are missing. It never intentionally falls back to downloading
+models. A deployment can bake those directories into a dedicated OCR runtime image or mount them
+read-only through a Compose override. PaddlePaddle's published platform wheels determine which
+CPU architectures can build the optional image; on ARM hosts an amd64 container/emulation may be
+required.
+
+With compatible, locally provisioned models under `./models/ocr`, the optional runtime can be
+built and smoke-tested without a test-suite model download:
+
+```bash
+INSTALL_OCR=true docker compose build backend
+
+docker compose run --rm --no-deps \
+  -e OCR_MODEL_DIR=/models/ocr \
+  -v "$PWD/models/ocr:/models/ocr:ro" \
+  backend python -c "from pathlib import Path; from PIL import Image, ImageDraw, ImageFont; from app.services.ocr_adapters import PaddleOcrAdapter; p=Path('/tmp/ocr-smoke.png'); image=Image.new('RGB', (320, 80), 'white'); font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 32); ImageDraw.Draw(image).text((10, 20), 'OCR smoke', fill='black', font=font); image.save(p); text=PaddleOcrAdapter(Path('/models/ocr')).extract_text(p); print(text); assert text.strip(), 'OCR returned no text'"
+```
+
+This smoke test is deliberately separate from `make test`: it requires platform-compatible
+PaddlePaddle wheels, sufficient RAM, and explicitly provisioned model files.
 
 ## Configuration
 
@@ -131,6 +160,7 @@ See [`.env.example`](.env.example) for available settings, including:
 * upload size limit
 * allowed file extensions
 * upload directory
+* optional local OCR model directory
 * log level
 
 ## Development and quality

@@ -35,4 +35,7 @@ which executes these inside the backend container.
 
 PaddleOCR and PaddlePaddle are an optional `ocr` dependency extra. Docker Compose builds without
 it by default; set `INSTALL_OCR=true` when image/scanned-page OCR is required. Text-only PDFs and
-DOCX extraction do not initialize or require PaddleOCR.
+DOCX extraction do not initialize or require PaddleOCR. Real OCR additionally requires an
+`OCR_MODEL_DIR` with local `text_detection/` and `text_recognition/` directories; missing or
+uninitializable models return `503` without an intentional download fallback. See the root README
+for the read-only model-volume layout and smoke-test command.

@@ -21,6 +21,10 @@ engine, or a direct dependency from routing code to a heavyweight OCR implementa
   as a single OCR page. Join ordered page text with two newlines.
 - Keep PaddleOCR behind an `OcrAdapter`, with lazy import and initialization. Package PaddleOCR
   and PaddlePaddle in an optional `ocr` dependency extra so ordinary quality gates load no models.
+- Require explicitly provisioned local detection and recognition model directories. Do not fall
+  back to runtime model downloads when model configuration is absent or invalid.
+- Render OCR input pages only under the container's ephemeral `/tmp` tmpfs, never under the
+  persistent upload volume.
 - Return `503` when a route needs PaddleOCR but the optional runtime cannot initialize. Treat
   rendering and document-processing failures as `422`, and stale/missing station inputs as `409`.
 
@@ -29,7 +33,7 @@ engine, or a direct dependency from routing code to a heavyweight OCR implementa
 - Mixed PDFs preserve page order while using OCR only where the audit requires it.
 - Tests replace both OCR and rendering boundaries and need neither models, Poppler, nor network.
 - The default backend image supports direct PDF/DOCX extraction but requires
-  `INSTALL_OCR=true` for image or scanned-page OCR. PaddlePaddle wheel availability remains a
-  platform constraint.
+  `INSTALL_OCR=true` plus a configured local model directory for image or scanned-page OCR.
+  PaddlePaddle wheel availability and runtime memory remain platform constraints.
 - Processing stays request-bound in v1; very large documents may eventually motivate a separate,
   explicitly approved asynchronous execution step.

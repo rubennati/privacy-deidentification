@@ -30,6 +30,8 @@ from app.services.ocr_adapters import OcrAdapter
 from app.services.original_artifact_service import get_verified_original
 from app.services.pdf_renderer import PdfRenderer
 
+_OCR_WORKSPACE_ROOT = Path("/tmp")
+
 
 class OcrConflictError(ApiError):
     """Raised when station inputs are absent or do not describe the current original."""
@@ -68,9 +70,7 @@ def create_text_artifact(
     if audit.content.detected_mime_type != original.mime_type:
         raise OcrConflictError("Audit result MIME type does not match the current original.")
 
-    content = _extract_text(
-        document_id, original, original_path, audit, ocr_adapter, pdf_renderer, settings
-    )
+    content = _extract_text(document_id, original, original_path, audit, ocr_adapter, pdf_renderer)
     artifact = TextArtifact(
         id=uuid4().hex,
         document_id=document_id,
@@ -100,7 +100,6 @@ def _extract_text(
     audit: AuditArtifact,
     ocr_adapter: OcrAdapter,
     pdf_renderer: PdfRenderer,
-    settings: Settings,
 ) -> TextContent:
     try:
         if audit.content.document_kind == "pdf":
@@ -111,7 +110,6 @@ def _extract_text(
                 audit,
                 ocr_adapter,
                 pdf_renderer,
-                settings,
             )
         if audit.content.document_kind == "docx":
             return _extract_docx(document_id, original, original_path, audit)
@@ -131,7 +129,6 @@ def _extract_pdf(
     audit: AuditArtifact,
     ocr_adapter: OcrAdapter,
     pdf_renderer: PdfRenderer,
-    settings: Settings,
 ) -> TextContent:
     reader = PdfReader(original_path)
     audit_pages = audit.content.pages
@@ -139,7 +136,7 @@ def _extract_pdf(
         raise OcrConflictError("PDF audit page list is inconsistent with the original.")
 
     pages: list[TextPageResult] = []
-    with TemporaryDirectory(prefix=".ocr-", dir=settings.upload_dir) as temporary_directory:
+    with TemporaryDirectory(prefix="ocr-", dir=_OCR_WORKSPACE_ROOT) as temporary_directory:
         output_dir = Path(temporary_directory)
         for page_number, (page, audit_page) in enumerate(
             zip(reader.pages, audit_pages, strict=True), start=1

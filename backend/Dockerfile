@@ -43,6 +43,7 @@ RUN apt-get update \
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:${PATH}" \
+    HOME=/tmp \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 

@@ -13,6 +13,12 @@ from app.services.pdf_renderer import PdfRenderer, get_pdf_renderer
 router = APIRouter(prefix="/documents", tags=["ocr"])
 
 
+def provide_ocr_adapter(settings: Settings = Depends(get_settings)) -> OcrAdapter:
+    """Bind the runtime's explicitly configured local model directory to the adapter."""
+    model_dir = str(settings.ocr_model_dir) if settings.ocr_model_dir is not None else None
+    return get_ocr_adapter(model_dir)
+
+
 @router.post(
     "/{document_id}/ocr",
     response_model=TextArtifact,
@@ -27,7 +33,7 @@ router = APIRouter(prefix="/documents", tags=["ocr"])
 def ocr_document(
     document_id: str,
     settings: Settings = Depends(get_settings),
-    ocr_adapter: OcrAdapter = Depends(get_ocr_adapter),
+    ocr_adapter: OcrAdapter = Depends(provide_ocr_adapter),
     pdf_renderer: PdfRenderer = Depends(get_pdf_renderer),
 ) -> TextArtifact:
     """Extract text according to the latest audit and persist an immutable result."""

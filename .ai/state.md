@@ -21,6 +21,8 @@
   PaddleOCR adapter, extracts DOCX body paragraphs directly, and stores immutable text artifacts.
 - PDF rendering is isolated behind a pdf2image/Poppler adapter; PaddleOCR/PaddlePaddle are an
   optional image build extra so standard quality gates remain model-free.
+- OCR render workspaces live only on `/tmp` tmpfs. PaddleOCR requires explicitly provisioned local
+  detection/recognition models and never intentionally downloads models as a fallback.
 - `GET /api/config` exposes the effective limits so the frontend mirrors the backend.
 - Security headers owned by nginx; backend emits structured JSON request logs with a
   correlation id (surfaced to users on errors).

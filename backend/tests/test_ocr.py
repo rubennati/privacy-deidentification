@@ -15,9 +15,10 @@ from PIL import Image
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
+from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
 from app.main import app
-from app.services.ocr_adapters import OcrUnavailableError, get_ocr_adapter
+from app.services.ocr_adapters import OcrUnavailableError
 from app.services.pdf_renderer import get_pdf_renderer
 
 
@@ -40,10 +41,12 @@ class FakeOcrAdapter:
 class FakePdfRenderer:
     def __init__(self) -> None:
         self.calls: list[int] = []
+        self.output_directories: list[Path] = []
         self.fail = False
 
     def render_page(self, pdf_path: Path, page_number: int, output_dir: Path) -> Path:
         self.calls.append(page_number)
+        self.output_directories.append(output_dir)
         if self.fail:
             raise RuntimeError("simulated rendering failure")
         rendered = output_dir / f"page-{page_number}.png"
@@ -60,7 +63,7 @@ def _allow_larger_ocr_fixtures(settings: Settings) -> None:
 def ocr_fakes(client: TestClient) -> Iterator[tuple[FakeOcrAdapter, FakePdfRenderer]]:
     adapter = FakeOcrAdapter()
     renderer = FakePdfRenderer()
-    app.dependency_overrides[get_ocr_adapter] = lambda: adapter
+    app.dependency_overrides[provide_ocr_adapter] = lambda: adapter
     app.dependency_overrides[get_pdf_renderer] = lambda: renderer
     yield adapter, renderer
 
@@ -166,6 +169,7 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
 
 def test_mixed_pdf_routes_each_page_and_preserves_order(
     client: TestClient,
+    upload_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     adapter, renderer = ocr_fakes
@@ -190,6 +194,11 @@ def test_mixed_pdf_routes_each_page_and_preserves_order(
     ]
     assert renderer.calls == [2, 3]
     assert [path.name for path in adapter.calls] == ["page-2.png", "page-3.png"]
+    assert all(path.parent == Path("/tmp") for path in renderer.output_directories)
+    assert all(upload_dir not in path.parents for path in adapter.calls)
+    assert all(not path.exists() for path in adapter.calls)
+    artifact_directory = upload_dir / "artifacts" / str(upload["id"])
+    assert all(path.suffix == ".json" for path in artifact_directory.rglob("*"))
 
 
 def test_docx_extracts_paragraphs_without_ocr(
