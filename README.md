@@ -2,7 +2,7 @@
 
 A Docker-first application foundation for privacy-focused document preparation and de-identification workflows.
 
-Users can upload documents through a web interface. The backend validates the upload, stores the file safely in a Docker volume, and exposes health checks for local operation and development.
+Users can upload documents through a web interface. The backend validates the upload, stores the file safely under `./volumes/uploads` on the host, and exposes health checks for local operation and development.
 
 > **Step 1:** This version provides the application foundation and upload flow. Document processing, extraction, review, de-identification and redaction will be added in later steps through dedicated tool integrations.
 
@@ -12,14 +12,14 @@ Users can upload documents through a web interface. The backend validates the up
 Browser ──http://localhost:8080──▶ frontend (nginx)
                                      ├─ /       → React/Vite SPA
                                      └─ /api/*  → reverse proxy ─▶ backend (FastAPI :8000)
-                                                                    └─ stores uploads in the
-                                                                       "uploads" Docker volume
+                                                                    └─ stores uploads under
+                                                                       ./volumes/uploads
 ```
 
 * **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. The frontend is the only public entry point and proxies API calls to the backend.
-* **backend** — Python 3.12 + FastAPI. Validates and accepts uploads, exposes health checks and writes accepted files to the upload volume.
+* **backend** — Python 3.12 + FastAPI. Validates and accepts uploads, exposes health checks and writes accepted files to the upload directory.
 * **networking** — the backend is not published to the host. It is reachable only inside the Docker Compose network through the frontend proxy.
-* **runtime data** — uploaded files are stored in a Docker volume, not in the repository.
+* **runtime data** — uploaded files are bind-mounted from the container's `/data/uploads` to `./volumes/uploads` on the host, not committed to the repository (see `.gitignore`).
 
 See [`docs/adr/0001-stack-and-architecture.md`](docs/adr/0001-stack-and-architecture.md) for the stack decision and rationale.
 

@@ -11,7 +11,7 @@ services:
       UPLOAD_DIR: /data/uploads
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      - uploads:/data/uploads
+      - ./volumes/uploads:/data/uploads
     networks:
       - internal
     read_only: true
@@ -67,6 +67,3 @@ services:
 networks:
   internal:
     driver: bridge
-
-volumes:
-  uploads:

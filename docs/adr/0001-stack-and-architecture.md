@@ -7,9 +7,7 @@ Accepted — 2026-06-30
 ## Context
 
 We are starting a document de-identification pilot. Step 1 needs a Docker-first foundation
-and a fully working upload page (Screenshot 1). The product must look modern (matching the
-reference screenshots), grow into richer interactive views (document list, side-by-side
-extracted/anonymized text), and align with the project's code standards (type safety,
+and a fully working upload page. The product must look modern, grow into richer interactive views (document list, side-by-side extracted/anonymized text), and align with the project's code standards (type safety,
 linting, tests, container hardening). The de-identification domain (text extraction, PII
 detection) is Python-centric.
 
@@ -22,8 +20,9 @@ detection) is Python-centric.
 - **Topology:** Two containers via Docker Compose. `frontend` (nginx) serves the built SPA
   and reverse-proxies `/api/*` to `backend` (FastAPI). Single external entry point at
   `http://localhost:8080`; the backend port is not published to the host (least exposure).
-- **Storage (Step 1):** uploaded files are written to a Docker volume behind a service
-  layer. No database yet.
+- **Storage (Step 1):** uploaded files are written to a host-mounted directory
+  (`./volumes/uploads`, bind-mounted into the backend container at `/data/uploads`) behind a
+  service layer. No database yet.
 
 ## Consequences
 
@@ -31,11 +30,3 @@ detection) is Python-centric.
   minimal external attack surface; a structure that scales to later steps.
 - Negative: two build toolchains (Node + Python) and a multi-stage frontend build add some
   complexity compared to a single server-rendered service.
-
-## Alternatives
-
-- **Server-rendered FastAPI + Jinja2 + minimal JS:** fewer moving parts, but harder to match
-  the SPA look and more effort for the rich interactive Screens 2 & 3. Rejected.
-- **Next.js full-stack:** capable, but pulls the de-identification logic toward Node; we
-  want that logic in Python. Rejected for the backend; React/Vite gives the SPA without that
-  coupling.
