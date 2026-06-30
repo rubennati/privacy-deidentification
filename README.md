@@ -1,45 +1,46 @@
-# privacy-deidentification-pilot
+# Privacy De-Identification
 
-A pilot for a document **de-identification pipeline**. Users upload documents
-(PDF / DOCX / PNG / JPG); the system will extract text, detect sensitive data (PII), and
-return an anonymized version. GDPR-focused ("DSGVO-konform").
+A Docker-first application foundation for privacy-focused document preparation and de-identification workflows.
 
-> **Step 1 (this version):** the Docker-first foundation plus a fully working **upload
-> page**. Upload via click, drag & drop, or paste (Ctrl+V); the backend validates the file
-> (type + size) and stores it. The de-identification pipeline and the document/result views
-> come in later steps.
+Users can upload documents through a web interface. The backend validates the upload, stores the file safely in a Docker volume, and exposes health checks for local operation and development.
+
+> **Step 1:** This version provides the application foundation and upload flow. Document processing, extraction, review, de-identification and redaction will be added in later steps through dedicated tool integrations.
 
 ## Architecture
 
-```
-Browser ──http://localhost:8080──▶  frontend (nginx)
-                                      ├─ /          → React/Vite SPA (static)
-                                      └─ /api/*      → reverse-proxy ─▶ backend (FastAPI :8000)
-                                                                          └─ stores uploads in the
-                                                                             "uploads" Docker volume
+```text
+Browser ──http://localhost:8080──▶ frontend (nginx)
+                                     ├─ /       → React/Vite SPA
+                                     └─ /api/*  → reverse proxy ─▶ backend (FastAPI :8000)
+                                                                    └─ stores uploads in the
+                                                                       "uploads" Docker volume
 ```
 
-- **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. Adds security
-  headers and proxies API calls so the app has a single origin.
-- **backend** — Python 3.12 + FastAPI. Validates and accepts uploads; exposes health checks.
-  Not published to the host — reachable only on the internal Docker network.
+* **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. The frontend is the only public entry point and proxies API calls to the backend.
+* **backend** — Python 3.12 + FastAPI. Validates and accepts uploads, exposes health checks and writes accepted files to the upload volume.
+* **networking** — the backend is not published to the host. It is reachable only inside the Docker Compose network through the frontend proxy.
+* **runtime data** — uploaded files are stored in a Docker volume, not in the repository.
 
-See [`docs/adr/0001-stack-and-architecture.md`](docs/adr/0001-stack-and-architecture.md) for
-the rationale.
+See [`docs/adr/0001-stack-and-architecture.md`](docs/adr/0001-stack-and-architecture.md) for the stack decision and rationale.
 
 ## Requirements
 
-- Docker Engine with the Compose plugin (`docker compose`). Nothing else is installed on the
-  host — all tooling runs in containers.
+* Docker Engine with the Compose plugin (`docker compose`)
+
+No local Python or Node.js installation is required for normal development commands. Tooling runs in containers.
 
 ## Quick start
 
 ```bash
-cp .env.example .env        # optional; sensible defaults are built in
+cp .env.example .env        # optional; defaults are built in
 docker compose up -d --build
 ```
 
-Then open <http://localhost:8080> and upload a document.
+Open:
+
+```text
+http://localhost:8080
+```
 
 Stop the stack:
 
@@ -49,37 +50,76 @@ docker compose down
 
 ## API
 
-| Method | Path                 | Description                                         |
-| ------ | -------------------- | --------------------------------------------------- |
-| GET    | `/api/health/live`   | Liveness — the process is running.                  |
-| GET    | `/api/health/ready`  | Readiness — the upload directory is writable.       |
-| POST   | `/api/uploads`       | Upload one document (`multipart/form-data`, `file`).|
+| Method | Path                | Description                                                |
+| ------ | ------------------- | ---------------------------------------------------------- |
+| GET    | `/api/health/live`  | Liveness check                                             |
+| GET    | `/api/health/ready` | Readiness check, including upload directory access         |
+| POST   | `/api/uploads`      | Upload one document via `multipart/form-data` field `file` |
 
-`POST /api/uploads` returns `201` with `{ id, filename, size, status }`. Invalid uploads
-return a clean error (`415` wrong type, `413` too large, `400` empty/missing) with a
-correlation id — never a stack trace.
+`POST /api/uploads` returns `201` with:
+
+```json
+{
+  "id": "uuid",
+  "filename": "document.pdf",
+  "size": 12345,
+  "status": "received"
+}
+```
+
+Invalid uploads return clean JSON errors with a correlation ID:
+
+* `400` for missing or empty uploads
+* `413` for files exceeding the configured size limit
+* `415` for unsupported file types
+
+Stack traces are not exposed to clients.
 
 ## Configuration
 
-All configuration is via environment variables (12-factor). See
-[`.env.example`](.env.example) for the full list (upload size limit, allowed extensions,
-upload directory, log level).
+Configuration is handled through environment variables.
 
-## Development & quality
+See [`.env.example`](.env.example) for available settings, including:
 
-Everything runs in containers via the `Makefile`:
+* upload size limit
+* allowed file extensions
+* upload directory
+* log level
+
+## Development and quality
+
+Common commands are available through the `Makefile`:
 
 ```bash
-make lint        # Ruff (Python) + ESLint (TypeScript)
-make typecheck   # mypy (Python) + tsc (TypeScript)
-make test        # pytest (backend)
-make build       # build both images
-make up / down   # start / stop the stack
+make lint        # Ruff and ESLint
+make typecheck   # mypy and TypeScript
+make test        # backend tests
+make build       # build Docker images
+make up          # start the stack
+make down        # stop the stack
+```
+
+## Repository structure
+
+```text
+.
+├─ .ai/                  # AI collaboration workspace
+├─ backend/              # FastAPI backend
+├─ frontend/             # React/Vite frontend served by nginx
+├─ docs/adr/             # Architecture decision records
+├─ docker-compose.yml
+├─ Makefile
+├─ AGENTS.md             # Source of truth for AI-assisted development
+└─ CLAUDE.md             # Pointer to AGENTS.md and .ai/
 ```
 
 ## Project conventions
 
-This repo adopts the AI-collaboration parts of
-[ai-project-standard](https://github.com/rubennati/ai-project-standard): the `.ai/`
-operational workspace, `AGENTS.md` (source of truth for AI tools) with `CLAUDE.md` as a
-pointer, and shared quality commands. See `AGENTS.md` for the workflow and approval rules.
+This repository adopts the AI-collaboration parts of [`ai-project-standard`](https://github.com/rubennati/ai-project-standard):
+
+* `.ai/` workspace for project state, decisions and task tracking
+* `AGENTS.md` as the source of truth for AI-assisted development
+* `CLAUDE.md` as a thin pointer to the project rules
+* shared quality commands through the `Makefile`
+
+See [`AGENTS.md`](AGENTS.md) for workflow, approval and quality rules.
