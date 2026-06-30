@@ -1,13 +1,27 @@
 // Client-side upload validation. This is a UX convenience only — the backend is the
-// authoritative trust boundary and re-validates every upload.
+// authoritative trust boundary and re-validates every upload. Constraints default to the
+// backend defaults but can be overridden at runtime from GET /api/config (see api/config.ts).
 
-export const ALLOWED_EXTENSIONS = ["pdf", "docx", "png", "jpg", "jpeg"] as const;
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MiB; mirrors the backend default.
+export const DEFAULT_ALLOWED_EXTENSIONS = ["pdf", "docx", "png", "jpg", "jpeg"];
+export const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MiB; mirrors the backend default.
 
-export const ACCEPT_ATTRIBUTE = ".pdf,.docx,.png,.jpg,.jpeg";
+export interface UploadConstraints {
+  allowedExtensions: string[];
+  maxUploadBytes: number;
+}
+
+export const DEFAULT_CONSTRAINTS: UploadConstraints = {
+  allowedExtensions: DEFAULT_ALLOWED_EXTENSIONS,
+  maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
+};
 
 export interface ValidationError {
   message: string;
+}
+
+/** Build the `<input accept>` attribute from a list of extensions, e.g. ".pdf,.docx". */
+export function buildAcceptAttribute(extensions: string[]): string {
+  return extensions.map((extension) => `.${extension}`).join(",");
 }
 
 function extensionOf(filename: string): string {
@@ -20,19 +34,23 @@ function formatMegabytes(bytes: number): string {
 }
 
 /** Returns a validation error, or `null` when the file is acceptable. */
-export function validateFile(file: File): ValidationError | null {
+export function validateFile(
+  file: File,
+  constraints: UploadConstraints = DEFAULT_CONSTRAINTS,
+): ValidationError | null {
   if (file.size === 0) {
     return { message: "Die Datei ist leer." };
   }
-  if (file.size > MAX_UPLOAD_BYTES) {
+  if (file.size > constraints.maxUploadBytes) {
     return {
-      message: `Die Datei ist zu groß (max. ${formatMegabytes(MAX_UPLOAD_BYTES)}).`,
+      message: `Die Datei ist zu groß (max. ${formatMegabytes(constraints.maxUploadBytes)}).`,
     };
   }
-  const extension = extensionOf(file.name);
-  if (!ALLOWED_EXTENSIONS.includes(extension as (typeof ALLOWED_EXTENSIONS)[number])) {
+  if (!constraints.allowedExtensions.includes(extensionOf(file.name))) {
     return {
-      message: `Nicht unterstützter Dateityp. Erlaubt: ${ALLOWED_EXTENSIONS.join(", ").toUpperCase()}.`,
+      message: `Nicht unterstützter Dateityp. Erlaubt: ${constraints.allowedExtensions
+        .join(", ")
+        .toUpperCase()}.`,
     };
   }
   return null;

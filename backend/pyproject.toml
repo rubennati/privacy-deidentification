@@ -40,6 +40,10 @@ max-complexity = 10
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 
+[tool.ruff.lint.per-file-ignores]
+# conftest filters an import-time warning before importing TestClient (see the file).
+"tests/conftest.py" = ["E402"]
+
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI uses callables (Depends/File/...) as argument defaults by design.
 extend-immutable-calls = [
@@ -60,3 +64,8 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    # Starlette's TestClient warns about httpx; it's a transitive-dependency concern, not ours.
+    # No category (it subclasses PendingDeprecationWarning, not DeprecationWarning).
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

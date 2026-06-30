@@ -4,7 +4,17 @@ A Docker-first application foundation for privacy-focused document preparation a
 
 Users can upload documents through a web interface. The backend validates the upload, stores the file safely under `./volumes/uploads` on the host, and exposes health checks for local operation and development.
 
-> **Step 1:** This version provides the application foundation and upload flow. Document processing, extraction, review, de-identification and redaction will be added in later steps through dedicated tool integrations.
+> **Step 1:** This version provides the application foundation, upload flow and document
+> management (list/delete). Document processing, extraction, review, de-identification and
+> redaction will be added in later steps through dedicated tool integrations.
+
+## Approach: tool-first / adapter-only
+
+The de-identification capability will be delivered by **integrating proven open-source tools
+behind adapters** — not by building custom intelligence. Extraction/OCR (e.g. OCRmyPDF,
+Tesseract, MinerU), PII/PHI detection (e.g. Presidio, noirdoc) and redaction (e.g. PyMuPDF)
+are integrated behind a port/interface. Our own code is orchestration, the review UI, file
+handling, export logic and secure integration. See [`AGENTS.md`](AGENTS.md).
 
 ## Architecture
 
@@ -50,11 +60,14 @@ docker compose down
 
 ## API
 
-| Method | Path                | Description                                                |
-| ------ | ------------------- | ---------------------------------------------------------- |
-| GET    | `/api/health/live`  | Liveness check                                             |
-| GET    | `/api/health/ready` | Readiness check, including upload directory access         |
-| POST   | `/api/uploads`      | Upload one document via `multipart/form-data` field `file` |
+| Method | Path                   | Description                                                |
+| ------ | ---------------------- | ---------------------------------------------------------- |
+| GET    | `/api/health/live`     | Liveness check                                             |
+| GET    | `/api/health/ready`    | Readiness check, including upload directory access         |
+| GET    | `/api/config`          | Effective upload constraints (size limit, allowed types)   |
+| POST   | `/api/uploads`         | Upload one document via `multipart/form-data` field `file` |
+| GET    | `/api/documents`       | List uploaded documents, newest first                      |
+| DELETE | `/api/documents/{id}`  | Delete a document's file and metadata                      |
 
 `POST /api/uploads` returns `201` with:
 

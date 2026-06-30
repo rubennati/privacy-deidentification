@@ -76,3 +76,35 @@ def test_sanitizes_traversal_filename_and_stores_under_uuid(
     stored = list(upload_dir.iterdir())
     assert len(stored) == 2  # stored file + metadata sidecar
     assert all(path.parent == upload_dir for path in stored)
+
+
+def test_rejects_content_not_matching_extension(client: TestClient, upload_dir: Path) -> None:
+    # Allowed extension, but the bytes are not a PDF — must be rejected on content.
+    response = _post_file(client, "fake.pdf", b"GIF89a definitely not a pdf", "application/pdf")
+
+    assert response.status_code == 415
+    assert "does not match" in response.json()["detail"]
+    assert list(upload_dir.iterdir()) == []
+
+
+def test_accepts_png_by_signature(client: TestClient, upload_dir: Path) -> None:
+    png = b"\x89PNG\r\n\x1a\n" + b"rest of the image"
+
+    response = _post_file(client, "image.png", png, "image/png")
+
+    assert response.status_code == 201
+    assert response.json()["filename"] == "image.png"
+
+
+def test_accepts_docx_zip_signature(client: TestClient, upload_dir: Path) -> None:
+    docx = b"PK\x03\x04" + b"zip container bytes"
+
+    response = _post_file(
+        client,
+        "report.docx",
+        docx,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    assert response.status_code == 201
+    assert response.json()["filename"] == "report.docx"

@@ -10,10 +10,11 @@ export default function DocumentsPage() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ status: UploadStatus; message: string }>({
-    status: "idle",
-    message: "",
-  });
+  const [notice, setNotice] = useState<{
+    status: UploadStatus;
+    message: string;
+    correlationId: string | null;
+  }>({ status: "idle", message: "", correlationId: null });
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -25,6 +26,7 @@ export default function DocumentsPage() {
           error instanceof DocumentsApiError
             ? error.message
             : "Dokumente konnten nicht geladen werden.",
+        correlationId: error instanceof DocumentsApiError ? error.correlationId : null,
       });
     } finally {
       setLoading(false);
@@ -40,7 +42,7 @@ export default function DocumentsPage() {
       setPendingDeleteId(id);
       try {
         await deleteDocument(id);
-        setNotice({ status: "success", message: "Dokument wurde gelöscht." });
+        setNotice({ status: "success", message: "Dokument wurde gelöscht.", correlationId: null });
         await loadDocuments();
       } catch (error) {
         setNotice({
@@ -49,6 +51,7 @@ export default function DocumentsPage() {
             error instanceof DocumentsApiError
               ? error.message
               : "Dokument konnte nicht gelöscht werden.",
+          correlationId: error instanceof DocumentsApiError ? error.correlationId : null,
         });
       } finally {
         setPendingDeleteId(null);
@@ -67,7 +70,11 @@ export default function DocumentsPage() {
           </p>
         </header>
 
-        <StatusNotice status={notice.status} message={notice.message} />
+        <StatusNotice
+          status={notice.status}
+          message={notice.message}
+          correlationId={notice.correlationId}
+        />
 
         {loading && documents.length === 0 && (
           <p className="mt-6 text-sm text-muted">Dokumente werden geladen …</p>

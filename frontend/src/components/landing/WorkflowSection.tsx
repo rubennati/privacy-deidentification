@@ -2,29 +2,28 @@ import { SectionHeading } from "./SectionHeading";
 
 const STEPS = [
   {
-    title: "Dokument hochladen",
+    title: "Upload",
     description:
-      "PDFs, Office-Dokumente, Bilder oder strukturierte Dateien werden in eine kontrollierte Verarbeitungsumgebung geladen.",
+      "Laden Sie PDFs, Office-Dateien, Bilder oder strukturierte Formate in eine geschützte Umgebung.",
   },
   {
-    title: "Inhalte extrahieren",
-    description:
-      "Text, Tabellen und relevante Dokumentbereiche werden mit vorhandenen OCR- und Extraction-Werkzeugen vorbereitet.",
+    title: "Extraktion",
+    description: "Texte, Tabellen und relevante Inhalte werden per OCR oder Parser erfasst.",
   },
   {
-    title: "Sensible Informationen erkennen",
+    title: "Erkennung sensibler Informationen",
     description:
-      "Personenbezogene und geschäftskritische Informationen werden durch bewährte Erkennungs-Engines und ergänzende Regeln identifiziert.",
+      "Personenbezogene und geschäftliche Kennzahlen werden mit geprüften Erkennungsmodellen identifiziert.",
   },
   {
-    title: "Review durchführen",
+    title: "Überprüfung",
     description:
-      "Vor der Weiterverarbeitung sieht der Nutzer, welche Inhalte erkannt wurden. Treffer können bestätigt, angepasst oder verworfen werden.",
+      "Vor der Weitergabe können Sie die gefundenen Stellen einsehen, anpassen oder ignorieren.",
   },
   {
-    title: "De-identifizierte Ausgabe erzeugen",
+    title: "Pseudonymisierte Version",
     description:
-      "Das Dokument oder der Text wird mit semantischen Platzhaltern vorbereitet. Optional kann ein lokales Mapping erzeugt werden, um Platzhalter später kontrolliert zurückzuführen.",
+      "Wir erzeugen ein Dokument mit Platzhaltern. Optional speichern Sie ein Mapping, um die Daten später gezielt zurückzuführen.",
   },
 ] as const;
 
@@ -32,14 +31,11 @@ const STEPS = [
 export function WorkflowSection() {
   return (
     <section>
-      <SectionHeading title="Der Workflow" />
+      <SectionHeading title="Ablauf im Überblick" />
 
       <ol className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {STEPS.map((step, index) => (
-          <li
-            key={step.title}
-            className="rounded-xl border border-card-border bg-card p-4"
-          >
+          <li key={step.title} className="rounded-xl border border-card-border bg-card p-4">
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent-dark">
               {index + 1}
             </span>

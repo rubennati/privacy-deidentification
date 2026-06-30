@@ -3,27 +3,27 @@ import { SectionHeading } from "./SectionHeading";
 const STAGES = [
   {
     title: "Original",
-    text: "Dr. Maria Schmidt bittet um Stellungnahme zu Vertrag Nr. DE2024-7789 mit der Müller GmbH. Die IBAN lautet DE89 3704 0044 0532 0130 00.",
+    text: "Frau Dr. Schmidt bittet um eine Stellungnahme zum Vertrag NR. AB-12345 mit der Example AG. Die IBAN lautet DE01 2345 6789 0123 4567 89.",
     mono: false,
   },
   {
-    title: "Vorbereitete Version",
-    text: "[[PERSON-7F3A]] bittet um Stellungnahme zu Vertrag [[CONTRACT-ID-92B1]] mit [[ORGANIZATION-A81C]]. Die IBAN lautet [[IBAN-5D20]].",
+    title: "Pseudonymisiert",
+    text: "[[Person-X1]] bittet um Stellungnahme zu Vertrag [[Vertrags-ID-Z9]] mit [[Unternehmen-Y7]]. Die IBAN lautet [[IBAN-Q5]].",
     mono: true,
   },
   {
     title: "KI-Antwort",
-    text: "[[PERSON-7F3A]] sollte insbesondere die Haftungsregelung in Vertrag [[CONTRACT-ID-92B1]] prüfen. Die Beziehung zur [[ORGANIZATION-A81C]] ist für die Bewertung relevant.",
+    text: "[[Person-X1]] sollte insbesondere auf die Haftungsregelungen in Vertrag [[Vertrags-ID-Z9]] achten. Die Beziehung zu [[Unternehmen-Y7]] wirkt sich auf die Bewertung aus.",
     mono: true,
   },
   {
-    title: "Rekonstruierte Ausgabe",
-    text: "Dr. Maria Schmidt sollte insbesondere die Haftungsregelung in Vertrag Nr. DE2024-7789 prüfen. Die Beziehung zur Müller GmbH ist für die Bewertung relevant.",
+    title: "Rekonstruiert",
+    text: "Frau Dr. Schmidt sollte insbesondere auf die Haftungsregelungen in Vertrag NR. AB-12345 achten. Die Beziehung zur Example AG ist für die Bewertung relevant.",
     mono: false,
   },
 ] as const;
 
-/** End-to-end example walking a document through all four processing stages. */
+/** End-to-end example walking a document through all four stages. */
 export function ExampleSection() {
   return (
     <section>

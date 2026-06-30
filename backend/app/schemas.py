@@ -14,6 +14,13 @@ class UploadAccepted(BaseModel):
     status: str = Field(default="received", description="Processing status.")
 
 
+class ConfigResponse(BaseModel):
+    """Public upload constraints, so the frontend can mirror the backend's source of truth."""
+
+    max_upload_bytes: int = Field(description="Maximum accepted upload size in bytes.", ge=0)
+    allowed_extensions: list[str] = Field(description="Allowed file extensions (lowercase).")
+
+
 class DocumentSummary(BaseModel):
     """Public representation of an uploaded document, as returned by the documents API."""
 

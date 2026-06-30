@@ -3,6 +3,7 @@ export type UploadStatus = "idle" | "uploading" | "success" | "error";
 interface StatusNoticeProps {
   status: UploadStatus;
   message: string;
+  correlationId?: string | null;
 }
 
 const STYLES: Record<Exclude<UploadStatus, "idle">, string> = {
@@ -12,7 +13,7 @@ const STYLES: Record<Exclude<UploadStatus, "idle">, string> = {
 };
 
 /** Inline feedback for the upload (uploading / success / error). Hidden while idle. */
-export function StatusNotice({ status, message }: StatusNoticeProps) {
+export function StatusNotice({ status, message, correlationId }: StatusNoticeProps) {
   if (status === "idle") {
     return null;
   }
@@ -21,10 +22,15 @@ export function StatusNotice({ status, message }: StatusNoticeProps) {
     <div
       role="status"
       aria-live="polite"
-      className={`mt-4 flex items-center gap-3 rounded-lg border px-4 py-3 text-sm ${STYLES[status]}`}
+      className={`mt-4 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${STYLES[status]}`}
     >
       <Indicator status={status} />
-      <span>{message}</span>
+      <span>
+        {message}
+        {status === "error" && correlationId && (
+          <span className="mt-1 block text-xs opacity-70">Referenz: {correlationId}</span>
+        )}
+      </span>
     </div>
   );
 }

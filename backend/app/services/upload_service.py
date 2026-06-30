@@ -1,10 +1,16 @@
 """Upload validation and safe storage.
 
-Validation happens at the trust boundary: allowed extension (whitelist) and size limit are
-enforced here, independent of the HTTP layer. Files are streamed to disk in bounded chunks so
-an oversized upload never has to fit in memory, and are stored under a generated UUID name to
-prevent path traversal. The original filename is kept only as returned metadata. On success,
-metadata is persisted via the document service so the upload can be listed and deleted later.
+Validation happens at the trust boundary, independent of the HTTP layer:
+
+- the file extension must be on the configured whitelist;
+- the file content must start with a magic-byte signature matching that extension, so a
+  renamed executable cannot pass as a PDF;
+- the size limit is enforced while streaming, so an oversized upload never has to fit in
+  memory.
+
+Files are stored under a generated UUID name to prevent path traversal; the original filename
+is kept only as metadata. On success, metadata is persisted via the document service so the
+upload can be listed and deleted later.
 """
 
 from __future__ import annotations
@@ -22,6 +28,17 @@ from app.services.document_service import create_document_record, save_metadata
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 _MAX_FILENAME_LEN = 255
+_SIGNATURE_PREFIX_LEN = 8
+
+# Leading magic bytes per allowed extension. DOCX is an Office Open XML ZIP container, so we
+# only verify the ZIP signature (a deeper OOXML check would require unzipping the upload).
+_MAGIC_SIGNATURES: dict[str, tuple[bytes, ...]] = {
+    "pdf": (b"%PDF",),
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    "jpg": (b"\xff\xd8\xff",),
+    "jpeg": (b"\xff\xd8\xff",),
+    "docx": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+}
 
 
 class UploadValidationError(ApiError):
@@ -50,8 +67,15 @@ def sanitize_filename(filename: str) -> str:
 
 
 def _extension_of(filename: str) -> str:
-    suffix = Path(filename).suffix.lower().lstrip(".")
-    return suffix
+    return Path(filename).suffix.lower().lstrip(".")
+
+
+def content_matches_extension(extension: str, head: bytes) -> bool:
+    """True if the leading bytes match a known signature for the extension."""
+    signatures = _MAGIC_SIGNATURES.get(extension)
+    if signatures is None:
+        return True  # whitelisted but no signature on file; accept by extension alone
+    return any(head.startswith(signature) for signature in signatures)
 
 
 async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccepted:
@@ -75,11 +99,19 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
     destination = settings.upload_dir / f"{document_id}.{extension}"
     partial = destination.with_name(destination.name + ".part")
 
-    size = await _stream_to_disk(file, partial, settings.max_upload_bytes)
+    size, head = await _stream_to_disk(file, partial, settings.max_upload_bytes)
 
     if size == 0:
         partial.unlink(missing_ok=True)
         raise UploadValidationError("empty_file", "The uploaded file is empty.", 400)
+
+    if not content_matches_extension(extension, head):
+        partial.unlink(missing_ok=True)
+        raise UploadValidationError(
+            "content_mismatch",
+            "The file content does not match its extension.",
+            415,
+        )
 
     partial.replace(destination)
 
@@ -95,15 +127,21 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
     return UploadAccepted(id=document_id, filename=safe_name, size=size)
 
 
-async def _stream_to_disk(file: _AsyncReadable, target: Path, max_bytes: int) -> int:
-    """Stream the upload to ``target`` in chunks, enforcing ``max_bytes``. Returns size."""
+async def _stream_to_disk(file: _AsyncReadable, target: Path, max_bytes: int) -> tuple[int, bytes]:
+    """Stream the upload to ``target`` in chunks, enforcing ``max_bytes``.
+
+    Returns the total size and the leading bytes (for signature validation).
+    """
     size = 0
+    head = b""
     try:
         with target.open("wb") as out:
             while True:
                 chunk = await file.read(_CHUNK_SIZE)
                 if not chunk:
                     break
+                if not head:
+                    head = chunk[:_SIGNATURE_PREFIX_LEN]
                 size += len(chunk)
                 if size > max_bytes:
                     raise UploadValidationError(
@@ -115,4 +153,4 @@ async def _stream_to_disk(file: _AsyncReadable, target: Path, max_bytes: int) ->
     except UploadValidationError:
         target.unlink(missing_ok=True)
         raise
-    return size
+    return size, head

@@ -12,15 +12,18 @@ export interface DocumentSummary {
 
 interface ApiError {
   detail?: string;
+  correlation_id?: string | null;
 }
 
 export class DocumentsApiError extends Error {
   readonly status: number;
+  readonly correlationId: string | null;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, correlationId: string | null = null) {
     super(message);
     this.name = "DocumentsApiError";
     this.status = status;
+    this.correlationId = correlationId;
   }
 }
 
@@ -30,7 +33,7 @@ const GENERIC_ERROR = "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es er
 export async function fetchDocuments(): Promise<DocumentSummary[]> {
   const response = await safeFetch(DOCUMENTS_ENDPOINT);
   if (!response.ok) {
-    throw new DocumentsApiError(await readErrorDetail(response), response.status);
+    await throwApiError(response);
   }
   return (await response.json()) as DocumentSummary[];
 }
@@ -40,7 +43,7 @@ export async function deleteDocument(id: string): Promise<void> {
     method: "DELETE",
   });
   if (!response.ok) {
-    throw new DocumentsApiError(await readErrorDetail(response), response.status);
+    await throwApiError(response);
   }
 }
 
@@ -52,11 +55,15 @@ async function safeFetch(input: string, init?: RequestInit): Promise<Response> {
   }
 }
 
-async function readErrorDetail(response: Response): Promise<string> {
+async function throwApiError(response: Response): Promise<never> {
+  let detail = GENERIC_ERROR;
+  let correlationId: string | null = null;
   try {
     const data = (await response.json()) as ApiError;
-    return data.detail ?? GENERIC_ERROR;
+    detail = data.detail ?? GENERIC_ERROR;
+    correlationId = data.correlation_id ?? null;
   } catch {
-    return GENERIC_ERROR;
+    // keep defaults
   }
+  throw new DocumentsApiError(detail, response.status, correlationId);
 }

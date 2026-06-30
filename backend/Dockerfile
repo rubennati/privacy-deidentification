@@ -37,4 +37,5 @@ COPY --from=builder --chown=app:app /app/.venv /app/.venv
 USER app
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-access-log: the app emits its own structured (JSON, correlation-linked) request logs.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

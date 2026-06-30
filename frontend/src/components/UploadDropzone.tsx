@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ACCEPT_ATTRIBUTE } from "../lib/fileValidation";
+import { buildAcceptAttribute, DEFAULT_ALLOWED_EXTENSIONS } from "../lib/fileValidation";
 
 interface UploadDropzoneProps {
   onFile: (file: File) => void;
   disabled?: boolean;
+  accept?: string;
 }
 
 /**
  * The upload area: click to choose a file, drag & drop, or paste a file. Rendered as a
  * button so it is fully keyboard-operable.
  */
-export function UploadDropzone({ onFile, disabled = false }: UploadDropzoneProps) {
+export function UploadDropzone({
+  onFile,
+  disabled = false,
+  accept = buildAcceptAttribute(DEFAULT_ALLOWED_EXTENSIONS),
+}: UploadDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -71,7 +76,7 @@ export function UploadDropzone({ onFile, disabled = false }: UploadDropzoneProps
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPT_ATTRIBUTE}
+        accept={accept}
         className="sr-only"
         onChange={(event) => {
           handleFiles(event.target.files);

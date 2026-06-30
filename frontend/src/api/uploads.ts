@@ -14,11 +14,13 @@ interface ApiError {
 
 export class UploadError extends Error {
   readonly status: number;
+  readonly correlationId: string | null;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, correlationId: string | null = null) {
     super(message);
     this.name = "UploadError";
     this.status = status;
+    this.correlationId = correlationId;
   }
 }
 
@@ -37,17 +39,18 @@ export async function uploadDocument(file: File): Promise<UploadAccepted> {
   }
 
   if (!response.ok) {
-    throw new UploadError(await readErrorDetail(response), response.status);
+    const { detail, correlationId } = await readError(response);
+    throw new UploadError(detail, response.status, correlationId);
   }
 
   return (await response.json()) as UploadAccepted;
 }
 
-async function readErrorDetail(response: Response): Promise<string> {
+async function readError(response: Response): Promise<{ detail: string; correlationId: string | null }> {
   try {
     const data = (await response.json()) as ApiError;
-    return data.detail ?? GENERIC_ERROR;
+    return { detail: data.detail ?? GENERIC_ERROR, correlationId: data.correlation_id ?? null };
   } catch {
-    return GENERIC_ERROR;
+    return { detail: GENERIC_ERROR, correlationId: null };
   }
 }

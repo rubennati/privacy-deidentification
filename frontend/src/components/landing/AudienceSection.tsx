@@ -1,35 +1,52 @@
 import { SectionHeading } from "./SectionHeading";
 
 const AUDIENCES = [
-  "Rechtsberatung",
-  "Versicherung",
-  "Gesundheitswesen",
-  "Finanzdienstleistungen",
-  "HR und Recruiting",
-  "öffentliche Verwaltung",
-  "interne Wissens- und Dokumentenprozesse",
+  {
+    title: "Juristische Beratung und Compliance",
+    description: "Schnelle Durchsicht langer Verträge ohne Preisgabe der Mandatsdaten.",
+  },
+  {
+    title: "Versicherungs- und Schadenbearbeitung",
+    description: "Analyse von Schadensmeldungen und Aktenzeichen in großem Umfang.",
+  },
+  {
+    title: "Gesundheitswesen",
+    description:
+      "Anonymisierung von Entlassberichten und medizinischen Dokumenten bei gleichbleibender Kontexttreue.",
+  },
+  {
+    title: "Finanz- und Steuerwesen",
+    description: "Sichere Verarbeitung von Konto-, Kredit- und Steuerdaten.",
+  },
+  {
+    title: "Personalabteilungen und Recruiting",
+    description: "Bewertung von Bewerbungen ohne Offenlegung sensibler Daten.",
+  },
+  {
+    title: "Öffentliche Verwaltung und Wissensprozesse",
+    description: "Austausch sensibler Bürger- oder Mitarbeiterdaten in Chatbots und Automationen.",
+  },
 ] as const;
 
-/** Who the project is for, plus the list of particularly relevant domains. */
+/** Who the service is for, with a concrete use case per domain. */
 export function AudienceSection() {
   return (
     <section>
-      <SectionHeading title="Für wen" />
+      <SectionHeading title="Zielgruppen und Einsatzbereiche" />
 
       <p className="mt-4 text-sm text-muted">
-        Privacy De-Identification eignet sich für Teams, die sensible Dokumente mit KI oder
-        Automatisierungen nutzen möchten, ohne den Kontrollverlust über Originaldaten zu
-        akzeptieren.
+        Der Dienst richtet sich an Teams, die mit sensiblen Dokumenten arbeiten und KI-Modelle
+        oder Automatisierungen nutzen möchten, ohne die Kontrolle über die Rohdaten zu verlieren.
       </p>
 
-      <p className="mt-4 text-xs font-medium uppercase tracking-wide text-muted">
-        Besonders relevant für
-      </p>
-      <ul className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+      <ul className="mt-5 grid gap-3 sm:grid-cols-2">
         {AUDIENCES.map((audience) => (
-          <li key={audience} className="flex items-center gap-2 text-sm text-ink">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-            {audience}
+          <li
+            key={audience.title}
+            className="rounded-lg border border-card-border bg-card p-4"
+          >
+            <p className="text-sm font-medium text-ink">{audience.title}</p>
+            <p className="mt-1 text-sm text-muted">{audience.description}</p>
           </li>
         ))}
       </ul>

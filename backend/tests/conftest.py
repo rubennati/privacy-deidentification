@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+import warnings
+
+# Silence a transitive Starlette/httpx deprecation emitted at import of TestClient. It fires
+# before pytest's ini filterwarnings apply, so it is suppressed here at the source. Imports
+# below intentionally follow this statement (ruff E402 is ignored for this file).
+warnings.filterwarnings(
+    "ignore",
+    message="Using `httpx` with `starlette.testclient` is deprecated",
+    category=Warning,  # StarletteDeprecationWarning subclasses PendingDeprecationWarning
+)
+
 from collections.abc import Iterator
 from pathlib import Path
 

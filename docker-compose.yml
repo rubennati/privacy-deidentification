@@ -47,6 +47,13 @@ services:
         condition: service_healthy
     networks:
       - internal
+    read_only: true
+    tmpfs:
+      # nginx (unprivileged) needs writable temp/pid/cache paths; everything else stays
+      # read-only.
+      - /tmp
+      - /run
+      - /var/cache/nginx
     security_opt:
       - no-new-privileges:true
     healthcheck:

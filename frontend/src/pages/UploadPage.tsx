@@ -1,44 +1,74 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { fetchUploadConfig } from "../api/config";
 import { uploadDocument, UploadError } from "../api/uploads";
 import { HowItWorks } from "../components/HowItWorks";
 import { StatusNotice, type UploadStatus } from "../components/StatusNotice";
 import { UploadDropzone } from "../components/UploadDropzone";
-import { validateFile } from "../lib/fileValidation";
+import {
+  buildAcceptAttribute,
+  DEFAULT_CONSTRAINTS,
+  type UploadConstraints,
+  validateFile,
+} from "../lib/fileValidation";
 
 export default function UploadPage() {
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [message, setMessage] = useState("");
+  const [correlationId, setCorrelationId] = useState<string | null>(null);
+  const [constraints, setConstraints] = useState<UploadConstraints>(DEFAULT_CONSTRAINTS);
 
-  const handleFile = useCallback(async (file: File) => {
-    const validationError = validateFile(file);
-    if (validationError) {
-      setStatus("error");
-      setMessage(validationError.message);
-      return;
-    }
-
-    setStatus("uploading");
-    setMessage(`„${file.name}“ wird hochgeladen …`);
-
-    try {
-      const accepted = await uploadDocument(file);
-      setStatus("success");
-      setMessage(`„${accepted.filename}“ — Dokument wurde entgegengenommen.`);
-    } catch (error) {
-      setStatus("error");
-      setMessage(
-        error instanceof UploadError
-          ? error.message
-          : "Ein unerwarteter Fehler ist aufgetreten.",
-      );
-    }
+  // Mirror the backend's effective upload constraints (single source of truth).
+  useEffect(() => {
+    let active = true;
+    void fetchUploadConfig().then((config) => {
+      if (active && config) {
+        setConstraints({
+          allowedExtensions: config.allowedExtensions,
+          maxUploadBytes: config.maxUploadBytes,
+        });
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
+  const handleFile = useCallback(
+    async (file: File) => {
+      setCorrelationId(null);
+
+      const validationError = validateFile(file, constraints);
+      if (validationError) {
+        setStatus("error");
+        setMessage(validationError.message);
+        return;
+      }
+
+      setStatus("uploading");
+      setMessage(`„${file.name}“ wird hochgeladen …`);
+
+      try {
+        const accepted = await uploadDocument(file);
+        setStatus("success");
+        setMessage(`„${accepted.filename}“ — Dokument wurde entgegengenommen.`);
+      } catch (error) {
+        setStatus("error");
+        if (error instanceof UploadError) {
+          setMessage(error.message);
+          setCorrelationId(error.correlationId);
+        } else {
+          setMessage("Ein unerwarteter Fehler ist aufgetreten.");
+        }
+      }
+    },
+    [constraints],
+  );
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] p-4">
-      <div className="w-full max-w-2xl rounded-2xl border border-card-border bg-card p-8 shadow-[0_2px_12px_rgba(31,79,67,0.05)] sm:p-10">
+    <main className="flex min-h-screen justify-center bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] p-4 py-12 sm:py-16">
+      <div className="h-fit w-full max-w-2xl rounded-2xl border border-card-border bg-card p-8 shadow-[0_2px_12px_rgba(31,79,67,0.05)] sm:p-10">
         <header className="mb-6">
           <h1 className="text-xl font-semibold text-ink">Dokumente sicher vorbereiten</h1>
           <p className="mt-2 text-sm text-muted">
@@ -47,8 +77,12 @@ export default function UploadPage() {
           </p>
         </header>
 
-        <UploadDropzone onFile={(file) => void handleFile(file)} disabled={status === "uploading"} />
-        <StatusNotice status={status} message={message} />
+        <UploadDropzone
+          onFile={(file) => void handleFile(file)}
+          disabled={status === "uploading"}
+          accept={buildAcceptAttribute(constraints.allowedExtensions)}
+        />
+        <StatusNotice status={status} message={message} correlationId={correlationId} />
         {status === "success" && (
           <p className="mt-3 text-center text-sm">
             <Link to="/documents" className="font-medium text-accent-dark hover:underline">

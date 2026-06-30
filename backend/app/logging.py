@@ -13,6 +13,10 @@ from datetime import UTC, datetime
 
 _correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 
+# Extra log-record attributes that, when present, are merged into the JSON payload. Used for
+# structured request logging (method, path, status, duration) without free-text parsing.
+_STRUCTURED_FIELDS = ("http_method", "http_path", "http_status", "duration_ms")
+
 
 def set_correlation_id(value: str) -> None:
     """Bind the correlation id for the current request context."""
@@ -37,6 +41,10 @@ class JsonFormatter(logging.Formatter):
         correlation_id = get_correlation_id()
         if correlation_id is not None:
             payload["correlation_id"] = correlation_id
+        for field in _STRUCTURED_FIELDS:
+            value = getattr(record, field, None)
+            if value is not None:
+                payload[field] = value
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False)
@@ -51,3 +59,8 @@ def configure_logging(level: str) -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
+
+    # The application owns structured request logging; silence chatty third-party access logs
+    # so we don't emit a second, unstructured line per request.
+    for noisy in ("uvicorn.access", "httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)

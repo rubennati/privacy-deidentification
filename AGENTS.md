@@ -14,6 +14,16 @@ Before starting work, always read:
 - Record architectural decisions as ADRs under `docs/adr/` and link them in `.ai/decisions.md`.
 - Never commit secrets. Configuration comes from environment variables.
 
+## Product principle: tool-first / adapter-only
+
+The de-identification capability is delivered by **integrating proven open-source tools
+behind adapters**, not by writing custom intelligence. Do **not** implement bespoke OCR, PII
+detection, NER, redaction or pseudonymization algorithms. Use established components (e.g.
+OCRmyPDF / Tesseract / MinerU for extraction, Presidio / noirdoc for detection, PyMuPDF for
+redaction) integrated behind a port/interface. Our own code is orchestration, the review UI,
+file handling, export logic and secure integration. Each external tool sits behind an
+adapter so it can be swapped without touching business logic.
+
 ## Workflow
 
 For any non-trivial task: **Understand → Plan → Implement → Verify → Review.** Trivial

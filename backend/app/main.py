@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
@@ -11,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from app import __version__
-from app.api import documents, health, uploads
+from app.api import config, documents, health, uploads
 from app.config import get_settings
 from app.errors import ApiError
 from app.logging import configure_logging, set_correlation_id
@@ -21,13 +22,8 @@ logger = logging.getLogger("app")
 
 _CORRELATION_HEADER = "X-Request-ID"
 
-_SECURITY_HEADERS = {
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "Referrer-Policy": "no-referrer",
-    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
-}
+# Health probes fire every few seconds; don't log them to keep request logs signal-rich.
+_UNLOGGED_PREFIXES = ("/api/health",)
 
 
 def create_app() -> FastAPI:
@@ -54,6 +50,7 @@ def create_app() -> FastAPI:
     _register_exception_handlers(app)
 
     app.include_router(health.router, prefix="/api")
+    app.include_router(config.router, prefix="/api")
     app.include_router(uploads.router, prefix="/api")
     app.include_router(documents.router, prefix="/api")
     return app
@@ -61,17 +58,36 @@ def create_app() -> FastAPI:
 
 def _register_middleware(app: FastAPI) -> None:
     @app.middleware("http")
-    async def correlation_and_security(
+    async def correlation_and_logging(
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         correlation_id = request.headers.get(_CORRELATION_HEADER) or uuid4().hex
         set_correlation_id(correlation_id)
+
+        started = time.perf_counter()
         response = await call_next(request)
+        duration_ms = round((time.perf_counter() - started) * 1000, 1)
+
         response.headers[_CORRELATION_HEADER] = correlation_id
-        for header, value in _SECURITY_HEADERS.items():
-            response.headers.setdefault(header, value)
+        _log_request(request, response.status_code, duration_ms)
         return response
+
+
+def _log_request(request: Request, status_code: int, duration_ms: float) -> None:
+    """Emit one structured JSON line per request. Skips noisy health probes; logs only the
+    path (never the query string), so no PII or filenames leak into logs."""
+    if request.url.path.startswith(_UNLOGGED_PREFIXES):
+        return
+    logger.info(
+        "request",
+        extra={
+            "http_method": request.method,
+            "http_path": request.url.path,
+            "http_status": status_code,
+            "duration_ms": duration_ms,
+        },
+    )
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
