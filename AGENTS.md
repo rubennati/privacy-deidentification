@@ -1,0 +1,53 @@
+# Agent Instructions
+
+Before starting work, always read:
+
+- `.ai/index.md`
+- `.ai/state.md`
+- `.ai/routing.md`
+
+## Core rules
+
+- Do not perform unrelated refactors.
+- Request human approval before major architectural or dependency changes.
+- Update `.ai/state.md` after meaningful changes.
+- Record architectural decisions as ADRs under `docs/adr/` and link them in `.ai/decisions.md`.
+- Never commit secrets. Configuration comes from environment variables.
+
+## Workflow
+
+For any non-trivial task: **Understand → Plan → Implement → Verify → Review.** Trivial
+changes (typos, one-line fixes, additive doc tweaks) may skip the Plan step but still go
+through a branch + PR.
+
+1. **Understand** — read the relevant `.ai/` files and the code/docs the task touches.
+2. **Plan** — state the plan before editing; confirm scope for multi-file work.
+3. **Implement** — focused changes on a short-lived branch, one concern per branch.
+4. **Verify** — run the standard quality commands locally (below).
+5. **Review** — open a PR with a clear summary; a human merges.
+
+## Standard quality commands
+
+Run via the `Makefile` (everything runs in Docker — no host toolchain needed):
+
+- `make lint` — Ruff (Python) + ESLint (TypeScript)
+- `make typecheck` — mypy (Python) + `tsc --noEmit` (TypeScript)
+- `make test` — pytest (backend)
+- `make build` — build both container images
+- `make up` / `make down` — start / stop the stack
+
+## Approval
+
+"Human approval" means a human merging the pull request. Concretely:
+
+- Agents may commit and push to non-`main` branches (e.g. `feat/*`, `fix/*`).
+- Agents must not merge to `main`, force-push, or modify branch protection.
+- Agents must not push directly to `main`, even where branch protection is not configured.
+
+If a change is larger than the current task's scope (architecture, dependencies), pause and
+ask before committing.
+
+## Tool-specific pointer files
+
+This file is the source of truth for all AI tools. `CLAUDE.md` is a thin pointer for Claude
+Code and must defer to this file. Do not duplicate rules across files; add them here.
