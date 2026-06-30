@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class OriginalArtifact(BaseModel):
@@ -26,6 +26,55 @@ class OriginalArtifact(BaseModel):
     mime_type: str = Field(description="MIME type verified from the stored content.")
     size_bytes: int = Field(description="Stored artifact size in bytes.", ge=0)
     created_at: str = Field(description="Artifact creation timestamp, UTC ISO 8601.")
+
+
+class AuditPageResult(BaseModel):
+    """Text-layer statistics for one PDF page."""
+
+    page_number: int = Field(ge=1)
+    text_char_count: int = Field(ge=0)
+    has_text_layer: bool
+
+
+class AuditContent(BaseModel):
+    """Versioned, format-specific output produced by the audit station."""
+
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    detected_mime_type: str
+    audit_version: Literal["1"] = "1"
+    document_kind: Literal["pdf", "docx", "image"]
+    page_count: int | None = Field(default=None, ge=0)
+    paragraph_count: int | None = Field(default=None, ge=0)
+    image_format: str | None = None
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    has_text_layer: bool
+    text_char_count: int = Field(ge=0)
+    pages: list[AuditPageResult] = Field(default_factory=list)
+    flags: list[str] = Field(default_factory=list)
+    tool_versions: dict[str, str] = Field(default_factory=dict)
+
+
+class AuditArtifact(BaseModel):
+    """Immutable JSON artifact emitted by the audit station."""
+
+    id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_type: Literal["audit_result"] = "audit_result"
+    station: Literal["audit"] = "audit"
+    input_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    media_type: Literal["application/json"] = "application/json"
+    created_at: str
+    content: AuditContent
+
+    @model_validator(mode="after")
+    def _validate_content_identity(self) -> AuditArtifact:
+        if self.content.document_id != self.document_id:
+            raise ValueError("audit content belongs to a different document")
+        if self.content.input_artifact_id != self.input_artifact_id:
+            raise ValueError("audit content references a different input artifact")
+        return self
 
 
 class UploadAccepted(BaseModel):

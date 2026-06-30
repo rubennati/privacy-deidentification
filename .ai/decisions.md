@@ -6,3 +6,5 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   (Docker-first, FastAPI backend, React/Vite SPA behind nginx).
 - [ADR-0002](../docs/adr/0002-upload-core-artifact-metadata.md) — Upload/Core integrity
   metadata and embedded original artifact in the existing JSON sidecar.
+- [ADR-0003](../docs/adr/0003-audit-station.md) — Synchronous Audit v1 with immutable,
+  file-based JSON result artifacts.

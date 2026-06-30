@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from app import __version__
-from app.api import config, documents, health, uploads
+from app.api import audits, config, documents, health, uploads
 from app.config import get_settings
 from app.errors import ApiError
 from app.logging import configure_logging, set_correlation_id
@@ -53,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(config.router, prefix="/api")
     app.include_router(uploads.router, prefix="/api")
     app.include_router(documents.router, prefix="/api")
+    app.include_router(audits.router, prefix="/api")
     return app
 
 

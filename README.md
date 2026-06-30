@@ -4,9 +4,9 @@ A Docker-first application foundation for privacy-focused document preparation a
 
 Users can upload documents through a web interface. The backend validates the upload, stores the file safely under `./volumes/uploads` on the host, and exposes health checks for local operation and development.
 
-> **Step 1:** This version provides the application foundation, upload flow and document
-> management (list/delete). Document processing, extraction, review, de-identification and
-> redaction will be added in later steps through dedicated tool integrations.
+> **Step 2:** This version provides the application foundation, upload/document management and
+> a structural Audit v1 station. OCR, review, de-identification and redaction will be added in
+> later steps through dedicated tool integrations.
 
 ## Approach: tool-first / adapter-only
 
@@ -68,6 +68,8 @@ docker compose down
 | POST   | `/api/uploads`         | Upload one document via `multipart/form-data` field `file` |
 | GET    | `/api/documents`       | List uploaded documents, newest first                      |
 | DELETE | `/api/documents/{id}`  | Delete a document's file and metadata                      |
+| POST   | `/api/documents/{id}/audit` | Create an immutable Audit v1 result                   |
+| GET    | `/api/documents/{id}/audit`  | Get the newest Audit v1 result                       |
 
 `POST /api/uploads` returns `201` with:
 

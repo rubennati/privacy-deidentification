@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from app.config import Settings
 from app.errors import ApiError
 from app.schemas import DocumentSummary, OriginalArtifact
+from app.services.artifact_service import delete_document_artifacts
 
 _ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _EXTENSION_PATTERN = r"^[a-z0-9]{1,10}$"
@@ -171,6 +172,7 @@ def delete_document(settings: Settings, document_id: str) -> None:
         if record.original_artifact is not None
         else f"{document_id}.{record.extension}"
     )
+    delete_document_artifacts(settings, document_id)
     stored_file = settings.upload_dir / storage_filename
     stored_file.unlink(missing_ok=True)
     delete_metadata(settings, document_id)
