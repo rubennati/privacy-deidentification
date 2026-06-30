@@ -55,6 +55,20 @@ class AuditContent(BaseModel):
     flags: list[str] = Field(default_factory=list)
     tool_versions: dict[str, str] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def _validate_pdf_page_summary(self) -> AuditContent:
+        if self.document_kind != "pdf":
+            return self
+        if self.page_count != len(self.pages):
+            raise ValueError("PDF page count does not match page results")
+        if [page.page_number for page in self.pages] != list(range(1, len(self.pages) + 1)):
+            raise ValueError("PDF page numbers must be contiguous and start at 1")
+        if self.text_char_count != sum(page.text_char_count for page in self.pages):
+            raise ValueError("PDF text character count does not match page results")
+        if self.has_text_layer != any(page.has_text_layer for page in self.pages):
+            raise ValueError("PDF text-layer summary does not match page results")
+        return self
+
 
 class AuditArtifact(BaseModel):
     """Immutable JSON artifact emitted by the audit station."""

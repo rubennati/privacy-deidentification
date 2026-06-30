@@ -10,10 +10,12 @@ import pytest
 from docx import Document as DocxDocument
 from fastapi.testclient import TestClient
 from PIL import Image
+from pydantic import ValidationError
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from app.config import Settings
+from app.schemas import AuditContent
 
 
 @pytest.fixture(autouse=True)
@@ -28,26 +30,31 @@ def _upload(client: TestClient, name: str, content: bytes, content_type: str) ->
 
 
 def _pdf_bytes(*, text: str | None = None) -> bytes:
+    return _pdf_pages_bytes(text)
+
+
+def _pdf_pages_bytes(*page_texts: str | None) -> bytes:
     writer = PdfWriter()
-    page = writer.add_blank_page(width=200, height=200)
-    if text is not None:
-        font = DictionaryObject(
-            {
-                NameObject("/Type"): NameObject("/Font"),
-                NameObject("/Subtype"): NameObject("/Type1"),
-                NameObject("/BaseFont"): NameObject("/Helvetica"),
-            }
-        )
-        page[NameObject("/Resources")] = DictionaryObject(
-            {
-                NameObject("/Font"): DictionaryObject(
-                    {NameObject("/F1"): writer._add_object(font)}
-                )
-            }
-        )
-        stream = DecodedStreamObject()
-        stream.set_data(f"BT /F1 12 Tf 10 100 Td ({text}) Tj ET".encode())
-        page[NameObject("/Contents")] = writer._add_object(stream)
+    for text in page_texts:
+        page = writer.add_blank_page(width=200, height=200)
+        if text is not None:
+            font = DictionaryObject(
+                {
+                    NameObject("/Type"): NameObject("/Font"),
+                    NameObject("/Subtype"): NameObject("/Type1"),
+                    NameObject("/BaseFont"): NameObject("/Helvetica"),
+                }
+            )
+            page[NameObject("/Resources")] = DictionaryObject(
+                {
+                    NameObject("/Font"): DictionaryObject(
+                        {NameObject("/F1"): writer._add_object(font)}
+                    )
+                }
+            )
+            stream = DecodedStreamObject()
+            stream.set_data(f"BT /F1 12 Tf 10 100 Td ({text}) Tj ET".encode())
+            page[NameObject("/Contents")] = writer._add_object(stream)
     buffer = BytesIO()
     writer.write(buffer)
     return buffer.getvalue()
@@ -114,6 +121,68 @@ def test_audits_pdf_without_text_layer(client: TestClient) -> None:
     assert content["text_char_count"] == 0
     assert content["pages"][0]["has_text_layer"] is False
     assert content["flags"] == ["pdf_no_text_layer"]
+
+
+def test_audits_mixed_pdf_text_layers_per_page(client: TestClient) -> None:
+    page_text = "Digital first page"
+    upload = _upload(
+        client,
+        "mixed.pdf",
+        _pdf_pages_bytes(page_text, None, None),
+        "application/pdf",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/audit")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["page_count"] == 3
+    assert content["has_text_layer"] is True
+    assert content["text_char_count"] == sum(
+        page["text_char_count"] for page in content["pages"]
+    )
+    assert content["pages"] == [
+        {"page_number": 1, "text_char_count": len(page_text), "has_text_layer": True},
+        {"page_number": 2, "text_char_count": 0, "has_text_layer": False},
+        {"page_number": 3, "text_char_count": 0, "has_text_layer": False},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("page_count", 1),
+        (
+            "pages",
+            [
+                {"page_number": 1, "text_char_count": 4, "has_text_layer": True},
+                {"page_number": 3, "text_char_count": 0, "has_text_layer": False},
+            ],
+        ),
+        ("text_char_count", 99),
+        ("has_text_layer", False),
+    ],
+)
+def test_pdf_audit_content_rejects_inconsistent_page_summary(
+    field: str, value: object
+) -> None:
+    content: dict[str, object] = {
+        "document_id": "a" * 32,
+        "input_artifact_id": "b" * 32,
+        "detected_mime_type": "application/pdf",
+        "document_kind": "pdf",
+        "page_count": 2,
+        "has_text_layer": True,
+        "text_char_count": 4,
+        "pages": [
+            {"page_number": 1, "text_char_count": 4, "has_text_layer": True},
+            {"page_number": 2, "text_char_count": 0, "has_text_layer": False},
+        ],
+    }
+    content[field] = value
+
+    with pytest.raises(ValidationError):
+        AuditContent.model_validate(content)
 
 
 def test_audits_docx_body_paragraphs(client: TestClient) -> None:

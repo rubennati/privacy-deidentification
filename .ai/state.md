@@ -15,8 +15,8 @@
   file + JSON metadata sidecar under `./volumes/uploads` (host bind mount).
 - New uploads compute SHA-256 while streaming, record a server-verified MIME type, and embed an
   independently identified original artifact in the JSON sidecar.
-- Audit v1 verifies original integrity and records PDF text-layer statistics, DOCX paragraph
-  statistics, or PNG/JPEG dimensions as immutable JSON artifacts.
+- Audit v1 verifies original integrity and records per-page PDF text-layer statistics, DOCX
+  paragraph statistics, or PNG/JPEG dimensions as immutable JSON artifacts.
 - `GET /api/config` exposes the effective limits so the frontend mirrors the backend.
 - Security headers owned by nginx; backend emits structured JSON request logs with a
   correlation id (surfaced to users on errors).
