@@ -4,9 +4,9 @@ A Docker-first application foundation for privacy-focused document preparation a
 
 Users can upload documents through a web interface. The backend validates the upload, stores the file safely under `./volumes/uploads` on the host, and exposes health checks for local operation and development.
 
-> **Step 2:** This version provides the application foundation, upload/document management and
-> a structural Audit v1 station. OCR, review, de-identification and redaction will be added in
-> later steps through dedicated tool integrations.
+> **Step 3:** This version provides upload/document management, structural Audit v1 and a
+> synchronous OCR/Text Workstation v1. Review, de-identification and redaction remain separate
+> later steps.
 
 ## Approach: tool-first / adapter-only
 
@@ -70,6 +70,8 @@ docker compose down
 | DELETE | `/api/documents/{id}`  | Delete a document's file and metadata                      |
 | POST   | `/api/documents/{id}/audit` | Create an immutable Audit v1 result                   |
 | GET    | `/api/documents/{id}/audit`  | Get the newest Audit v1 result                       |
+| POST   | `/api/documents/{id}/ocr`   | Create an immutable routed text result                |
+| GET    | `/api/documents/{id}/ocr`    | Get the newest text result                            |
 
 `POST /api/uploads` returns `201` with:
 
@@ -101,6 +103,24 @@ Invalid uploads return clean JSON errors with a correlation ID:
 * `415` for unsupported file types
 
 Stack traces are not exposed to clients.
+
+### Optional OCR runtime
+
+PDF text layers and DOCX body text are extracted without PaddleOCR. Image documents and PDF
+pages without a text layer require the optional PaddleOCR/PaddlePaddle runtime:
+
+```bash
+INSTALL_OCR=true docker compose up -d --build
+```
+
+The regular image deliberately omits those heavy packages and returns `503` only when a request
+actually needs PaddleOCR. Imports and model initialization are lazy, so startup and all quality
+gates remain model-free. Poppler is installed in the backend runtime for the encapsulated
+`pdf2image` PDF-page renderer. PaddlePaddle's published platform wheels determine which CPU
+architectures can build the optional image; on ARM hosts an amd64 container/emulation may be
+required. PaddleOCR can fetch model assets during its first real initialization; production
+deployments should pre-provision and cache the approved model assets instead of relying on an
+outbound runtime download.
 
 ## Configuration
 

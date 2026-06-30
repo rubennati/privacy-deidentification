@@ -91,6 +91,88 @@ class AuditArtifact(BaseModel):
         return self
 
 
+class TextPageResult(BaseModel):
+    """Ordered text extracted from one PDF or image page."""
+
+    page_number: int = Field(ge=1)
+    source: Literal["pdf_text_layer", "paddleocr"]
+    has_text_layer: bool
+    ocr_used: bool
+    text: str
+    text_char_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate_page_summary(self) -> TextPageResult:
+        if self.text_char_count != len(self.text):
+            raise ValueError("page text character count does not match text")
+        expected = (self.source == "pdf_text_layer", self.source == "paddleocr")
+        if (self.has_text_layer, self.ocr_used) != expected:
+            raise ValueError("page source does not match text-layer and OCR flags")
+        return self
+
+
+class TextContent(BaseModel):
+    """Versioned text output produced by the OCR workstation."""
+
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_audit_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    source: Literal["pdf_mixed", "pdf_text_layer", "docx_text", "paddleocr"]
+    ocr_version: Literal["1"] = "1"
+    text: str
+    text_char_count: int = Field(ge=0)
+    pages: list[TextPageResult] = Field(default_factory=list)
+    tool_versions: dict[str, str] = Field(default_factory=dict)
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_text_summary(self) -> TextContent:
+        if self.text_char_count != len(self.text):
+            raise ValueError("text character count does not match text")
+        if self.source == "docx_text":
+            if self.pages:
+                raise ValueError("DOCX text must not contain synthetic pages")
+            return self
+        if [page.page_number for page in self.pages] != list(range(1, len(self.pages) + 1)):
+            raise ValueError("text page numbers must be contiguous and start at 1")
+        if self.text != "\n\n".join(page.text for page in self.pages):
+            raise ValueError("combined text does not match ordered page text")
+        if self.pages:
+            page_sources = {page.source for page in self.pages}
+            expected_source = (
+                "pdf_mixed"
+                if len(page_sources) > 1
+                else next(iter(page_sources))
+            )
+            if self.source != expected_source:
+                raise ValueError("text source does not match page sources")
+        return self
+
+
+class TextArtifact(BaseModel):
+    """Immutable JSON artifact emitted by the OCR workstation."""
+
+    id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_type: Literal["text_result"] = "text_result"
+    station: Literal["ocr"] = "ocr"
+    input_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_audit_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    media_type: Literal["application/json"] = "application/json"
+    created_at: str
+    content: TextContent
+
+    @model_validator(mode="after")
+    def _validate_content_identity(self) -> TextArtifact:
+        if self.content.document_id != self.document_id:
+            raise ValueError("text content belongs to a different document")
+        if self.content.input_artifact_id != self.input_artifact_id:
+            raise ValueError("text content references a different original artifact")
+        if self.content.input_audit_artifact_id != self.input_audit_artifact_id:
+            raise ValueError("text content references a different audit artifact")
+        return self
+
+
 class UploadAccepted(BaseModel):
     """Returned when an upload passes validation and is stored."""
 

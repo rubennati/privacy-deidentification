@@ -8,3 +8,5 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   metadata and embedded original artifact in the existing JSON sidecar.
 - [ADR-0003](../docs/adr/0003-audit-station.md) — Synchronous Audit v1 with immutable,
   file-based JSON result artifacts.
+- [ADR-0004](../docs/adr/0004-ocr-workstation.md) — Synchronous per-page OCR/text routing with
+  replaceable PaddleOCR and PDF-rendering adapter boundaries.
