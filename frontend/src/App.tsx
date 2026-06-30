@@ -1,13 +1,19 @@
 import { Route, Routes } from "react-router-dom";
 
+import { NavBar } from "./components/NavBar";
+import DocumentsPage from "./pages/DocumentsPage";
 import LandingPage from "./pages/LandingPage";
 import UploadPage from "./pages/UploadPage";
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/upload" element={<UploadPage />} />
-    </Routes>
+    <>
+      <NavBar />
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/upload" element={<UploadPage />} />
+        <Route path="/documents" element={<DocumentsPage />} />
+      </Routes>
+    </>
   );
 }

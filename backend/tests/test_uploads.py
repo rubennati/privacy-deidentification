@@ -24,9 +24,9 @@ def test_accepts_valid_pdf(client: TestClient, upload_dir: Path) -> None:
     assert body["id"]
 
     stored = list(upload_dir.iterdir())
-    assert len(stored) == 1
-    assert stored[0].name == f"{body['id']}.pdf"
-    assert stored[0].read_bytes() == _PDF_BYTES
+    assert {path.name for path in stored} == {f"{body['id']}.pdf", f"{body['id']}.meta.json"}
+    stored_file = upload_dir / f"{body['id']}.pdf"
+    assert stored_file.read_bytes() == _PDF_BYTES
 
 
 def test_rejects_unsupported_type(client: TestClient, upload_dir: Path) -> None:
@@ -74,5 +74,5 @@ def test_sanitizes_traversal_filename_and_stores_under_uuid(
     assert "/" not in returned_name and ".." not in returned_name
 
     stored = list(upload_dir.iterdir())
-    assert len(stored) == 1
-    assert stored[0].parent == upload_dir
+    assert len(stored) == 2  # stored file + metadata sidecar
+    assert all(path.parent == upload_dir for path in stored)

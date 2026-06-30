@@ -14,6 +14,17 @@ class UploadAccepted(BaseModel):
     status: str = Field(default="received", description="Processing status.")
 
 
+class DocumentSummary(BaseModel):
+    """Public representation of an uploaded document, as returned by the documents API."""
+
+    id: str = Field(description="Server-generated identifier for the stored document.")
+    filename: str = Field(description="Sanitized original filename.")
+    size: int = Field(description="Stored size in bytes.", ge=0)
+    content_type: str | None = Field(default=None, description="MIME type, if known.")
+    uploaded_at: str = Field(description="Upload timestamp, UTC ISO 8601.")
+    status: str = Field(default="received", description="Processing status.")
+
+
 class ErrorResponse(BaseModel):
     """Uniform error body. Never contains stack traces or internal details."""
 

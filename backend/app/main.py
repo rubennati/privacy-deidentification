@@ -11,11 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from app import __version__
-from app.api import health, uploads
+from app.api import documents, health, uploads
 from app.config import get_settings
+from app.errors import ApiError
 from app.logging import configure_logging, set_correlation_id
 from app.schemas import ErrorResponse
-from app.services.upload_service import UploadValidationError
 
 logger = logging.getLogger("app")
 
@@ -55,6 +55,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix="/api")
     app.include_router(uploads.router, prefix="/api")
+    app.include_router(documents.router, prefix="/api")
     return app
 
 
@@ -74,14 +75,12 @@ def _register_middleware(app: FastAPI) -> None:
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
-    @app.exception_handler(UploadValidationError)
-    async def handle_upload_validation(
-        request: Request, exc: UploadValidationError
-    ) -> JSONResponse:
+    @app.exception_handler(ApiError)
+    async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
         from app.logging import get_correlation_id
 
         correlation_id = get_correlation_id()
-        logger.info("upload rejected: %s", exc.code)
+        logger.info("request rejected (%s): %s", exc.status_code, exc.detail)
         body = ErrorResponse(detail=exc.detail, correlation_id=correlation_id)
         return JSONResponse(status_code=exc.status_code, content=body.model_dump())
 

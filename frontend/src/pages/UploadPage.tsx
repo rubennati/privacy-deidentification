@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { uploadDocument, UploadError } from "../api/uploads";
 import { HowItWorks } from "../components/HowItWorks";
@@ -24,7 +25,7 @@ export default function UploadPage() {
     try {
       const accepted = await uploadDocument(file);
       setStatus("success");
-      setMessage(`„${accepted.filename}“ wurde hochgeladen und wird vorbereitet.`);
+      setMessage(`„${accepted.filename}“ — Dokument wurde entgegengenommen.`);
     } catch (error) {
       setStatus("error");
       setMessage(
@@ -48,6 +49,13 @@ export default function UploadPage() {
 
         <UploadDropzone onFile={(file) => void handleFile(file)} disabled={status === "uploading"} />
         <StatusNotice status={status} message={message} />
+        {status === "success" && (
+          <p className="mt-3 text-center text-sm">
+            <Link to="/documents" className="font-medium text-accent-dark hover:underline">
+              Zu den Dokumenten →
+            </Link>
+          </p>
+        )}
         <HowItWorks />
       </div>
     </main>

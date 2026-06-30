@@ -3,7 +3,8 @@
 Validation happens at the trust boundary: allowed extension (whitelist) and size limit are
 enforced here, independent of the HTTP layer. Files are streamed to disk in bounded chunks so
 an oversized upload never has to fit in memory, and are stored under a generated UUID name to
-prevent path traversal. The original filename is kept only as returned metadata.
+prevent path traversal. The original filename is kept only as returned metadata. On success,
+metadata is persisted via the document service so the upload can be listed and deleted later.
 """
 
 from __future__ import annotations
@@ -14,27 +15,28 @@ from typing import Protocol
 from uuid import uuid4
 
 from app.config import Settings
+from app.errors import ApiError
 from app.schemas import UploadAccepted
+from app.services.document_service import create_document_record, save_metadata
 
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 _MAX_FILENAME_LEN = 255
 
 
-class UploadValidationError(Exception):
+class UploadValidationError(ApiError):
     """Raised when an upload fails validation. Carries a safe message and HTTP status."""
 
     def __init__(self, code: str, detail: str, status_code: int) -> None:
-        super().__init__(detail)
+        super().__init__(detail, status_code)
         self.code = code
-        self.detail = detail
-        self.status_code = status_code
 
 
 class _AsyncReadable(Protocol):
     """Minimal interface of Starlette's UploadFile used by this service."""
 
     filename: str | None
+    content_type: str | None
 
     async def read(self, size: int = -1) -> bytes: ...
 
@@ -80,6 +82,16 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
         raise UploadValidationError("empty_file", "The uploaded file is empty.", 400)
 
     partial.replace(destination)
+
+    record = create_document_record(
+        document_id=document_id,
+        filename=safe_name,
+        extension=extension,
+        size=size,
+        content_type=file.content_type,
+    )
+    save_metadata(settings, record)
+
     return UploadAccepted(id=document_id, filename=safe_name, size=size)
 
 
