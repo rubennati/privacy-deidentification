@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* Privacy-first palette. Defined once as design tokens; Tailwind generates the
+   corresponding bg-/text-/border-/ring- utilities (e.g. bg-accent-soft, text-ink). */
+@theme {
+  --color-page: #f3f5ef;
+  --color-card: #ffffff;
+  --color-card-border: #e1e6dc;
+  --color-ink: #111827;
+  --color-muted: #667085;
+  --color-accent: #2f6f5e;
+  --color-accent-dark: #1f4f43;
+  --color-accent-soft: #e6f1ec;
+  --color-dropzone: #f8faf7;
+  --color-dropzone-border: #d8e2d6;
+}
+
 :root {
   color-scheme: light;
 }

@@ -8,8 +8,8 @@ interface UploadDropzoneProps {
 }
 
 /**
- * The upload area from Screenshot 1: click to choose a file, drag & drop, or paste (Ctrl+V).
- * Rendered as a button so it is fully keyboard-operable.
+ * The upload area: click to choose a file, drag & drop, or paste a file. Rendered as a
+ * button so it is fully keyboard-operable.
  */
 export function UploadDropzone({ onFile, disabled = false }: UploadDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -25,7 +25,7 @@ export function UploadDropzone({ onFile, disabled = false }: UploadDropzoneProps
     [disabled, onFile],
   );
 
-  // Ctrl+V anywhere on the page inserts a file, as the tip promises.
+  // Pasting a file anywhere on the page also starts an upload (kept as a quiet convenience).
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => handleFiles(event.clipboardData?.files);
     window.addEventListener("paste", onPaste);
@@ -43,7 +43,7 @@ export function UploadDropzone({ onFile, disabled = false }: UploadDropzoneProps
       type="button"
       onClick={openFilePicker}
       disabled={disabled}
-      aria-label="Datei auswählen oder hierher ziehen"
+      aria-label="Datei auswählen oder hier ablegen"
       onDragOver={(event) => {
         event.preventDefault();
         if (!disabled) setIsDragging(true);
@@ -57,20 +57,16 @@ export function UploadDropzone({ onFile, disabled = false }: UploadDropzoneProps
       className={[
         "flex w-full flex-col items-center justify-center gap-3 rounded-xl px-6 py-12",
         "border-2 border-dashed text-center transition-colors",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900/40",
-        isDragging ? "border-gray-400 bg-gray-100" : "border-transparent bg-gray-50",
-        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-gray-100",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
+        isDragging ? "border-accent bg-accent-soft" : "border-dropzone-border bg-dropzone",
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-accent-soft/60",
       ].join(" ")}
     >
-      <span className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-900 text-white">
+      <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-accent">
         <UploadIcon />
       </span>
-      <span className="text-base text-gray-500">Klicken Sie hier um eine Datei auszuwählen</span>
-      <span className="text-sm text-gray-400">Unterstützt: PDF, DOCX, PNG, JPG</span>
-      <span className="text-sm text-gray-400">oder ziehen Sie eine Datei hierher</span>
-      <span className="text-xs text-gray-400">
-        Tipp: Sie können auch Strg+V drücken, um eine Datei einzufügen
-      </span>
+      <span className="text-base font-medium text-ink">Datei auswählen oder hier ablegen</span>
+      <span className="text-sm text-muted">Unterstützt: PDF, DOCX, PNG, JPG</span>
 
       <input
         ref={inputRef}

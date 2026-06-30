@@ -24,7 +24,7 @@ export default function App() {
     try {
       const accepted = await uploadDocument(file);
       setStatus("success");
-      setMessage(`„${accepted.filename}“ wurde hochgeladen und wird verarbeitet.`);
+      setMessage(`„${accepted.filename}“ wurde hochgeladen und wird vorbereitet.`);
     } catch (error) {
       setStatus("error");
       setMessage(
@@ -36,12 +36,13 @@ export default function App() {
   }, []);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#e8ece4] p-4">
-      <div className="w-full max-w-2xl rounded-2xl border border-black/5 bg-white p-8 shadow-sm sm:p-10">
+    <main className="flex min-h-screen items-center justify-center bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] p-4">
+      <div className="w-full max-w-2xl rounded-2xl border border-card-border bg-card p-8 shadow-[0_2px_12px_rgba(31,79,67,0.05)] sm:p-10">
         <header className="mb-6">
-          <h1 className="text-lg font-semibold text-gray-900">Dokument hochladen</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Laden Sie ein Dokument hoch. Nur Dateien mit Textinhalt können hochgeladen werden.
+          <h1 className="text-xl font-semibold text-ink">Dokumente sicher vorbereiten</h1>
+          <p className="mt-2 text-sm text-muted">
+            Laden Sie Dateien hoch, um sensible Inhalte für Review, De-Identification und sichere
+            Weiterverarbeitung vorzubereiten.
           </p>
         </header>
 

@@ -7,7 +7,7 @@ interface StatusNoticeProps {
 
 const STYLES: Record<Exclude<UploadStatus, "idle">, string> = {
   uploading: "bg-gray-50 text-gray-700 border-gray-200",
-  success: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  success: "bg-accent-soft text-accent-dark border-accent/20",
   error: "bg-red-50 text-red-800 border-red-200",
 };
 

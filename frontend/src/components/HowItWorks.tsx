@@ -1,31 +1,36 @@
 const STEPS = [
-  "Laden Sie eine Datei mit Textinhalt hoch",
-  "Unser KI-gestütztes System extrahiert alle sensiblen Daten",
-  "Alle sensiblen Informationen werden mit Codes ersetzt",
-  "Sie erhalten den anonymisierten Text",
+  "Dokument hochladen",
+  "Inhalte werden extrahiert und analysiert",
+  "Sensible Informationen werden geprüft und vorbereitet",
+  "Ergebnis für Export, Redaction oder Pseudonymisierung nutzen",
 ] as const;
 
-/** The "So einfach ist es!" explainer and the DSGVO footer from Screenshot 1. */
+/** The "So läuft es ab" process overview and the privacy-first footer badge. */
 export function HowItWorks() {
   return (
     <section className="mt-8">
-      <h2 className="text-sm font-medium text-gray-400">So einfach ist es!</h2>
+      <h2 className="text-sm font-medium text-ink">So läuft es ab</h2>
 
-      <ol className="mt-4 space-y-3">
+      <ol className="mt-4 grid gap-3 sm:grid-cols-2">
         {STEPS.map((step, index) => (
-          <li key={step} className="flex items-center gap-3">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+          <li
+            key={step}
+            className="flex items-start gap-3 rounded-lg border border-card-border bg-dropzone p-3"
+          >
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent">
               {index + 1}
             </span>
-            <span className="text-sm text-gray-600">{step}</span>
+            <span className="text-sm text-muted">{step}</span>
           </li>
         ))}
       </ol>
 
-      <p className="mt-8 flex items-center justify-center gap-2 text-sm text-gray-400">
-        <ShieldIcon />
-        DSGVO-konform • Maximale Sicherheit
-      </p>
+      <div className="mt-8 flex justify-center">
+        <span className="inline-flex items-center gap-2 rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent-dark">
+          <ShieldIcon />
+          Privacy-first • Kontrollierte Verarbeitung • Review vor Export
+        </span>
+      </div>
     </section>
   );
 }
@@ -33,8 +38,8 @@ export function HowItWorks() {
 function ShieldIcon() {
   return (
     <svg
-      width="16"
-      height="16"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
