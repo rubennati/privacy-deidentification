@@ -21,3 +21,7 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
 - [ADR-0008](../docs/adr/0008-separate-upload-and-document-data-storage.md) — Separate original
   uploads from per-document metadata and immutable artifacts, with validated deletion boundaries
   and no automatic migration of old local development data.
+- [ADR-0009](../docs/adr/0009-text-layer-quality-routing.md) — Text-layer quality gate: a pure,
+  dependency-free per-page heuristic (`text_quality.py`) classifies GOOD/LOW_CONFIDENCE/BROKEN/
+  EMPTY, audit records it additively (metrics only, no page text), and OCR/Text routes each page on
+  `needs_ocr` so broken/encoded text layers fall back to OCR instead of being used blindly.

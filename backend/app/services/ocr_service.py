@@ -15,6 +15,7 @@ from app.config import Settings
 from app.errors import ApiError
 from app.schemas import (
     AuditArtifact,
+    AuditPageResult,
     OriginalArtifact,
     TextArtifact,
     TextContent,
@@ -144,10 +145,10 @@ def _extract_pdf(
         ):
             if audit_page.page_number != page_number:
                 raise OcrConflictError("PDF audit page list is inconsistent.")
-            if audit_page.has_text_layer:
-                text = page.extract_text() or ""
-                source = "pdf_text_layer"
-            else:
+            if _page_needs_ocr(audit_page):
+                # Empty and broken/encoded text layers are routed to OCR. When OCR is required but
+                # its runtime is unavailable the adapter raises 503 — we never silently fall back
+                # to a broken text layer.
                 try:
                     image_path = pdf_renderer.render_page(
                         original_path, page_number, output_dir
@@ -156,6 +157,9 @@ def _extract_pdf(
                     raise OcrProcessingError("PDF page could not be rendered.") from exc
                 text = ocr_adapter.extract_text(image_path)
                 source = "paddleocr"
+            else:
+                text = page.extract_text() or ""
+                source = "pdf_text_layer"
             pages.append(
                 TextPageResult(
                     page_number=page_number,
@@ -183,6 +187,18 @@ def _extract_pdf(
         if used
     ]
     return _text_content(document_id, original, audit, source, text, pages, tool_versions, flags)
+
+
+def _page_needs_ocr(audit_page: AuditPageResult) -> bool:
+    """Decide whether a PDF page must be OCR'd instead of using its text layer.
+
+    Prefer the audit's per-page quality routing (``needs_ocr``): GOOD/LOW_CONFIDENCE keep the text
+    layer, BROKEN/EMPTY go to OCR. Audit artifacts written before the quality gate have no decision
+    recorded, so fall back to the original behavior: OCR only pages without any text layer.
+    """
+    if audit_page.needs_ocr is not None:
+        return audit_page.needs_ocr
+    return not audit_page.has_text_layer
 
 
 def _extract_docx(
