@@ -119,6 +119,21 @@ def _docx_bytes(*paragraphs: str) -> bytes:
     return buffer.getvalue()
 
 
+def _docx_with_table_bytes() -> bytes:
+    """A paragraph, a 2x2 table, then a paragraph — to exercise ordered table extraction."""
+    document = DocxDocument()
+    document.add_paragraph("Intro")
+    table = document.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = "R1C1"
+    table.rows[0].cells[1].text = "R1C2"
+    table.rows[1].cells[0].text = "R2C1"
+    table.rows[1].cells[1].text = "R2C2"
+    document.add_paragraph("Outro")
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
 def _image_bytes(image_format: str, size: tuple[int, int] = (10, 10)) -> bytes:
     buffer = BytesIO()
     Image.new("RGB", size, color="white").save(buffer, format=image_format)
@@ -219,6 +234,32 @@ def test_docx_extracts_paragraphs_without_ocr(
     content = response.json()["content"]
     assert content["source"] == "docx_text"
     assert content["text"] == "First\nSecond"
+    assert content["pages"] == []
+    assert adapter.calls == []
+    assert renderer.calls == []
+
+
+def test_docx_extracts_table_cells_in_document_order(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    upload, _ = _upload_and_audit(
+        client,
+        "tables.docx",
+        _docx_with_table_bytes(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["source"] == "docx_text"
+    # Deterministic order: leading paragraph, table rows (cells tab-joined, rows newline-joined),
+    # trailing paragraph. Table cell text must be present — paragraph-only extraction dropped it.
+    assert content["text"] == "Intro\nR1C1\tR1C2\nR2C1\tR2C2\nOutro"
+    assert content["text_char_count"] == len(content["text"])
     assert content["pages"] == []
     assert adapter.calls == []
     assert renderer.calls == []

@@ -22,7 +22,19 @@ _SUPPORTED_PII_ENTITY_TYPES = (
     "ORGANIZATION",
     "DATE_TIME",
 )
-_DEFAULT_PII_ENTITY_TYPES = _SUPPORTED_PII_ENTITY_TYPES
+# Default to the high-precision, pattern-based recognizers only. The spaCy NER types
+# (PERSON/ORGANIZATION/LOCATION) dominate the small German model's false positives at a fixed
+# ~0.85 score that the score threshold cannot discriminate, so they are opt-in via
+# PII_ENTITY_TYPES rather than default. DATE_TIME is likewise opt-in: it is noisy on the target
+# document corpus. All types remain supported.
+_DEFAULT_PII_ENTITY_TYPES = (
+    "EMAIL_ADDRESS",
+    "PHONE_NUMBER",
+    "IBAN_CODE",
+    "CREDIT_CARD",
+    "IP_ADDRESS",
+    "URL",
+)
 
 
 class Settings(BaseSettings):

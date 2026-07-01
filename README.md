@@ -109,8 +109,12 @@ Stack traces are not exposed to clients.
 
 ### Optional OCR runtime
 
-PDF text layers and DOCX body text are extracted without PaddleOCR. Image documents and PDF
-pages without a text layer require the optional PaddleOCR/PaddlePaddle runtime:
+PDF text layers and DOCX text are extracted without PaddleOCR. DOCX extraction is table-aware: a
+shared helper walks the document body in order and captures paragraphs, table cells (rows
+newline-separated, cells tab-separated), and defined section headers/footers, so table content is
+no longer dropped. Audit and OCR/Text use the same helper and therefore report the same DOCX
+character count. Image documents and PDF pages without a text layer require the optional
+PaddleOCR/PaddlePaddle runtime:
 
 ```bash
 INSTALL_OCR=true docker compose build backend
@@ -167,6 +171,15 @@ The optional `pii` dependency extra pins Presidio, spaCy, and the German
 `de_core_news_sm` model wheel, so the model is installed reproducibly during image build. Requests
 never download a model. Missing packages, an unavailable model, or a language/model mismatch
 returns `503`; normal tests replace the adapter and load no model.
+
+By default, PII detection uses only high-precision, pattern-based recognizers —
+`EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, CREDIT_CARD, IP_ADDRESS, URL`. The spaCy NER types
+`PERSON`, `ORGANIZATION`, and `LOCATION` are supported but **opt-in**, because the small German
+model over-tags them at a fixed score that the score threshold cannot filter; `DATE_TIME` is
+likewise opt-in. Enable any of them explicitly via `PII_ENTITY_TYPES`, e.g.
+`PII_ENTITY_TYPES=EMAIL_ADDRESS,PHONE_NUMBER,IBAN_CODE,CREDIT_CARD,IP_ADDRESS,URL,PERSON,ORGANIZATION,LOCATION,DATE_TIME`.
+The score threshold stays `0.5`. The `presidio-analyzer` logger is capped at WARNING so its
+initialization messages do not flood logs, while genuine warnings still surface.
 
 The runtime can be smoke-tested separately from the standard quality gates:
 

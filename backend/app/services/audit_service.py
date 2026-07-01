@@ -16,6 +16,7 @@ from app.errors import ApiError
 from app.schemas import AuditArtifact, AuditContent, AuditPageResult, OriginalArtifact
 from app.services.artifact_service import get_latest_audit_artifact, save_audit_artifact
 from app.services.document_service import DocumentNotFoundError, get_document_record
+from app.services.docx_extraction import extract_docx_text
 from app.services.original_artifact_service import get_verified_original
 
 _PDF_MIME_TYPE = "application/pdf"
@@ -111,15 +112,17 @@ def _analyze_docx(
     document_id: str, original: OriginalArtifact, original_path: Path
 ) -> AuditContent:
     document = DocxDocument(str(original_path))
-    paragraphs = list(document.paragraphs)
+    # Share OCR/Text's extraction so both stations count the same content, including tables and
+    # headers/footers. paragraph_count stays a body-level structural metric.
+    text = extract_docx_text(document)
     return AuditContent(
         document_id=document_id,
         input_artifact_id=original.id,
         detected_mime_type=original.mime_type,
         document_kind="docx",
-        paragraph_count=len(paragraphs),
+        paragraph_count=len(document.paragraphs),
         has_text_layer=True,
-        text_char_count=sum(len(paragraph.text) for paragraph in paragraphs),
+        text_char_count=len(text),
         flags=["docx_opened"],
         tool_versions={"python-docx": version("python-docx")},
     )

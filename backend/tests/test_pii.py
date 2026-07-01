@@ -25,6 +25,7 @@ class FakePiiAnalyzer:
     def __init__(self) -> None:
         self.results: dict[str, list[DetectedEntity]] = {}
         self.calls: list[str] = []
+        self.entity_types_seen: list[tuple[str, ...]] = []
         self.unavailable = False
         self.fail = False
 
@@ -36,6 +37,7 @@ class FakePiiAnalyzer:
         score_threshold: float,
     ) -> list[DetectedEntity]:
         self.calls.append(text)
+        self.entity_types_seen.append(entity_types)
         assert language == "de"
         assert entity_types
         assert score_threshold == 0.5
@@ -246,6 +248,38 @@ def test_empty_text_creates_empty_result_without_loading_analyzer(
     assert content["entity_counts"] == {}
     assert content["flags"] == ["empty_text"]
     assert pii_fake.calls == []
+
+
+def test_service_forwards_configured_allowlist_verbatim(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    # The shipped default allowlist: structured recognizers only, no spaCy NER.
+    settings.pii_entity_types = (
+        "EMAIL_ADDRESS",
+        "PHONE_NUMBER",
+        "IBAN_CODE",
+        "CREDIT_CARD",
+        "IP_ADDRESS",
+        "URL",
+    )
+    _save_text(settings, document_id, "Kontakt max@example.at")
+    pii_fake.results["Kontakt max@example.at"] = [_entity("EMAIL_ADDRESS", 8, 22, 1.0)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    # The analyzer is asked for exactly the configured types — the noisy spaCy NER types are
+    # never requested when they are not configured.
+    assert pii_fake.entity_types_seen == [settings.pii_entity_types]
+    for requested in pii_fake.entity_types_seen:
+        assert "PERSON" not in requested
+        assert "ORGANIZATION" not in requested
+        assert "LOCATION" not in requested
+    assert response.json()["content"]["configured_entity_types"] == list(
+        settings.pii_entity_types
+    )
 
 
 def test_missing_text_result_returns_409(

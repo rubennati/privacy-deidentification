@@ -26,6 +26,7 @@ from app.services.artifact_service import (
     save_text_artifact,
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
+from app.services.docx_extraction import extract_docx_text
 from app.services.ocr_adapters import OcrAdapter
 from app.services.original_artifact_service import get_verified_original
 from app.services.pdf_renderer import PdfRenderer
@@ -191,7 +192,7 @@ def _extract_docx(
     audit: AuditArtifact,
 ) -> TextContent:
     document = DocxDocument(str(original_path))
-    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    text = extract_docx_text(document)
     return _text_content(
         document_id,
         original,

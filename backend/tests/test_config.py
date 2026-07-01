@@ -38,3 +38,29 @@ def test_pii_configuration_is_normalized() -> None:
 def test_pii_configuration_rejects_unsupported_entity_type() -> None:
     with pytest.raises(ValueError):
         Settings(PII_ENTITY_TYPES="PERSON,CUSTOM_SECRET")
+
+
+def test_default_pii_entity_types_are_structured_recognizers_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PII_ENTITY_TYPES", raising=False)
+
+    settings = Settings()
+
+    assert settings.pii_entity_types == (
+        "EMAIL_ADDRESS",
+        "PHONE_NUMBER",
+        "IBAN_CODE",
+        "CREDIT_CARD",
+        "IP_ADDRESS",
+        "URL",
+    )
+    # The noisy spaCy NER types and DATE_TIME are opt-in, not default.
+    for opt_in in ("PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME"):
+        assert opt_in not in settings.pii_entity_types
+
+
+def test_spacy_ner_types_remain_supported_and_opt_in() -> None:
+    settings = Settings(PII_ENTITY_TYPES="PERSON,ORGANIZATION,LOCATION,DATE_TIME")
+
+    assert settings.pii_entity_types == ("PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME")

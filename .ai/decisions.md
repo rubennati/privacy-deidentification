@@ -12,3 +12,6 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   replaceable PaddleOCR and PDF-rendering adapter boundaries.
 - [ADR-0005](../docs/adr/0005-pii-workstation.md) — Synchronous, detection-only PII labeling over
   immutable text artifacts with a lazy Presidio/spaCy adapter.
+- [ADR-0006](../docs/adr/0006-docx-extraction-and-pii-precision.md) — Shared table-aware DOCX
+  extraction for Audit and OCR/Text, precision-first PII default allowlist (spaCy NER opt-in), and
+  Presidio log hardening.
