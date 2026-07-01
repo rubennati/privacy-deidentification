@@ -58,6 +58,13 @@
 - `GET /api/config` exposes the effective limits so the frontend mirrors the backend.
 - Security headers owned by nginx; backend emits structured JSON request logs with a
   correlation id (surfaced to users on errors).
+- A private, stdlib-only local benchmark runner (`scripts/benchmark/`, `make benchmark-private`)
+  reads existing audit/text/pii artifacts and matches them against private benchmark
+  metadata/candidate PII ground truth kept only under `volumes/benchmark/` (git-ignored). It never
+  triggers processing and its `privacy_guard.py` blocks report generation if a raw text/value
+  field or PII-shaped string would otherwise be written. See
+  [ADR-0010](../docs/adr/0010-private-benchmark-runner.md) and
+  [`scripts/benchmark/README.md`](../scripts/benchmark/README.md).
 
 ## Approach (tool-first / adapter-only)
 

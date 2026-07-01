@@ -9,6 +9,9 @@ BACKEND_RUN := docker run --rm -v "$(CURDIR)/backend":/app -v deid-backend-venv:
 	-w /app ghcr.io/astral-sh/uv:python3.12-bookworm-slim sh -lc
 FRONTEND_RUN := docker run --rm -v "$(CURDIR)/frontend":/app -v deid-frontend-modules:/app/node_modules \
 	-w /app node:22-alpine sh -lc
+# The private benchmark runner is stdlib-only (no app dependencies), so it gets its own minimal
+# Python image rather than the backend's uv-managed venv.
+BENCHMARK_RUN := docker run --rm -v "$(CURDIR)":/repo -w /repo python:3.12-slim sh -lc
 
 # Runtime profiles select the optional heavy extras via build args. The profile is chosen by the
 # target, not by .env, so `make up` is always slim regardless of local .env values. OCR/PII images
@@ -19,7 +22,8 @@ OCR   := INSTALL_OCR=true  INSTALL_PII=false BACKEND_MEMORY_LIMIT=2g
 FULL  := INSTALL_OCR=true  INSTALL_PII=true  BACKEND_MEMORY_LIMIT=2g
 
 .PHONY: help up up-pii up-ocr up-full down build build-pii build-ocr build-full rebuild \
-	ocr-models ocr-smoke pii-smoke logs ps lint typecheck test lock clean
+	ocr-models ocr-smoke pii-smoke logs ps lint typecheck test lock clean \
+	benchmark-private benchmark-private-json benchmark-test
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -92,3 +96,26 @@ lock: ## (Re)generate dependency lockfiles (backend uv.lock + frontend package-l
 
 clean: ## Remove tooling cache volumes
 	-docker volume rm deid-backend-venv deid-frontend-modules
+
+benchmark-private: ## Private local OCR/PII benchmark report (reads existing artifacts only; never triggers OCR/PII)
+	$(BENCHMARK_RUN) "python scripts/benchmark/private_benchmark.py \
+		--uploads-dir volumes/uploads \
+		--document-data-dir volumes/document-data \
+		--metadata volumes/benchmark/ocr_pii_benchmark_metadata.json \
+		--groundtruth volumes/benchmark/ocr_pii_benchmark_pii_groundtruth.json \
+		--output-dir volumes/benchmark/reports"
+
+benchmark-private-json: ## Same as benchmark-private, JSON report only
+	$(BENCHMARK_RUN) "python scripts/benchmark/private_benchmark.py \
+		--uploads-dir volumes/uploads \
+		--document-data-dir volumes/document-data \
+		--metadata volumes/benchmark/ocr_pii_benchmark_metadata.json \
+		--groundtruth volumes/benchmark/ocr_pii_benchmark_pii_groundtruth.json \
+		--output-dir volumes/benchmark/reports \
+		--json-only"
+
+benchmark-test: ## Run the private benchmark runner's synthetic unit tests (no OCR/PII deps)
+	$(BENCHMARK_RUN) "pip install --quiet pytest && python -m pytest scripts/benchmark/tests -q"
+
+bf: ## Build and force recreate
+	-docker compose up -d --build --force-recreate
