@@ -15,3 +15,6 @@ All notable changes to this project are documented here. The format is based on
   paste (Ctrl+V) upload with client- and server-side validation.
 - AI-collaboration workspace (`.ai/`), `AGENTS.md`/`CLAUDE.md`, and ADR-0001.
 - `Makefile` with shared quality commands (lint, typecheck, test, build, up, down).
+- Engine capability model under `docs/engine/` (OCR/Text, PII, and review/feedback level ladders,
+  artifact model, quality metrics, tool strategy, target architecture, roadmap) and ADR-0011.
+  Documentation only — no behaviour or dependency change.

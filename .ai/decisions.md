@@ -31,3 +31,10 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   `volumes/benchmark/` (git-ignored, never committed), and writes a markdown/JSON report guarded
   by `privacy_guard.py` so it can never contain raw text or PII values. Never triggers
   processing; missing artifacts are reported, not generated.
+- [ADR-0011](../docs/adr/0011-engine-capability-model.md) — Engine capability model
+  (`docs/engine/`): 0–10 level ladders for the OCR/Text, PII/sensitive-data, and review/feedback
+  sub-engines, plus artifact model, quality metrics, tool strategy, target architecture (DB +
+  optional local-AI questions), and a reframed Engine-0…9 roadmap. Docs-only, no behaviour/
+  dependency change. Anchors current standing (OCR L3/L4-partial, PII L1/L4-foundation, Review L1)
+  in the repo and one aggregate private benchmark run; establishes north star, canonical vs
+  human-readable text split, detection-only, and local/assistive/auditable AI guardrails.
