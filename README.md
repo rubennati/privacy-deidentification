@@ -320,6 +320,27 @@ artifact lineage visible, marks stale downstream results, and only overlays PII 
 artifact matches the displayed text. PII highlighting uses Unicode codepoint offsets and renders
 plain React text nodes—no HTML injection or source-text logging.
 
+## Private OCR/PII benchmark
+
+`scripts/benchmark/` is a local-only, standard-library-only tool that measures OCR/text-layer
+routing and PII precision/recall/F1 against a private local document corpus and a private
+candidate PII ground truth, without generating or committing any of that data:
+
+```bash
+make benchmark-private          # markdown + JSON + CSV report under volumes/benchmark/reports/
+make benchmark-private-json     # JSON only
+```
+
+It only **reads** existing `document.json`/`audit_result`/`text_result`/`pii_result` artifacts
+under `volumes/document-data/` — it never triggers audit/OCR/PII processing, calls the API, or
+modifies/deletes a document. Missing artifacts are reported as `missing`, not generated. The
+private benchmark inputs (`volumes/benchmark/ocr_pii_benchmark_*.json`) and every generated
+report live under `volumes/`, which is entirely git-ignored (`/volumes/*`) — real documents,
+their metadata, and any extracted PII never reach the repository. A privacy guard
+(`scripts/benchmark/privacy_guard.py`) blocks report generation if a forbidden field name or a
+PII-shaped string is ever about to be written. See [`scripts/benchmark/README.md`](scripts/benchmark/README.md)
+for the full matching/metrics design and `make benchmark-test` for its synthetic-data test suite.
+
 ## Configuration
 
 Configuration is handled through environment variables.
@@ -345,6 +366,8 @@ make test        # backend tests
 make build       # build Docker images
 make up          # start the stack
 make down        # stop the stack
+make benchmark-private   # private local OCR/PII benchmark report (see above)
+make benchmark-test      # synthetic-data unit tests for the benchmark runner
 ```
 
 ## Repository structure
@@ -354,6 +377,7 @@ make down        # stop the stack
 ├─ .ai/                  # AI collaboration workspace
 ├─ backend/              # FastAPI backend
 ├─ frontend/             # React/Vite frontend served by nginx
+├─ scripts/benchmark/    # Private local OCR/PII benchmark runner (see scripts/benchmark/README.md)
 ├─ docs/adr/             # Architecture decision records
 ├─ docker-compose.yml
 ├─ Makefile

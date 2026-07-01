@@ -25,3 +25,9 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   dependency-free per-page heuristic (`text_quality.py`) classifies GOOD/LOW_CONFIDENCE/BROKEN/
   EMPTY, audit records it additively (metrics only, no page text), and OCR/Text routes each page on
   `needs_ocr` so broken/encoded text layers fall back to OCR instead of being used blindly.
+- [ADR-0010](../docs/adr/0010-private-benchmark-runner.md) — Private local OCR/PII benchmark
+  runner (`scripts/benchmark/`, stdlib-only): reads existing audit/text/pii artifacts, matches
+  them to private-only benchmark metadata and candidate PII ground truth under
+  `volumes/benchmark/` (git-ignored, never committed), and writes a markdown/JSON report guarded
+  by `privacy_guard.py` so it can never contain raw text or PII values. Never triggers
+  processing; missing artifacts are reported, not generated.
