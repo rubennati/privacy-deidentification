@@ -21,11 +21,12 @@ def live() -> HealthStatus:
 
 @router.get("/ready")
 def ready(settings: Settings = Depends(get_settings)) -> JSONResponse:
-    """Readiness: the upload directory exists and is writable."""
-    upload_dir = settings.upload_dir
+    """Readiness: both persistent storage directories exist and are writable."""
+    storage_directories = (settings.upload_storage_dir, settings.document_data_dir)
     try:
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        writable = os.access(upload_dir, os.W_OK)
+        for directory in storage_directories:
+            directory.mkdir(parents=True, exist_ok=True)
+        writable = all(os.access(directory, os.W_OK) for directory in storage_directories)
     except OSError:
         writable = False
 

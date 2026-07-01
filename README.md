@@ -2,7 +2,9 @@
 
 A Docker-first application foundation for privacy-focused document preparation and de-identification workflows.
 
-Users can upload documents through a web interface. The backend validates the upload, stores the file safely under `./volumes/uploads` on the host, and exposes health checks for local operation and development.
+Users can upload documents through a web interface. The backend validates each upload, stores
+only the original bytes under `./volumes/uploads`, and keeps metadata and processing artifacts
+separately under `./volumes/document-data`.
 
 > **Step 5:** This version provides upload/document management, structural Audit v1, the
 > synchronous OCR/Text and detection-only PII workstations, plus a manual document review UI.
@@ -22,14 +24,16 @@ handling, export logic and secure integration. See [`AGENTS.md`](AGENTS.md).
 Browser ──http://localhost:8080──▶ frontend (nginx)
                                      ├─ /       → React/Vite SPA
                                      └─ /api/*  → reverse proxy ─▶ backend (FastAPI :8000)
-                                                                    └─ stores uploads under
-                                                                       ./volumes/uploads
+                                                                    ├─ originals
+                                                                    │  ./volumes/uploads
+                                                                    └─ metadata + artifacts
+                                                                       ./volumes/document-data
 ```
 
 * **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. The frontend is the only public entry point and proxies API calls to the backend.
-* **backend** — Python 3.12 + FastAPI. Validates and accepts uploads, exposes health checks and writes accepted files to the upload directory.
+* **backend** — Python 3.12 + FastAPI. Validates uploads, stores originals, and manages document metadata and immutable result artifacts in separate storage roots.
 * **networking** — the backend is not published to the host. It is reachable only inside the Docker Compose network through the frontend proxy.
-* **runtime data** — uploaded files are bind-mounted from the container's `/data/uploads` to `./volumes/uploads` on the host, not committed to the repository (see `.gitignore`).
+* **runtime data** — `/data/uploads` is bind-mounted from `./volumes/uploads` for originals only; `/data/document-data` is bind-mounted from `./volumes/document-data` for metadata and artifacts. Neither host directory is committed (see `.gitignore`).
 
 See [`docs/adr/0001-stack-and-architecture.md`](docs/adr/0001-stack-and-architecture.md) for the stack decision and rationale.
 
@@ -79,7 +83,7 @@ and scanned PDF pages need the OCR runtime plus provisioned models.
 | Method | Path                   | Description                                                |
 | ------ | ---------------------- | ---------------------------------------------------------- |
 | GET    | `/api/health/live`     | Liveness check                                             |
-| GET    | `/api/health/ready`    | Readiness check, including upload directory access         |
+| GET    | `/api/health/ready`    | Readiness check for both persistent storage directories    |
 | GET    | `/api/config`          | Effective upload constraints (size limit, allowed types)   |
 | POST   | `/api/uploads`         | Upload one document via `multipart/form-data` field `file` |
 | GET    | `/api/documents`       | List uploaded documents, newest first                      |
@@ -122,6 +126,36 @@ Invalid uploads return clean JSON errors with a correlation ID:
 * `415` for unsupported file types
 
 Stack traces are not exposed to clients.
+
+### Storage layout
+
+New documents use two deliberately separate roots:
+
+```text
+volumes/
+├── uploads/
+│   └── <document_id>.<validated_extension>
+└── document-data/
+    └── <document_id>/
+        ├── document.json
+        └── artifacts/
+            └── <artifact_id>.json
+```
+
+`UPLOAD_STORAGE_DIR` contains byte-identical originals only. Storage filenames are generated
+from a server-side UUID; the user-visible Unicode filename is retained only in `document.json`
+and never used as a path. `DOCUMENT_DATA_DIR` contains one validated UUID-named directory per
+document. Audit, OCR/Text, and PII results are all immutable JSON files in that document's
+`artifacts/` directory. Deleting a document removes its UUID-named original and exactly its own
+document-data directory.
+
+#### Existing local development data
+
+There is no automatic migration and startup never moves or deletes existing files. Data created
+by older versions (`<id>.meta.json` and `artifacts/<id>/` below `volumes/uploads`) is intentionally
+not discovered by the new layout. For local development, re-upload those documents if they are
+still needed, or copy them manually only after backing up `volumes/` and reshaping them to the
+layout above. Old files remain untouched until a developer removes them explicitly.
 
 ### Optional OCR runtime
 
@@ -246,7 +280,8 @@ See [`.env.example`](.env.example) for available settings, including:
 
 * upload size limit
 * allowed file extensions
-* upload directory
+* original-upload directory (`UPLOAD_STORAGE_DIR`)
+* document metadata/artifact directory (`DOCUMENT_DATA_DIR`)
 * optional local OCR model directory
 * optional PII runtime, language, model, score threshold, and entity allowlist
 * log level

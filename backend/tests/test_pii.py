@@ -131,7 +131,10 @@ def _entity(
 
 
 def test_post_uses_latest_text_result_and_returns_entity_fields(
-    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    pii_fake: FakePiiAnalyzer,
 ) -> None:
     upload = _upload_document(client)
     document_id = str(upload["id"])
@@ -165,6 +168,8 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
         "recognizer": "FakeRecognizer",
     }
     assert pii_fake.calls == ["Max Mustermann"]
+    artifact_path = document_data_dir / document_id / "artifacts" / f"{artifact['id']}.json"
+    assert artifact_path.is_file()
 
 
 def test_pdf_pages_have_local_and_global_offsets(
@@ -293,11 +298,10 @@ def test_missing_text_result_returns_409(
 
 
 def test_invalid_text_result_returns_409(
-    client: TestClient, upload_dir: Path, pii_fake: FakePiiAnalyzer
+    client: TestClient, document_data_dir: Path, pii_fake: FakePiiAnalyzer
 ) -> None:
     upload = _upload_document(client)
-    directory = upload_dir / "artifacts" / str(upload["id"])
-    directory.mkdir(parents=True)
+    directory = document_data_dir / str(upload["id"]) / "artifacts"
     (directory / f"{uuid4().hex}.json").write_text(
         json.dumps({"artifact_type": "text_result", "content": "invalid"}),
         encoding="utf-8",
@@ -368,7 +372,7 @@ def test_analyzer_processing_failure_returns_422(
 def test_delete_removes_all_document_artifacts(
     client: TestClient,
     settings: Settings,
-    upload_dir: Path,
+    document_data_dir: Path,
     pii_fake: FakePiiAnalyzer,
 ) -> None:
     upload = _upload_document(client)
@@ -376,7 +380,7 @@ def test_delete_removes_all_document_artifacts(
     _save_text(settings, document_id, "Anna")
     pii_fake.results["Anna"] = [_entity("PERSON", 0, 4)]
     assert client.post(f"/api/documents/{document_id}/pii").status_code == 201
-    artifact_directory = upload_dir / "artifacts" / document_id
+    artifact_directory = document_data_dir / document_id / "artifacts"
     assert len(list(artifact_directory.glob("*.json"))) == 2
 
     response = client.delete(f"/api/documents/{document_id}")

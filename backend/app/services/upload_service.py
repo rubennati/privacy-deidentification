@@ -27,7 +27,11 @@ from zipfile import BadZipFile, ZipFile
 from app.config import Settings
 from app.errors import ApiError
 from app.schemas import UploadAccepted
-from app.services.document_service import create_document_record, delete_metadata, save_metadata
+from app.services.document_service import (
+    create_document_record,
+    delete_document_data,
+    save_metadata,
+)
 
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
 _MAX_FILENAME_LEN = 255
@@ -136,9 +140,9 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
             415,
         )
 
-    settings.upload_dir.mkdir(parents=True, exist_ok=True)
+    settings.upload_storage_dir.mkdir(parents=True, exist_ok=True)
     document_id = uuid4().hex
-    destination = settings.upload_dir / f"{document_id}.{extension}"
+    destination = settings.upload_storage_dir / f"{document_id}.{extension}"
     partial = destination.with_name(destination.name + ".part")
 
     size, head, sha256 = await _stream_to_disk(file, partial, settings.max_upload_bytes)
@@ -170,9 +174,9 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
         partial.unlink(missing_ok=True)
         raise RuntimeError("new document record has no original artifact")
 
-    # A filesystem cannot atomically rename two files as one transaction. Finalize the binary
-    # first so a visible sidecar never points at a missing original, then atomically finalize
-    # the staged sidecar. Ordinary failures are rolled back best-effort.
+    # The two storage roots cannot be finalized as one transaction. Finalize the binary first so
+    # visible metadata never points at a missing original, then atomically finalize document.json.
+    # Ordinary failures are rolled back best-effort.
     try:
         partial.replace(destination)
         save_metadata(settings, record)
@@ -182,7 +186,7 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
         with suppress(OSError):
             destination.unlink(missing_ok=True)
         with suppress(OSError):
-            delete_metadata(settings, document_id)
+            delete_document_data(settings, document_id)
         raise
 
     return UploadAccepted(

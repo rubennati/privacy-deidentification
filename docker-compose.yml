@@ -11,7 +11,8 @@ services:
     environment:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-pdf,docx,png,jpg,jpeg}
-      UPLOAD_DIR: /data/uploads
+      UPLOAD_STORAGE_DIR: ${UPLOAD_STORAGE_DIR:-/data/uploads}
+      DOCUMENT_DATA_DIR: ${DOCUMENT_DATA_DIR:-/data/document-data}
       # Container-internal model root. Ignored unless INSTALL_OCR=true and the read-only
       # ./volumes/ocr-models mount below is populated (see scripts/fetch-ocr-models.sh). If the
       # models are missing the OCR station correctly returns 503; it never downloads at runtime.
@@ -24,7 +25,8 @@ services:
       PII_ENTITY_TYPES: ${PII_ENTITY_TYPES:-EMAIL_ADDRESS,PHONE_NUMBER,IBAN_CODE,CREDIT_CARD,IP_ADDRESS,URL}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      - ./volumes/uploads:/data/uploads
+      - ./volumes/uploads:${UPLOAD_STORAGE_DIR:-/data/uploads}
+      - ./volumes/document-data:${DOCUMENT_DATA_DIR:-/data/document-data}
       # OCR models, read-only. Safe to mount even in slim mode: an empty/absent directory just
       # keeps the OCR station at 503. Never commit the contents (see .gitignore).
       - ./volumes/ocr-models:/models/ocr:ro

@@ -35,8 +35,8 @@ ARG INSTALL_OCR=false
 # Poppler provides pdftoppm/pdftocairo for pdf2image. When the optional OCR runtime is built in,
 # PaddleOCR/OpenCV need libGL + glib and PaddlePaddle's core needs libgomp (OpenMP) at import
 # time; install these only for OCR builds so the default slim image stays minimal. Create an
-# unprivileged user to run the service and pre-create the upload directory owned by that user so
-# an initially empty mounted volume inherits writable ownership.
+# unprivileged user to run the service and pre-create both persistent storage directories owned
+# by that user so initially empty mounted volumes inherit writable ownership.
 RUN apt-get update \
     && apt-get install --no-install-recommends --yes poppler-utils \
     && if [ "$INSTALL_OCR" = "true" ]; then \
@@ -45,7 +45,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --no-create-home app \
-    && mkdir -p /data/uploads \
+    && mkdir -p /data/uploads /data/document-data \
     && chown -R app:app /data
 
 WORKDIR /app

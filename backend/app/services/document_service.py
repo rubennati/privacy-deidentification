@@ -1,15 +1,16 @@
 """Document metadata persistence and lookup.
 
-Metadata is stored as a JSON sidecar file (``{id}.meta.json``) next to each uploaded file in
-the upload directory — no database. Document ids are generated server-side (``uuid4().hex``)
-and are validated against that exact shape before they are ever used to build a filesystem
-path, which rules out path traversal by construction rather than by sanitizing.
+Each document has an isolated directory under the document-data root. Its metadata is stored
+as ``document.json`` and derived results live below ``artifacts/``. Original bytes remain in
+the separate upload-storage root. Document ids are generated server-side (``uuid4().hex``)
+and validated before they are ever used to build a filesystem path.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import shutil
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,12 +21,12 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from app.config import Settings
 from app.errors import ApiError
 from app.schemas import DocumentSummary, OriginalArtifact
-from app.services.artifact_service import delete_document_artifacts
 
 _ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _EXTENSION_PATTERN = r"^[a-z0-9]{1,10}$"
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
-_METADATA_SUFFIX = ".meta.json"
+_METADATA_FILENAME = "document.json"
+_ARTIFACTS_DIRECTORY = "artifacts"
 
 
 class DocumentNotFoundError(ApiError):
@@ -36,7 +37,7 @@ class DocumentNotFoundError(ApiError):
 
 
 class DocumentRecord(BaseModel):
-    """Metadata persisted as a JSON sidecar next to each stored upload (internal format)."""
+    """Metadata persisted in one document-data directory (internal format)."""
 
     id: str = Field(pattern=_ID_PATTERN.pattern)
     filename: str
@@ -45,7 +46,7 @@ class DocumentRecord(BaseModel):
     content_type: str | None = None
     uploaded_at: str
     status: str = "received"
-    # Optional defaults preserve readability of sidecars created before Upload/Core metadata
+    # Optional defaults preserve readability of records created before Upload/Core metadata
     # was introduced. Every newly created record populates all three fields.
     sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
     detected_mime_type: str | None = None
@@ -117,7 +118,10 @@ def create_document_record(
 
 
 def save_metadata(settings: Settings, record: DocumentRecord) -> None:
-    """Persist metadata through a temporary sidecar and an atomic same-filesystem rename."""
+    """Create a document-data directory and atomically persist its metadata."""
+    document_directory = _document_directory(settings, record.id)
+    document_directory.mkdir(parents=True, exist_ok=True)
+    (document_directory / _ARTIFACTS_DIRECTORY).mkdir(exist_ok=True)
     destination = _metadata_path(settings, record.id)
     partial = destination.with_name(destination.name + ".part")
     try:
@@ -132,19 +136,21 @@ def save_metadata(settings: Settings, record: DocumentRecord) -> None:
         raise
 
 
-def delete_metadata(settings: Settings, document_id: str) -> None:
-    """Remove final and temporary metadata for rollback or document deletion."""
-    destination = _metadata_path(settings, document_id)
-    destination.unlink(missing_ok=True)
-    destination.with_name(destination.name + ".part").unlink(missing_ok=True)
+def delete_document_data(settings: Settings, document_id: str) -> None:
+    """Remove exactly one validated document-data directory, if it exists."""
+    directory = _document_directory(settings, document_id)
+    if directory.is_symlink():
+        directory.unlink()
+    elif directory.exists():
+        shutil.rmtree(directory)
 
 
 def list_documents(settings: Settings) -> list[DocumentSummary]:
-    """Return all stored documents, newest first. Unreadable sidecars are skipped."""
+    """Return all stored documents, newest first. Unreadable records are skipped."""
     records = [
         record
-        for meta_file in settings.upload_dir.glob(f"*{_METADATA_SUFFIX}")
-        if (record := _read_record(meta_file)) is not None
+        for meta_file in settings.document_data_dir.glob(f"*/{_METADATA_FILENAME}")
+        if (record := _read_record(meta_file, expected_id=meta_file.parent.name)) is not None
     ]
     records.sort(key=lambda record: record.uploaded_at, reverse=True)
     return [_to_summary(record) for record in records]
@@ -154,7 +160,7 @@ def get_document_record(settings: Settings, document_id: str) -> DocumentRecord 
     """Look up one document's metadata by id. Returns None for invalid or unknown ids."""
     if not is_valid_document_id(document_id):
         return None
-    return _read_record(_metadata_path(settings, document_id))
+    return _read_record(_metadata_path(settings, document_id), expected_id=document_id)
 
 
 def get_document(settings: Settings, document_id: str) -> DocumentSummary:
@@ -180,21 +186,29 @@ def delete_document(settings: Settings, document_id: str) -> None:
         if record.original_artifact is not None
         else f"{document_id}.{record.extension}"
     )
-    delete_document_artifacts(settings, document_id)
-    stored_file = settings.upload_dir / storage_filename
+    stored_file = settings.upload_storage_dir / storage_filename
     stored_file.unlink(missing_ok=True)
-    delete_metadata(settings, document_id)
+    delete_document_data(settings, document_id)
+
+
+def _document_directory(settings: Settings, document_id: str) -> Path:
+    if not is_valid_document_id(document_id):
+        raise ValueError("invalid document id")
+    return settings.document_data_dir / document_id
 
 
 def _metadata_path(settings: Settings, document_id: str) -> Path:
-    return settings.upload_dir / f"{document_id}{_METADATA_SUFFIX}"
+    return _document_directory(settings, document_id) / _METADATA_FILENAME
 
 
-def _read_record(path: Path) -> DocumentRecord | None:
+def _read_record(path: Path, expected_id: str | None = None) -> DocumentRecord | None:
     try:
-        return DocumentRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        record = DocumentRecord.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValidationError):
         return None
+    if expected_id is not None and record.id != expected_id:
+        return None
+    return record
 
 
 def _to_summary(record: DocumentRecord) -> DocumentSummary:

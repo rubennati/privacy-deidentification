@@ -79,23 +79,10 @@ def get_latest_pii_artifact(settings: Settings, document_id: str) -> PiiArtifact
     return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
 
 
-def delete_document_artifacts(settings: Settings, document_id: str) -> None:
-    """Delete all derived artifacts for one validated document id."""
-    directory = _document_artifact_directory(settings, document_id)
-    if not directory.is_dir():
-        return
-    for path in directory.iterdir():
-        if path.is_file():
-            path.unlink()
-    directory.rmdir()
-    with suppress(OSError):
-        directory.parent.rmdir()
-
-
 def _document_artifact_directory(settings: Settings, document_id: str) -> Path:
     if not _ID_PATTERN.fullmatch(document_id):
         raise ValueError("invalid document id")
-    return settings.upload_dir / _ARTIFACTS_DIRECTORY / document_id
+    return settings.document_data_dir / document_id / _ARTIFACTS_DIRECTORY
 
 
 def _save_artifact_json(

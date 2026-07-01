@@ -90,12 +90,18 @@ def _image_bytes(image_format: str, size: tuple[int, int]) -> bytes:
     return buffer.getvalue()
 
 
-def _metadata(upload_dir: Path, document_id: str) -> tuple[Path, dict[str, object]]:
-    path = upload_dir / f"{document_id}.meta.json"
+def _metadata(document_data_dir: Path, document_id: str) -> tuple[Path, dict[str, object]]:
+    path = document_data_dir / document_id / "document.json"
     return path, json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_audits_pdf_with_text_layer(client: TestClient, upload_dir: Path) -> None:
+def _artifact_directory(document_data_dir: Path, document_id: object) -> Path:
+    return document_data_dir / str(document_id) / "artifacts"
+
+
+def test_audits_pdf_with_text_layer(
+    client: TestClient, document_data_dir: Path
+) -> None:
     upload = _upload(client, "text.pdf", _pdf_bytes(text="Audit text"), "application/pdf")
 
     response = client.post(f"/api/documents/{upload['id']}/audit")
@@ -120,7 +126,7 @@ def test_audits_pdf_with_text_layer(client: TestClient, upload_dir: Path) -> Non
     ]
     assert content["flags"] == ["pdf_has_text_layer"]
     assert content["tool_versions"]["pypdf"]
-    artifact_path = upload_dir / "artifacts" / str(upload["id"]) / f"{artifact['id']}.json"
+    artifact_path = _artifact_directory(document_data_dir, upload["id"]) / f"{artifact['id']}.json"
     assert artifact_path.is_file()
 
 
@@ -261,11 +267,11 @@ def test_audits_image_dimensions(
 
 
 def test_dispatches_by_artifact_mime_not_extension(
-    client: TestClient, upload_dir: Path
+    client: TestClient, upload_dir: Path, document_data_dir: Path
 ) -> None:
     upload = _upload(client, "image.png", _image_bytes("PNG", (7, 9)), "image/png")
     document_id = str(upload["id"])
-    metadata_path, metadata = _metadata(upload_dir, document_id)
+    metadata_path, metadata = _metadata(document_data_dir, document_id)
     original = metadata["original_artifact"]
     assert isinstance(original, dict)
     old_path = upload_dir / str(original["storage_filename"])
@@ -281,12 +287,12 @@ def test_dispatches_by_artifact_mime_not_extension(
     assert response.json()["content"]["document_kind"] == "image"
 
 
-def test_legacy_sidecar_without_original_artifact_returns_409(
-    client: TestClient, upload_dir: Path
+def test_legacy_metadata_without_original_artifact_returns_409(
+    client: TestClient, document_data_dir: Path
 ) -> None:
     upload = _upload(client, "blank.pdf", _pdf_bytes(), "application/pdf")
     document_id = str(upload["id"])
-    metadata_path, metadata = _metadata(upload_dir, document_id)
+    metadata_path, metadata = _metadata(document_data_dir, document_id)
     metadata.pop("original_artifact")
     metadata.pop("sha256")
     metadata.pop("detected_mime_type")
@@ -295,11 +301,11 @@ def test_legacy_sidecar_without_original_artifact_returns_409(
     response = client.post(f"/api/documents/{document_id}/audit")
 
     assert response.status_code == 409
-    assert not (upload_dir / "artifacts").exists()
+    assert list(_artifact_directory(document_data_dir, document_id).iterdir()) == []
 
 
 def test_hash_mismatch_returns_409_without_artifact(
-    client: TestClient, upload_dir: Path
+    client: TestClient, upload_dir: Path, document_data_dir: Path
 ) -> None:
     upload = _upload(client, "blank.pdf", _pdf_bytes(), "application/pdf")
     original = upload["original_artifact"]
@@ -309,11 +315,11 @@ def test_hash_mismatch_returns_409_without_artifact(
     response = client.post(f"/api/documents/{upload['id']}/audit")
 
     assert response.status_code == 409
-    assert not (upload_dir / "artifacts").exists()
+    assert list(_artifact_directory(document_data_dir, upload["id"]).iterdir()) == []
 
 
 def test_missing_original_file_returns_409_without_artifact(
-    client: TestClient, upload_dir: Path
+    client: TestClient, upload_dir: Path, document_data_dir: Path
 ) -> None:
     upload = _upload(client, "blank.pdf", _pdf_bytes(), "application/pdf")
     original = upload["original_artifact"]
@@ -323,7 +329,7 @@ def test_missing_original_file_returns_409_without_artifact(
     response = client.post(f"/api/documents/{upload['id']}/audit")
 
     assert response.status_code == 409
-    assert not (upload_dir / "artifacts").exists()
+    assert list(_artifact_directory(document_data_dir, upload["id"]).iterdir()) == []
 
 
 def test_corrupt_file_returns_422(client: TestClient) -> None:
@@ -335,11 +341,11 @@ def test_corrupt_file_returns_422(client: TestClient) -> None:
 
 
 def test_unsupported_artifact_mime_returns_422(
-    client: TestClient, upload_dir: Path
+    client: TestClient, document_data_dir: Path
 ) -> None:
     upload = _upload(client, "blank.pdf", _pdf_bytes(), "application/pdf")
     document_id = str(upload["id"])
-    metadata_path, metadata = _metadata(upload_dir, document_id)
+    metadata_path, metadata = _metadata(document_data_dir, document_id)
     original = metadata["original_artifact"]
     assert isinstance(original, dict)
     original["mime_type"] = "application/octet-stream"
@@ -384,7 +390,7 @@ def test_get_returns_latest_audit(client: TestClient, monkeypatch: pytest.Monkey
 
 
 def test_artifact_finalize_failure_removes_partial_file(
-    client: TestClient, upload_dir: Path, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, document_data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     upload = _upload(client, "blank.pdf", _pdf_bytes(), "application/pdf")
     original_replace = Path.replace
@@ -399,17 +405,17 @@ def test_artifact_finalize_failure_removes_partial_file(
     with pytest.raises(OSError, match="simulated artifact finalize failure"):
         client.post(f"/api/documents/{upload['id']}/audit")
 
-    artifact_directory = upload_dir / "artifacts" / str(upload["id"])
+    artifact_directory = _artifact_directory(document_data_dir, upload["id"])
     assert artifact_directory.is_dir()
     assert list(artifact_directory.iterdir()) == []
 
 
 def test_delete_removes_audit_artifact_directory(
-    client: TestClient, upload_dir: Path
+    client: TestClient, upload_dir: Path, document_data_dir: Path
 ) -> None:
     upload = _upload(client, "blank.pdf", _pdf_bytes(), "application/pdf")
     assert client.post(f"/api/documents/{upload['id']}/audit").status_code == 201
-    artifact_directory = upload_dir / "artifacts" / str(upload["id"])
+    artifact_directory = _artifact_directory(document_data_dir, upload["id"])
     assert artifact_directory.is_dir()
 
     response = client.delete(f"/api/documents/{upload['id']}")

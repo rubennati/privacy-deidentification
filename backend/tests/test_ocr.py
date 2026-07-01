@@ -140,13 +140,15 @@ def _image_bytes(image_format: str, size: tuple[int, int] = (10, 10)) -> bytes:
     return buffer.getvalue()
 
 
-def _artifact_path(upload_dir: Path, document_id: object, artifact_id: object) -> Path:
-    return upload_dir / "artifacts" / str(document_id) / f"{artifact_id}.json"
+def _artifact_path(
+    document_data_dir: Path, document_id: object, artifact_id: object
+) -> Path:
+    return document_data_dir / str(document_id) / "artifacts" / f"{artifact_id}.json"
 
 
 def test_pdf_text_layer_creates_text_artifact_without_ocr(
     client: TestClient,
-    upload_dir: Path,
+    document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     adapter, renderer = ocr_fakes
@@ -179,12 +181,13 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     assert content["tool_versions"]["pypdf"]
     assert adapter.calls == []
     assert renderer.calls == []
-    assert _artifact_path(upload_dir, upload["id"], artifact["id"]).is_file()
+    assert _artifact_path(document_data_dir, upload["id"], artifact["id"]).is_file()
 
 
 def test_mixed_pdf_routes_each_page_and_preserves_order(
     client: TestClient,
     upload_dir: Path,
+    document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     adapter, renderer = ocr_fakes
@@ -212,7 +215,7 @@ def test_mixed_pdf_routes_each_page_and_preserves_order(
     assert all(path.parent == Path("/tmp") for path in renderer.output_directories)
     assert all(upload_dir not in path.parents for path in adapter.calls)
     assert all(not path.exists() for path in adapter.calls)
-    artifact_directory = upload_dir / "artifacts" / str(upload["id"])
+    artifact_directory = document_data_dir / str(upload["id"]) / "artifacts"
     assert all(path.suffix == ".json" for path in artifact_directory.rglob("*"))
 
 
@@ -303,14 +306,14 @@ def test_missing_audit_returns_409(
     assert response.status_code == 409
 
 
-def test_legacy_sidecar_without_original_artifact_returns_409(
+def test_legacy_metadata_without_original_artifact_returns_409(
     client: TestClient,
-    upload_dir: Path,
+    document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     upload = _upload(client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf")
     document_id = str(upload["id"])
-    metadata_path = upload_dir / f"{document_id}.meta.json"
+    metadata_path = document_data_dir / document_id / "document.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.pop("original_artifact")
     metadata.pop("sha256")
@@ -356,6 +359,7 @@ def test_get_returns_latest_text_artifact(
 def test_hash_mismatch_prevents_text_artifact(
     client: TestClient,
     upload_dir: Path,
+    document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     upload, audit = _upload_and_audit(
@@ -368,19 +372,19 @@ def test_hash_mismatch_prevents_text_artifact(
     response = client.post(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 409
-    artifact_directory = upload_dir / "artifacts" / str(upload["id"])
+    artifact_directory = document_data_dir / str(upload["id"]) / "artifacts"
     assert [path.stem for path in artifact_directory.glob("*.json")] == [str(audit["id"])]
 
 
 def test_audit_input_artifact_mismatch_returns_409(
     client: TestClient,
-    upload_dir: Path,
+    document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     upload, audit = _upload_and_audit(
         client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
     )
-    path = _artifact_path(upload_dir, upload["id"], audit["id"])
+    path = _artifact_path(document_data_dir, upload["id"], audit["id"])
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["input_artifact_id"] = "f" * 32
     payload["content"]["input_artifact_id"] = "f" * 32
@@ -393,13 +397,13 @@ def test_audit_input_artifact_mismatch_returns_409(
 
 def test_inconsistent_pdf_audit_page_list_returns_409(
     client: TestClient,
-    upload_dir: Path,
+    document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     upload, audit = _upload_and_audit(
         client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
     )
-    path = _artifact_path(upload_dir, upload["id"], audit["id"])
+    path = _artifact_path(document_data_dir, upload["id"], audit["id"])
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["content"]["pages"][0]["page_number"] = 2
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -443,13 +447,14 @@ def test_paddleocr_unavailable_returns_503(
 def test_corrupt_original_returns_422_after_integrity_validation(
     client: TestClient,
     upload_dir: Path,
+    document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     upload, _ = _upload_and_audit(
         client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
     )
     document_id = str(upload["id"])
-    metadata_path = upload_dir / f"{document_id}.meta.json"
+    metadata_path = document_data_dir / document_id / "document.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     original_path = upload_dir / metadata["original_artifact"]["storage_filename"]
     corrupt = b"%PDF-1.4 broken after audit"
@@ -468,14 +473,14 @@ def test_corrupt_original_returns_422_after_integrity_validation(
 
 def test_delete_removes_audit_and_text_artifacts(
     client: TestClient,
-    upload_dir: Path,
+    document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     upload, _ = _upload_and_audit(
         client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
     )
     assert client.post(f"/api/documents/{upload['id']}/ocr").status_code == 201
-    artifact_directory = upload_dir / "artifacts" / str(upload["id"])
+    artifact_directory = document_data_dir / str(upload["id"]) / "artifacts"
     assert len(list(artifact_directory.glob("*.json"))) == 2
 
     response = client.delete(f"/api/documents/{upload['id']}")
