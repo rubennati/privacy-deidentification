@@ -61,6 +61,10 @@ def configure_logging(level: str) -> None:
     root.setLevel(level.upper())
 
     # The application owns structured request logging; silence chatty third-party access logs
-    # so we don't emit a second, unstructured line per request.
-    for noisy in ("uvicorn.access", "httpx", "httpcore"):
+    # so we don't emit a second, unstructured line per request. Presidio emits a burst of
+    # INFO "recognizer loaded" lines when the analyzer engine initializes; capping it at
+    # WARNING drops that noise while still surfacing genuine problems (and never widening the
+    # decision-process logging, which stays disabled in the adapter so no analyzed text or
+    # entity values can reach the logs).
+    for noisy in ("uvicorn.access", "httpx", "httpcore", "presidio-analyzer"):
         logging.getLogger(noisy).setLevel(logging.WARNING)

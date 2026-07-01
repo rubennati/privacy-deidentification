@@ -69,6 +69,21 @@ def _docx_bytes(*paragraphs: str) -> bytes:
     return buffer.getvalue()
 
 
+def _docx_with_table_bytes() -> bytes:
+    """A paragraph, a 2x2 table, then a paragraph — to exercise ordered table extraction."""
+    document = DocxDocument()
+    document.add_paragraph("Intro")
+    table = document.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = "R1C1"
+    table.rows[0].cells[1].text = "R1C2"
+    table.rows[1].cells[0].text = "R2C1"
+    table.rows[1].cells[1].text = "R2C2"
+    document.add_paragraph("Outro")
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
 def _image_bytes(image_format: str, size: tuple[int, int]) -> bytes:
     buffer = BytesIO()
     Image.new("RGB", size, color="white").save(buffer, format=image_format)
@@ -199,9 +214,30 @@ def test_audits_docx_body_paragraphs(client: TestClient) -> None:
     content = response.json()["content"]
     assert content["document_kind"] == "docx"
     assert content["paragraph_count"] == 2
-    assert content["text_char_count"] == len("FirstSecond paragraph")
+    # Shared extraction joins body paragraphs with a newline (see docx_extraction).
+    assert content["text_char_count"] == len("First\nSecond paragraph")
     assert content["has_text_layer"] is True
     assert content["tool_versions"]["python-docx"]
+
+
+def test_audits_docx_counts_table_content(client: TestClient) -> None:
+    upload = _upload(
+        client,
+        "tables.docx",
+        _docx_with_table_bytes(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/audit")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["document_kind"] == "docx"
+    # Table cell text ("Intro\nR1C1\tR1C2\nR2C1\tR2C2\nOutro") must be counted, not just the
+    # body paragraphs — paragraph-only extraction would report far fewer characters.
+    expected = "Intro\nR1C1\tR1C2\nR2C1\tR2C2\nOutro"
+    assert content["text_char_count"] == len(expected)
+    assert content["text_char_count"] > len("IntroOutro")
 
 
 @pytest.mark.parametrize(

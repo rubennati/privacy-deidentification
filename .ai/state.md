@@ -19,13 +19,19 @@
 - Audit v1 verifies original integrity and records per-page PDF text-layer statistics, DOCX
   paragraph statistics, or PNG/JPEG dimensions as immutable JSON artifacts.
 - OCR/Text v1 reverifies the original, routes PDF pages individually between pypdf and a lazy
-  PaddleOCR adapter, extracts DOCX body paragraphs directly, and stores immutable text artifacts.
+  PaddleOCR adapter, extracts DOCX text via a shared table-aware helper (paragraphs, tables, and
+  section headers/footers in document order), and stores immutable text artifacts.
+- Audit and OCR/Text share one DOCX extraction helper (`services/docx_extraction.py`) so their
+  DOCX character counts cannot diverge (see [ADR-0006](../docs/adr/0006-docx-extraction-and-pii-precision.md)).
 - PDF rendering is isolated behind a pdf2image/Poppler adapter; PaddleOCR/PaddlePaddle are an
   optional image build extra so standard quality gates remain model-free.
 - OCR render workspaces live only on `/tmp` tmpfs. PaddleOCR requires explicitly provisioned local
   detection/recognition models and never intentionally downloads models as a fallback.
 - PII v1 analyzes page text separately where available, preserves exact page-local and global
   offsets, and stores immutable `pii_result` artifacts. It performs no anonymization or redaction.
+- PII defaults to high-precision structured recognizers only (EMAIL_ADDRESS, PHONE_NUMBER,
+  IBAN_CODE, CREDIT_CARD, IP_ADDRESS, URL); PERSON/ORGANIZATION/LOCATION and DATE_TIME stay
+  supported but opt-in via `PII_ENTITY_TYPES`. The `presidio-analyzer` logger is capped at WARNING.
 - Presidio/spaCy are isolated behind a lazy adapter and optional `pii` image extra; the pinned
   German model is installed at image build time and never downloaded during a request.
 - The document detail UI invokes each workstation manually, surfaces missing/stale/current

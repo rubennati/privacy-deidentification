@@ -35,12 +35,29 @@ def upload_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def settings(upload_dir: Path) -> Settings:
-    """Test settings with a small size limit so the 'too large' path is cheap to trigger."""
+    """Test settings with a small size limit so the 'too large' path is cheap to trigger.
+
+    PII detection tests inject spaCy NER types (PERSON/ORGANIZATION/LOCATION), so the fixture
+    enables every supported entity type explicitly. The shipped *default* allowlist (structured
+    recognizers only) is asserted separately in ``test_config.py``.
+    """
     return Settings(
         max_upload_bytes=_TEST_MAX_UPLOAD_BYTES,
         allowed_extensions="pdf,docx,png,jpg,jpeg",
         upload_dir=upload_dir,
         log_level="WARNING",
+        pii_entity_types=(
+            "PERSON",
+            "EMAIL_ADDRESS",
+            "PHONE_NUMBER",
+            "IBAN_CODE",
+            "CREDIT_CARD",
+            "IP_ADDRESS",
+            "URL",
+            "LOCATION",
+            "ORGANIZATION",
+            "DATE_TIME",
+        ),
     )
 
 
