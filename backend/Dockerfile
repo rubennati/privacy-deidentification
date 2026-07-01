@@ -4,6 +4,7 @@
 FROM python:3.12-slim AS builder
 
 ARG INSTALL_OCR=false
+ARG INSTALL_PII=false
 
 # uv is only a build tool here; runtime dependencies are pinned by uv.lock.
 RUN pip install --no-cache-dir "uv>=0.5,<1.0"
@@ -14,18 +15,16 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Install dependencies first (cached layer), then the project itself (baked into the venv).
 COPY pyproject.toml uv.lock ./
-RUN if [ "$INSTALL_OCR" = "true" ]; then \
-        uv sync --frozen --no-install-project --no-dev --extra ocr; \
-    else \
-        uv sync --frozen --no-install-project --no-dev; \
-    fi
+RUN extras=""; \
+    if [ "$INSTALL_OCR" = "true" ]; then extras="$extras --extra ocr"; fi; \
+    if [ "$INSTALL_PII" = "true" ]; then extras="$extras --extra pii"; fi; \
+    uv sync --frozen --no-install-project --no-dev $extras
 COPY README.md ./
 COPY app ./app
-RUN if [ "$INSTALL_OCR" = "true" ]; then \
-        uv sync --frozen --no-dev --no-editable --extra ocr; \
-    else \
-        uv sync --frozen --no-dev --no-editable; \
-    fi
+RUN extras=""; \
+    if [ "$INSTALL_OCR" = "true" ]; then extras="$extras --extra ocr"; fi; \
+    if [ "$INSTALL_PII" = "true" ]; then extras="$extras --extra pii"; fi; \
+    uv sync --frozen --no-dev --no-editable $extras
 
 # --- Runtime stage: minimal, non-root -----------------------------------------------------
 FROM python:3.12-slim AS runtime

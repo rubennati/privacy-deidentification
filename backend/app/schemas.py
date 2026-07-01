@@ -173,6 +173,109 @@ class TextArtifact(BaseModel):
         return self
 
 
+class PiiEntity(BaseModel):
+    """One labeled PII span referencing the source text exactly."""
+
+    id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    text: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=1)
+    page_number: int | None = Field(default=None, ge=1)
+    page_start_offset: int | None = Field(default=None, ge=0)
+    page_end_offset: int | None = Field(default=None, ge=1)
+    score: float = Field(ge=0, le=1)
+    recognizer: str
+
+    @model_validator(mode="after")
+    def _validate_offsets(self) -> PiiEntity:
+        if self.end_offset <= self.start_offset:
+            raise ValueError("entity end offset must be after start offset")
+        if self.end_offset - self.start_offset != len(self.text):
+            raise ValueError("entity offsets do not match entity text")
+        page_fields = (
+            self.page_number,
+            self.page_start_offset,
+            self.page_end_offset,
+        )
+        if any(value is None for value in page_fields) != all(
+            value is None for value in page_fields
+        ):
+            raise ValueError("page mapping fields must be all set or all absent")
+        if self.page_start_offset is not None and self.page_end_offset is not None:
+            if self.page_end_offset <= self.page_start_offset:
+                raise ValueError("page entity end offset must be after start offset")
+            if self.page_end_offset - self.page_start_offset != len(self.text):
+                raise ValueError("page entity offsets do not match entity text")
+        return self
+
+
+class PiiContent(BaseModel):
+    """Versioned detection-only output produced by the PII workstation."""
+
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    pii_version: Literal["1"] = "1"
+    language: str
+    score_threshold: float = Field(ge=0, le=1)
+    text_char_count: int = Field(ge=0)
+    configured_entity_types: list[str]
+    entities: list[PiiEntity] = Field(default_factory=list)
+    entity_counts: dict[str, int] = Field(default_factory=dict)
+    tool_versions: dict[str, str] = Field(default_factory=dict)
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_entity_summary(self) -> PiiContent:
+        if len(self.configured_entity_types) != len(set(self.configured_entity_types)):
+            raise ValueError("configured entity types must be unique")
+        configured = set(self.configured_entity_types)
+        if any(entity.entity_type not in configured for entity in self.entities):
+            raise ValueError("entity type was not configured")
+        if any(entity.end_offset > self.text_char_count for entity in self.entities):
+            raise ValueError("entity offset exceeds source text")
+        sort_keys = [
+            (
+                entity.start_offset,
+                entity.end_offset,
+                entity.entity_type,
+                entity.recognizer,
+                entity.text,
+                -entity.score,
+            )
+            for entity in self.entities
+        ]
+        if sort_keys != sorted(sort_keys):
+            raise ValueError("entities must be deterministically sorted")
+        counts: dict[str, int] = {}
+        for entity in self.entities:
+            counts[entity.entity_type] = counts.get(entity.entity_type, 0) + 1
+        if self.entity_counts != dict(sorted(counts.items())):
+            raise ValueError("entity counts do not match entities")
+        return self
+
+
+class PiiArtifact(BaseModel):
+    """Immutable JSON artifact emitted by the PII workstation."""
+
+    id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_type: Literal["pii_result"] = "pii_result"
+    station: Literal["pii"] = "pii"
+    input_text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    media_type: Literal["application/json"] = "application/json"
+    created_at: str
+    content: PiiContent
+
+    @model_validator(mode="after")
+    def _validate_content_identity(self) -> PiiArtifact:
+        if self.content.document_id != self.document_id:
+            raise ValueError("PII content belongs to a different document")
+        if self.content.input_text_artifact_id != self.input_text_artifact_id:
+            raise ValueError("PII content references a different text artifact")
+        return self
+
+
 class UploadAccepted(BaseModel):
     """Returned when an upload passes validation and is stored."""
 

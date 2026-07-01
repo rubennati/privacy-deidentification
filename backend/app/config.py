@@ -10,6 +10,19 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MiB
+_SUPPORTED_PII_ENTITY_TYPES = (
+    "PERSON",
+    "EMAIL_ADDRESS",
+    "PHONE_NUMBER",
+    "IBAN_CODE",
+    "CREDIT_CARD",
+    "IP_ADDRESS",
+    "URL",
+    "LOCATION",
+    "ORGANIZATION",
+    "DATE_TIME",
+)
+_DEFAULT_PII_ENTITY_TYPES = _SUPPORTED_PII_ENTITY_TYPES
 
 
 class Settings(BaseSettings):
@@ -34,6 +47,17 @@ class Settings(BaseSettings):
     )
     upload_dir: Path = Field(default=Path("/data/uploads"), alias="UPLOAD_DIR")
     ocr_model_dir: Path | None = Field(default=None, alias="OCR_MODEL_DIR")
+    pii_language: str = Field(default="de", min_length=1, alias="PII_LANGUAGE")
+    pii_spacy_model: str = Field(
+        default="de_core_news_sm", min_length=1, alias="PII_SPACY_MODEL"
+    )
+    pii_score_threshold: float = Field(
+        default=0.5, ge=0, le=1, alias="PII_SCORE_THRESHOLD"
+    )
+    pii_entity_types: Annotated[tuple[str, ...], NoDecode] = Field(
+        default=_DEFAULT_PII_ENTITY_TYPES,
+        alias="PII_ENTITY_TYPES",
+    )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @field_validator("allowed_extensions", mode="before")
@@ -52,6 +76,29 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
+
+    @field_validator("pii_language", mode="before")
+    @classmethod
+    def _normalize_pii_language(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("pii_entity_types", mode="before")
+    @classmethod
+    def _parse_pii_entity_types(cls, value: object) -> object:
+        if isinstance(value, str):
+            items = value.split(",")
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            items = list(value)
+        else:
+            return value
+        normalized = [str(item).strip().upper() for item in items if str(item).strip()]
+        unique = tuple(dict.fromkeys(normalized))
+        if not unique:
+            raise ValueError("PII_ENTITY_TYPES must contain at least one entity type")
+        unsupported = set(unique).difference(_SUPPORTED_PII_ENTITY_TYPES)
+        if unsupported:
+            raise ValueError("PII_ENTITY_TYPES contains unsupported entity types")
+        return unique
 
     @field_validator("ocr_model_dir", mode="before")
     @classmethod

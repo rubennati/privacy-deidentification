@@ -2,9 +2,9 @@
 
 > If this file conflicts with current git state (branch, commits), trust git.
 
-- Current phase: **Step 3 — OCR/Text Workstation v1**
-- Current objective: Produce immutable, ordered text artifacts from verified originals and the
-  newest matching audit without performing de-identification.
+- Current phase: **Step 4 — PII Workstation v1**
+- Current objective: Detect and label PII in the newest immutable text artifact without modifying
+  text or source documents.
 
 ## Snapshot
 
@@ -23,6 +23,10 @@
   optional image build extra so standard quality gates remain model-free.
 - OCR render workspaces live only on `/tmp` tmpfs. PaddleOCR requires explicitly provisioned local
   detection/recognition models and never intentionally downloads models as a fallback.
+- PII v1 analyzes page text separately where available, preserves exact page-local and global
+  offsets, and stores immutable `pii_result` artifacts. It performs no anonymization or redaction.
+- Presidio/spaCy are isolated behind a lazy adapter and optional `pii` image extra; the pinned
+  German model is installed at image build time and never downloaded during a request.
 - `GET /api/config` exposes the effective limits so the frontend mirrors the backend.
 - Security headers owned by nginx; backend emits structured JSON request logs with a
   correlation id (surfaced to users on errors).
@@ -37,8 +41,8 @@ logic and secure integration. See [`AGENTS.md`](../AGENTS.md).
 
 ## Immediate next steps
 
-1. Define the PII/detection station contract over immutable text artifacts.
-2. Add a detection adapter (Presidio/noirdoc) + a review step before any export.
+1. Define a human review contract over immutable PII labels.
+2. Design a separate redaction/export station after review approval.
 3. Add CI/CD gates (lint/typecheck/test/SAST/SCA).
 
 ## Active constraints
