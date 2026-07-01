@@ -154,6 +154,15 @@ class PresidioAnalyzerAdapter:
                 registry.load_predefined_recognizers(
                     languages=[self._language], nlp_engine=nlp_engine
                 )
+                # Presidio's predefined UrlRecognizer tags any ``label.tld`` — including an e-mail's
+                # domain and ccTLD look-alikes such as ``max.mu`` — as a URL at a fixed 0.50 score,
+                # which double-counts e-mails and floods structured precision. Drop it and rely on
+                # the e-mail-safe ``AtDeUrlRecognizer`` from the pack below for URL coverage.
+                if any(
+                    getattr(recognizer, "name", None) == "UrlRecognizer"
+                    for recognizer in registry.recognizers
+                ):
+                    registry.remove_recognizer("UrlRecognizer")
                 register_insurance_at_de_recognizers(
                     cast(RecognizerRegistry, registry),
                     cast(PresidioPatternApi, presidio),

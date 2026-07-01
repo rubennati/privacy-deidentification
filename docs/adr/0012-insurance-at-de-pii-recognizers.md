@@ -40,6 +40,11 @@ and would materially increase false positives.
 - Context patterns are deliberately conservative: identifiers without a known label or strong
   prefix can remain false negatives. Address/contact-line detection and seven benchmark semantic
   labels remain unsupported.
+- Presidio's predefined `UrlRecognizer` is unregistered because it tags any `label.tld` — including
+  an e-mail's own domain and ccTLD look-alikes such as `max.mu` — as a URL at a fixed 0.50 score,
+  double-counting e-mails and depressing structured precision. URL coverage comes from the pack's
+  e-mail-safe `AtDeUrlRecognizer` (scheme/`www` plus AT/DE/common-TLD bare domains); exotic TLDs are
+  now only detected when written with an explicit scheme or `www.`.
 - Candidate validation is still required in the next PR. Current patterns can produce false
   positives for format-strong values; no post-processing silently removes or re-scores candidates.
 - A private `review-heavy` before/after run materially improved global and domain-sensitive recall;

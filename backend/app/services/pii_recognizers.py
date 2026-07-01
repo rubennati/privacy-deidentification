@@ -3,6 +3,21 @@
 The specifications are dependency-free so the normal test suite stays model-free. The adapter
 materializes them as Presidio ``PatternRecognizer`` instances only when the optional PII runtime is
 first used.
+
+Matching policy (which types may match a value without an adjacent label):
+
+- Match directly (format-strong, low ambiguity): ``PHONE_NUMBER`` (``+43``/``+49``/``0…`` shapes),
+  ``UID_AT`` (``ATU`` + 8 digits), ``FN_AT`` (``FN`` + digits + check letter), ``BIC``,
+  ``IBAN_CODE`` (``AT``/``DE`` + fixed length), ``URL`` (scheme/``www`` or a bare domain that is
+  not part of an e-mail address). Each strong domain-identifier prefix (``POL-…``, ``SCH-…``,
+  ``AKT-…`` …) also matches directly because the prefix + separator structure is unambiguous.
+- Require an immediately adjacent, tested label (``\\bLABEL<sep>``) so a nearby word cannot boost an
+  unrelated number: ``SVNR_AT``, ``TAX_ID_AT``, ``CREDIT_CARD``, ``LICENSE_PLATE_AT``,
+  ``PASSPORT_NUMBER``, ``ID_CARD_NUMBER`` and the *generic* value form of every domain identifier
+  (``POLICY_NUMBER`` … ``USER_ID``). The match span is only the value, never the label.
+
+Format-strong direct matches can still be false positives on look-alike values; no candidate
+validation runs here — that is deliberately left to the Engine-5 follow-up.
 """
 
 from __future__ import annotations
@@ -222,8 +237,11 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
                 0.75,
             ),
             PatternSpec(
+                # The leading ``(?<![\w@.])`` excludes an e-mail's domain (``max@example.at``) and a
+                # sub-label suffix from matching as a bare domain, so a detected e-mail is not also
+                # double-counted as a URL. Genuine bare domains in running text still match.
                 "at_de_bare_domain",
-                r"(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:at|de|com|org|net|eu)\b(?:/[^\s<>()]*)?",
+                r"(?i)(?<![\w@.])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:at|de|com|org|net|eu)\b(?:/[^\s<>()]*)?",
                 0.65,
             ),
         ),
@@ -341,9 +359,13 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
         ("rechnungsnummer", "rechnungsnr", "rechnungsnr.", "rechnungs-nr", "invoice"),
     ),
     _domain_identifier(
+        # Only the separator-structured ``ANG-…`` form matches without a label; a bare ``AN`` +
+        # digits run is indistinguishable from ordinary German prose ("an" + a number) and is
+        # therefore left to the label-gated contextual pattern, consistent with every other
+        # generic domain identifier below.
         "OfferNumberRecognizer",
         "OFFER_NUMBER",
-        r"(?i)\b(?:AN\d{5,12}|ANG(?:[-/][A-Z0-9]+){1,5})\b",
+        r"(?i)\bANG(?:[-/][A-Z0-9]+){1,5}\b",
         ("angebotsnummer", "angebotsnr", "angebotsnr.", "angebots-nr", "offerte", "offer"),
     ),
     _domain_identifier(

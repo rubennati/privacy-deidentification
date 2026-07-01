@@ -44,8 +44,9 @@ CANONICAL_TYPE_MAP: dict[str, str] = {
     # concept the current pipeline has no dedicated recognizer for. Merging it would inflate
     # recall without the pipeline actually distinguishing birthdates from generic dates.
     "BIRTH_DATE": "BIRTH_DATE",
-    # Austrian / domain-sensitive identifiers: kept under their own canonical name (no current
-    # recognizer exists for any of these; see `TYPE_GROUPS["domain_sensitive_types"]`).
+    # Austrian / domain-sensitive identifiers: kept under their own canonical name. The Engine-4
+    # `insurance-at-de` pack now provides recognizers for these; see
+    # `TYPE_GROUPS["domain_sensitive_types"]`.
     "UID_AT": "UID_AT",
     "FN_AT": "FN_AT",
     "SVNR_AT": "SVNR_AT",

@@ -55,12 +55,22 @@ def test_presidio_is_loaded_lazily_and_decision_logging_is_disabled(
                 )
             ]
 
+    removed_recognizers: list[str] = []
+
     class FakeRegistry:
         def __init__(self, supported_languages: list[str]) -> None:
             assert supported_languages == ["de"]
+            self.recognizers: list[object] = []
 
         def load_predefined_recognizers(self, **kwargs: object) -> None:
             assert kwargs["languages"] == ["de"]
+            self.recognizers = [
+                SimpleNamespace(name="EmailRecognizer"),
+                SimpleNamespace(name="UrlRecognizer"),
+            ]
+
+        def remove_recognizer(self, name: str, language: object = None) -> None:
+            removed_recognizers.append(name)
 
         def add_recognizer(self, recognizer: object) -> None:
             registered_recognizers.append(recognizer)
@@ -77,16 +87,19 @@ def test_presidio_is_loaded_lazily_and_decision_logging_is_disabled(
         engine_arguments.append(kwargs)
         return FakeEngine()
 
-    def fake_import(name: str) -> object:
-        imports.append(name)
-        if name == "presidio_analyzer.nlp_engine":
-            return SimpleNamespace(NlpEngineProvider=FakeNlpProvider)
-        return SimpleNamespace(
+    fake_modules = {
+        "presidio_analyzer.nlp_engine": SimpleNamespace(NlpEngineProvider=FakeNlpProvider),
+        "presidio_analyzer": SimpleNamespace(
             RecognizerRegistry=FakeRegistry,
             AnalyzerEngine=analyzer_engine,
             Pattern=_FakePattern,
             PatternRecognizer=_FakePatternRecognizer,
-        )
+        ),
+    }
+
+    def fake_import(name: str) -> object:
+        imports.append(name)
+        return fake_modules[name]
 
     monkeypatch.setattr("app.services.pii_adapters.import_module", fake_import)
     adapter = PresidioAnalyzerAdapter("de", "de_core_news_sm")
@@ -96,6 +109,8 @@ def test_presidio_is_loaded_lazily_and_decision_logging_is_disabled(
 
     assert imports == ["presidio_analyzer", "presidio_analyzer.nlp_engine"]
     assert engine_arguments[0]["log_decision_process"] is False
+    # The noisy predefined UrlRecognizer is dropped in favour of the e-mail-safe custom one.
+    assert removed_recognizers == ["UrlRecognizer"]
     assert len(registered_recognizers) == len(INSURANCE_AT_DE_RECOGNIZER_SPECS)
     assert {recognizer.supported_entity for recognizer in registered_recognizers} >= {
         "UID_AT",

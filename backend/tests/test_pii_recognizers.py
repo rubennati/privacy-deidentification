@@ -110,7 +110,7 @@ def _matching_patterns(entity_type: str, value: str) -> list[PatternSpec]:
         ),
         (
             "OFFER_NUMBER",
-            ("AN2607003", "ANG/2026/0088", "Angebotsnummer: OFF-77882"),
+            ("ANG/2026/0088", "Angebotsnummer: AN2607003", "Angebotsnummer: OFF-77882"),
         ),
         (
             "CUSTOMER_NUMBER",
@@ -187,6 +187,47 @@ def test_generic_domain_ids_require_an_adjacent_label() -> None:
         assert matches
         assert min(pattern.score for pattern in matches) >= 0.5
         assert _SPECS_BY_TYPE[entity_type].context
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "text"),
+    [
+        # An e-mail's domain must not double-count as a bare URL (cross-type overlap).
+        ("URL", "max@example.at"),
+        ("URL", "Kontakt anna.huber@versicherung.at"),
+        # A BIC value carries no licence-plate label, so it must not surface as a plate.
+        ("LICENSE_PLATE_AT", "BKAUATWW"),
+        # A Firmenbuchnummer must not be read as a case number.
+        ("CASE_NUMBER", "FN 604478 p"),
+        # A UID is not a tax id (no adjacent tax label, letters present).
+        ("TAX_ID_AT", "ATU12345678"),
+        # Bare prefix+digits without a label stays out of the offer recognizer.
+        ("OFFER_NUMBER", "AN2607003"),
+        ("OFFER_NUMBER", "Position an 12 Stück, Menge 2607003"),
+        # Unlabelled number runs are not SVNR / tax / generic domain ids.
+        ("SVNR_AT", "1234 120478"),
+        ("TAX_ID_AT", "123456789"),
+        ("POLICY_NUMBER", "2025"),
+        ("CUSTOMER_NUMBER", "4711"),
+    ],
+)
+def test_values_without_their_own_context_do_not_leak_across_types(
+    entity_type: str, text: str
+) -> None:
+    high_confidence_matches = [
+        pattern
+        for pattern in _matching_patterns(entity_type, text)
+        if pattern.score >= 0.5
+    ]
+
+    assert high_confidence_matches == []
+
+
+def test_genuine_bare_domain_still_matches_as_url() -> None:
+    matches = _matching_patterns("URL", "Besuchen Sie service.example.at heute")
+
+    assert matches
+    assert max(pattern.score for pattern in matches) >= 0.5
 
 
 def test_all_recognizer_names_and_pattern_names_are_unique() -> None:
