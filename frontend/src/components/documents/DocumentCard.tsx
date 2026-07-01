@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import { formatBytes, formatTimestamp } from "../../lib/format";
 
 interface DocumentCardProps {
@@ -26,12 +28,15 @@ export function DocumentCard({
 
   return (
     <li className="flex items-center justify-between gap-4 rounded-xl border border-card-border bg-card p-4">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-ink">{filename}</p>
+      <Link
+        to={`/documents/${encodeURIComponent(id)}`}
+        className="min-w-0 flex-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      >
+        <p className="truncate text-sm font-medium text-ink hover:text-accent-dark">{filename}</p>
         <p className="mt-1 text-xs text-muted">
           {formatTimestamp(uploadedAt)} • {formatBytes(size)}
         </p>
-      </div>
+      </Link>
 
       <div className="flex shrink-0 items-center gap-3">
         <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent-dark">

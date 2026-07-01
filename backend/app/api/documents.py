@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Response, status
 
 from app.config import Settings, get_settings
 from app.schemas import DocumentSummary, ErrorResponse
-from app.services.document_service import delete_document, list_documents
+from app.services.document_service import delete_document, get_document, list_documents
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -15,6 +15,18 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 def get_documents(settings: Settings = Depends(get_settings)) -> list[DocumentSummary]:
     """List uploaded documents, newest first."""
     return list_documents(settings)
+
+
+@router.get(
+    "/{document_id}",
+    response_model=DocumentSummary,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_document_by_id(
+    document_id: str, settings: Settings = Depends(get_settings)
+) -> DocumentSummary:
+    """Return one uploaded document by its validated server-generated id."""
+    return get_document(settings, document_id)
 
 
 @router.delete(

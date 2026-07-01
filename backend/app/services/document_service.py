@@ -157,6 +157,14 @@ def get_document_record(settings: Settings, document_id: str) -> DocumentRecord 
     return _read_record(_metadata_path(settings, document_id))
 
 
+def get_document(settings: Settings, document_id: str) -> DocumentSummary:
+    """Return one public document representation or raise the existing safe 404."""
+    record = get_document_record(settings, document_id)
+    if record is None:
+        raise DocumentNotFoundError
+    return _to_summary(record)
+
+
 def delete_document(settings: Settings, document_id: str) -> None:
     """Delete a document's stored file and metadata.
 

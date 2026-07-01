@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
@@ -29,7 +30,6 @@ from app.schemas import UploadAccepted
 from app.services.document_service import create_document_record, delete_metadata, save_metadata
 
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
-_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 _MAX_FILENAME_LEN = 255
 _SIGNATURE_PREFIX_LEN = 8
 
@@ -66,11 +66,23 @@ class _AsyncReadable(Protocol):
     async def read(self, size: int = -1) -> bytes: ...
 
 
-def sanitize_filename(filename: str) -> str:
-    """Reduce a client-supplied filename to a safe basename for metadata/logging."""
-    base = Path(filename).name.strip()
-    base = _SAFE_FILENAME.sub("_", base)
-    base = base.strip("._") or "upload"
+def make_display_filename(filename: str) -> str:
+    """Derive a safe, human-readable display name from a client-supplied filename.
+
+    Unicode (umlauts, ß, …) is preserved for display. This value is metadata only and is
+    never used to build a filesystem path — storage uses a UUID name. Any path components are
+    dropped, control characters are removed, whitespace is collapsed and the length is capped.
+    """
+    # Keep only the last path component, regardless of separator style. This defuses path
+    # traversal for the display value; the stored path is a UUID either way.
+    base = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    base = unicodedata.normalize("NFC", base)
+    # Drop control characters (Unicode general category "C*": Cc, Cf, Cs, Co, Cn).
+    base = "".join(char for char in base if unicodedata.category(char)[0] != "C")
+    # Collapse whitespace runs (including tabs) to single spaces.
+    base = re.sub(r"\s+", " ", base).strip()
+    # Avoid leading dots (hidden-file styling) and empty results.
+    base = base.lstrip(".").strip() or "upload"
     return base[:_MAX_FILENAME_LEN]
 
 
@@ -114,7 +126,7 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
     if not raw_name:
         raise UploadValidationError("missing_filename", "A filename is required.", 400)
 
-    safe_name = sanitize_filename(raw_name)
+    display_name = make_display_filename(raw_name)
     extension = _extension_of(raw_name)
     if extension not in settings.allowed_extensions:
         allowed = ", ".join(sorted(settings.allowed_extensions))
@@ -146,7 +158,7 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
 
     record = create_document_record(
         document_id=document_id,
-        filename=safe_name,
+        filename=display_name,
         extension=extension,
         size=size,
         sha256=sha256,
@@ -175,7 +187,7 @@ async def store_upload(file: _AsyncReadable, settings: Settings) -> UploadAccept
 
     return UploadAccepted(
         id=document_id,
-        filename=safe_name,
+        filename=display_name,
         size=size,
         sha256=sha256,
         detected_mime_type=detected_mime_type,

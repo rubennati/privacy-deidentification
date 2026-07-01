@@ -9,6 +9,7 @@ picture and how to run everything with Docker Compose.
 - `GET /api/health/live` — liveness.
 - `GET /api/health/ready` — readiness (upload directory writable).
 - `POST /api/uploads` — upload one document (`multipart/form-data`, field `file`).
+- `GET /api/documents/{id}` — return one uploaded document's metadata.
 - `POST /api/documents/{id}/audit` — verify and audit an original artifact.
 - `GET /api/documents/{id}/audit` — return the newest audit result.
 - `POST /api/documents/{id}/ocr` — route text extraction from the original and latest audit.

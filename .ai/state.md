@@ -2,15 +2,16 @@
 
 > If this file conflicts with current git state (branch, commits), trust git.
 
-- Current phase: **Step 4 — PII Workstation v1**
-- Current objective: Detect and label PII in the newest immutable text artifact without modifying
-  text or source documents.
+- Current phase: **Step 5 — Manual document review UI**
+- Current objective: Let users inspect one document, explicitly run Audit/OCR/PII, and review
+  lineage-safe PII highlights without modifying text or source documents.
 
 ## Snapshot
 
 - Two-service architecture: `frontend` (nginx serving the React/Vite SPA + reverse-proxy
   `/api`) and `backend` (FastAPI). Backend is not published to the host.
-- Pages: `/` landing, `/upload` upload, `/documents` list + delete (top-aligned, consistent).
+- Pages: `/` landing, `/upload` upload, `/documents` list + delete, and
+  `/documents/{id}` manual workstation control + review.
 - Upload validates extension whitelist **and** magic-byte content signature, plus size; stores
   file + JSON metadata sidecar under `./volumes/uploads` (host bind mount).
 - New uploads compute SHA-256 while streaming, record a server-verified MIME type, and embed an
@@ -27,6 +28,10 @@
   offsets, and stores immutable `pii_result` artifacts. It performs no anonymization or redaction.
 - Presidio/spaCy are isolated behind a lazy adapter and optional `pii` image extra; the pinned
   German model is installed at image build time and never downloaded during a request.
+- The document detail UI invokes each workstation manually, surfaces missing/stale/current
+  lineage, and overlays only PII results matching the displayed text artifact.
+- PII highlighting validates Python Unicode-codepoint offsets in a pure tested helper; overlapping
+  entities are resolved deterministically while the entity list retains every detection.
 - `GET /api/config` exposes the effective limits so the frontend mirrors the backend.
 - Security headers owned by nginx; backend emits structured JSON request logs with a
   correlation id (surfaced to users on errors).
@@ -41,7 +46,7 @@ logic and secure integration. See [`AGENTS.md`](../AGENTS.md).
 
 ## Immediate next steps
 
-1. Define a human review contract over immutable PII labels.
+1. Define human review decisions over immutable PII labels.
 2. Design a separate redaction/export station after review approval.
 3. Add CI/CD gates (lint/typecheck/test/SAST/SCA).
 

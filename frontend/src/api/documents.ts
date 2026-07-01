@@ -1,5 +1,16 @@
-// Typed client for the documents endpoints (list + delete). Same-origin: nginx proxies
+// Typed client for the documents endpoints. Same-origin: nginx proxies
 // /api to the backend.
+
+export interface OriginalArtifact {
+  id: string;
+  document_id: string;
+  kind: "original";
+  storage_filename: string;
+  sha256: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+}
 
 export interface DocumentSummary {
   id: string;
@@ -8,6 +19,9 @@ export interface DocumentSummary {
   content_type: string | null;
   uploaded_at: string;
   status: string;
+  sha256: string | null;
+  detected_mime_type: string | null;
+  original_artifact: OriginalArtifact | null;
 }
 
 interface ApiError {
@@ -36,6 +50,14 @@ export async function fetchDocuments(): Promise<DocumentSummary[]> {
     await throwApiError(response);
   }
   return (await response.json()) as DocumentSummary[];
+}
+
+export async function fetchDocument(id: string): Promise<DocumentSummary> {
+  const response = await safeFetch(`${DOCUMENTS_ENDPOINT}/${encodeURIComponent(id)}`);
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+  return (await response.json()) as DocumentSummary;
 }
 
 export async function deleteDocument(id: string): Promise<void> {

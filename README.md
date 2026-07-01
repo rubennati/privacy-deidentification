@@ -4,9 +4,9 @@ A Docker-first application foundation for privacy-focused document preparation a
 
 Users can upload documents through a web interface. The backend validates the upload, stores the file safely under `./volumes/uploads` on the host, and exposes health checks for local operation and development.
 
-> **Step 4:** This version provides upload/document management, structural Audit v1, the
-> synchronous OCR/Text Workstation v1, and detection-only PII Workstation v1. Review,
-> anonymization and redaction remain separate later steps.
+> **Step 5:** This version provides upload/document management, structural Audit v1, the
+> synchronous OCR/Text and detection-only PII workstations, plus a manual document review UI.
+> Anonymization and redaction remain separate later steps.
 
 ## Approach: tool-first / adapter-only
 
@@ -67,6 +67,7 @@ docker compose down
 | GET    | `/api/config`          | Effective upload constraints (size limit, allowed types)   |
 | POST   | `/api/uploads`         | Upload one document via `multipart/form-data` field `file` |
 | GET    | `/api/documents`       | List uploaded documents, newest first                      |
+| GET    | `/api/documents/{id}`  | Get one uploaded document                                  |
 | DELETE | `/api/documents/{id}`  | Delete a document's file and metadata                      |
 | POST   | `/api/documents/{id}/audit` | Create an immutable Audit v1 result                   |
 | GET    | `/api/documents/{id}/audit`  | Get the newest Audit v1 result                       |
@@ -177,6 +178,14 @@ docker compose run --rm --no-deps backend python -c "from app.services.pii_adapt
 PII v1 only detects and labels spans in the persisted text artifact. It does not anonymize,
 mask, redact, or alter source documents. Detected entity text is stored in a cleartext JSON
 artifact under the same protected document artifact directory and is not written to logs.
+
+## Manual document review
+
+Open a document from `/documents` to use the detail page at `/documents/{id}`. Audit, OCR/Text,
+and PII are started explicitly and never trigger the next station automatically. The page keeps
+artifact lineage visible, marks stale downstream results, and only overlays PII whose input text
+artifact matches the displayed text. PII highlighting uses Unicode codepoint offsets and renders
+plain React text nodes—no HTML injection or source-text logging.
 
 ## Configuration
 

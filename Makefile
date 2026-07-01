@@ -42,8 +42,9 @@ typecheck: ## mypy (backend) + tsc (frontend)
 	$(BACKEND_RUN) "uv sync --frozen --quiet && uv run mypy app"
 	$(FRONTEND_RUN) "npm ci --no-audit --no-fund --silent && npm run typecheck"
 
-test: ## pytest (backend)
+test: ## pytest (backend) + Vitest (frontend)
 	$(BACKEND_RUN) "uv sync --frozen --quiet && uv run pytest"
+	$(FRONTEND_RUN) "npm ci --no-audit --no-fund --silent && npm test"
 
 lock: ## (Re)generate dependency lockfiles (backend uv.lock + frontend package-lock.json)
 	$(BACKEND_RUN) "uv lock"

@@ -45,6 +45,36 @@ def test_list_documents_returns_uploaded_documents(client: TestClient) -> None:
     assert body[0]["uploaded_at"]
 
 
+def test_get_document_returns_uploaded_document(client: TestClient) -> None:
+    upload = _post_file(client, "report.pdf", _PDF_BYTES, "application/pdf")
+    document_id = upload.json()["id"]
+
+    response = client.get(f"/api/documents/{document_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == document_id
+    assert body["filename"] == "report.pdf"
+    assert body["sha256"] == hashlib.sha256(_PDF_BYTES).hexdigest()
+    assert body["detected_mime_type"] == "application/pdf"
+    assert body["original_artifact"]["document_id"] == document_id
+
+
+def test_get_unknown_document_returns_404(client: TestClient) -> None:
+    response = client.get("/api/documents/" + "a" * 32)
+
+    assert response.status_code == 404
+    assert response.json()["correlation_id"]
+
+
+@pytest.mark.parametrize("unsafe_id", ["abc", "." * 32, "../../etc/passwd"])
+def test_get_document_rejects_unsafe_id(client: TestClient, unsafe_id: str) -> None:
+    response = client.get(f"/api/documents/{unsafe_id}")
+
+    assert response.status_code in (400, 404)
+    assert "Traceback" not in response.text
+
+
 def test_list_documents_returns_newest_first(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

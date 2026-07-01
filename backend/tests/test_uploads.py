@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
 from fastapi.testclient import TestClient
+
+from app.services.upload_service import make_display_filename
 
 _PDF_BYTES = b"%PDF-1.4 minimal test document"
 
@@ -181,6 +184,62 @@ def test_rejects_docx_without_plausible_ooxml_structure(
 
     assert response.status_code == 415
     assert list(upload_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Umlauts and sharp s are preserved for display.
+        (
+            "S80998-händisch korr KV Sachverständiger.pdf",
+            "S80998-händisch korr KV Sachverständiger.pdf",
+        ),
+        ("Prüfung.pdf", "Prüfung.pdf"),
+        ("Straße.pdf", "Straße.pdf"),
+        ("Öl-Bericht.pdf", "Öl-Bericht.pdf"),
+        # Path components are dropped (traversal defused for the display value).
+        ("../../etc/passwd.pdf", "passwd.pdf"),
+        ("..\\..\\windows\\evil.pdf", "evil.pdf"),
+        # Control characters are removed; surrounding whitespace collapses.
+        ("a\x00b\tc\nd.pdf", "abcd.pdf"),
+        ("   viele   Leerzeichen .pdf", "viele Leerzeichen .pdf"),
+        # Empty / dot-only names fall back to a placeholder.
+        ("", "upload"),
+        ("...", "upload"),
+    ],
+)
+def test_make_display_filename(raw: str, expected: str) -> None:
+    assert make_display_filename(raw) == expected
+
+
+def test_make_display_filename_normalizes_to_nfc() -> None:
+    # macOS often supplies filenames decomposed (NFD): base letter + combining mark. The
+    # display name must collapse that into composed codepoints (NFC) for consistent metadata.
+    # Both forms are derived at runtime so the assertion does not depend on the source encoding.
+    composed = unicodedata.normalize("NFC", "Sachverständiger.pdf")
+    decomposed = unicodedata.normalize("NFD", composed)
+    assert decomposed != composed  # sanity: the two normalization forms differ
+    assert make_display_filename(decomposed) == composed
+
+
+def test_preserves_unicode_display_filename_end_to_end(
+    client: TestClient, upload_dir: Path
+) -> None:
+    name = "S80998-händisch korr KV Sachverständiger.pdf"
+
+    response = _post_file(client, name, _PDF_BYTES, "application/pdf")
+
+    assert response.status_code == 201
+    body = response.json()
+    # The display name keeps the original Unicode exactly.
+    assert body["filename"] == name
+    # Storage stays UUID-based, never the original name.
+    assert body["original_artifact"]["storage_filename"] == f"{body['id']}.pdf"
+    stored = {path.name for path in upload_dir.iterdir()}
+    assert stored == {f"{body['id']}.pdf", f"{body['id']}.meta.json"}
+    # The sidecar persists the Unicode display name (UTF-8), not an ASCII-mangled one.
+    metadata = json.loads((upload_dir / f"{body['id']}.meta.json").read_text(encoding="utf-8"))
+    assert metadata["filename"] == name
 
 
 def test_metadata_failure_rolls_back_finalized_file(
