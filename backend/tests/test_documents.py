@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from pathlib import Path
 
 import pytest
@@ -89,15 +90,24 @@ def test_list_documents_returns_newest_first(
     assert [doc["filename"] for doc in response.json()] == ["second.pdf", "first.pdf"]
 
 
-def test_delete_removes_file_and_metadata(client: TestClient, upload_dir: Path) -> None:
+def test_delete_removes_original_and_only_its_document_data(
+    client: TestClient, upload_dir: Path, document_data_dir: Path
+) -> None:
     upload = _post_file(client, "report.pdf", _PDF_BYTES, "application/pdf")
     document_id = upload.json()["id"]
+    other_upload = _post_file(client, "other.pdf", _PDF_BYTES, "application/pdf")
+    other_document_id = other_upload.json()["id"]
 
     response = client.delete(f"/api/documents/{document_id}")
 
     assert response.status_code == 204
-    assert list(upload_dir.iterdir()) == []
-    assert client.get("/api/documents").json() == []
+    assert not (upload_dir / f"{document_id}.pdf").exists()
+    assert not (document_data_dir / document_id).exists()
+    assert (upload_dir / f"{other_document_id}.pdf").is_file()
+    assert (document_data_dir / other_document_id / "document.json").is_file()
+    assert [document["id"] for document in client.get("/api/documents").json()] == [
+        other_document_id
+    ]
 
 
 def test_delete_unknown_id_returns_404(client: TestClient) -> None:
@@ -107,6 +117,22 @@ def test_delete_unknown_id_returns_404(client: TestClient) -> None:
     body = response.json()
     assert body["correlation_id"]
     assert "/" not in body["detail"]
+
+
+def test_delete_rejects_metadata_from_a_different_document_directory(
+    client: TestClient, upload_dir: Path, document_data_dir: Path
+) -> None:
+    upload = _post_file(client, "report.pdf", _PDF_BYTES, "application/pdf").json()
+    document_id = str(upload["id"])
+    mismatched_id = "f" * 32
+    shutil.copytree(document_data_dir / document_id, document_data_dir / mismatched_id)
+
+    response = client.delete(f"/api/documents/{mismatched_id}")
+
+    assert response.status_code == 404
+    assert (upload_dir / f"{document_id}.pdf").is_file()
+    assert (document_data_dir / document_id / "document.json").is_file()
+    assert (document_data_dir / mismatched_id / "document.json").is_file()
 
 
 @pytest.mark.parametrize(
@@ -119,13 +145,17 @@ def test_delete_unknown_id_returns_404(client: TestClient) -> None:
     ],
 )
 def test_delete_rejects_unsafe_ids_without_leaking_internals(
-    client: TestClient, upload_dir: Path, malicious_id: str
+    client: TestClient,
+    upload_dir: Path,
+    document_data_dir: Path,
+    malicious_id: str,
 ) -> None:
     response = client.delete(f"/api/documents/{malicious_id}")
 
     assert response.status_code in (400, 404)
     assert "Traceback" not in response.text
     assert str(upload_dir) not in response.text
+    assert str(document_data_dir) not in response.text
 
 
 @pytest.mark.parametrize(

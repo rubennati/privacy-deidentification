@@ -1,4 +1,4 @@
-"""Shared pytest fixtures: a TestClient wired to an isolated, temporary upload directory."""
+"""Shared pytest fixtures with isolated upload and document-data directories."""
 
 from __future__ import annotations
 
@@ -27,14 +27,22 @@ _TEST_MAX_UPLOAD_BYTES = 1024
 
 @pytest.fixture
 def upload_dir(tmp_path: Path) -> Path:
-    """A writable, empty upload directory for a single test."""
+    """A writable, empty original-upload directory for a single test."""
     directory = tmp_path / "uploads"
     directory.mkdir()
     return directory
 
 
 @pytest.fixture
-def settings(upload_dir: Path) -> Settings:
+def document_data_dir(tmp_path: Path) -> Path:
+    """A writable, empty application-data directory for a single test."""
+    directory = tmp_path / "document-data"
+    directory.mkdir()
+    return directory
+
+
+@pytest.fixture
+def settings(upload_dir: Path, document_data_dir: Path) -> Settings:
     """Test settings with a small size limit so the 'too large' path is cheap to trigger.
 
     PII detection tests inject spaCy NER types (PERSON/ORGANIZATION/LOCATION), so the fixture
@@ -44,7 +52,8 @@ def settings(upload_dir: Path) -> Settings:
     return Settings(
         max_upload_bytes=_TEST_MAX_UPLOAD_BYTES,
         allowed_extensions="pdf,docx,png,jpg,jpeg",
-        upload_dir=upload_dir,
+        upload_storage_dir=upload_dir,
+        document_data_dir=document_data_dir,
         log_level="WARNING",
         pii_entity_types=(
             "PERSON",

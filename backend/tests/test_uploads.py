@@ -31,7 +31,9 @@ def _docx_bytes(*, include_content_types: bool = True, include_word_entry: bool 
     return buffer.getvalue()
 
 
-def test_accepts_valid_pdf(client: TestClient, upload_dir: Path) -> None:
+def test_accepts_valid_pdf(
+    client: TestClient, upload_dir: Path, document_data_dir: Path
+) -> None:
     response = _post_file(client, "report.pdf", _PDF_BYTES, "application/pdf")
 
     assert response.status_code == 201
@@ -42,13 +44,18 @@ def test_accepts_valid_pdf(client: TestClient, upload_dir: Path) -> None:
     assert body["id"]
 
     stored = list(upload_dir.iterdir())
-    assert {path.name for path in stored} == {f"{body['id']}.pdf", f"{body['id']}.meta.json"}
+    assert {path.name for path in stored} == {f"{body['id']}.pdf"}
     stored_file = upload_dir / f"{body['id']}.pdf"
     assert stored_file.read_bytes() == _PDF_BYTES
+    document_directory = document_data_dir / body["id"]
+    assert (document_directory / "document.json").is_file()
+    assert list((document_directory / "artifacts").iterdir()) == []
+    assert not any(path.is_file() for path in document_directory.glob("*.pdf"))
+    assert not any(path.suffix == ".json" for path in upload_dir.iterdir())
 
 
 def test_upload_returns_hash_detected_mime_and_original_artifact(
-    client: TestClient, upload_dir: Path
+    client: TestClient, document_data_dir: Path
 ) -> None:
     response = _post_file(client, "report.pdf", _PDF_BYTES, "application/octet-stream")
 
@@ -73,7 +80,9 @@ def test_upload_returns_hash_detected_mime_and_original_artifact(
     assert artifact["id"] != body["id"]
     assert artifact["created_at"]
 
-    metadata = json.loads((upload_dir / f"{body['id']}.meta.json").read_text(encoding="utf-8"))
+    metadata = json.loads(
+        (document_data_dir / body["id"] / "document.json").read_text(encoding="utf-8")
+    )
     assert metadata["sha256"] == expected_sha256
     assert metadata["detected_mime_type"] == "application/pdf"
     assert metadata["content_type"] == "application/pdf"
@@ -125,7 +134,7 @@ def test_sanitizes_traversal_filename_and_stores_under_uuid(
     assert "/" not in returned_name and ".." not in returned_name
 
     stored = list(upload_dir.iterdir())
-    assert len(stored) == 2  # stored file + metadata sidecar
+    assert len(stored) == 1
     assert all(path.parent == upload_dir for path in stored)
 
 
@@ -223,7 +232,7 @@ def test_make_display_filename_normalizes_to_nfc() -> None:
 
 
 def test_preserves_unicode_display_filename_end_to_end(
-    client: TestClient, upload_dir: Path
+    client: TestClient, upload_dir: Path, document_data_dir: Path
 ) -> None:
     name = "S80998-händisch korr KV Sachverständiger.pdf"
 
@@ -236,14 +245,19 @@ def test_preserves_unicode_display_filename_end_to_end(
     # Storage stays UUID-based, never the original name.
     assert body["original_artifact"]["storage_filename"] == f"{body['id']}.pdf"
     stored = {path.name for path in upload_dir.iterdir()}
-    assert stored == {f"{body['id']}.pdf", f"{body['id']}.meta.json"}
-    # The sidecar persists the Unicode display name (UTF-8), not an ASCII-mangled one.
-    metadata = json.loads((upload_dir / f"{body['id']}.meta.json").read_text(encoding="utf-8"))
+    assert stored == {f"{body['id']}.pdf"}
+    # document.json persists the Unicode display name (UTF-8), not an ASCII-mangled one.
+    metadata = json.loads(
+        (document_data_dir / body["id"] / "document.json").read_text(encoding="utf-8")
+    )
     assert metadata["filename"] == name
 
 
 def test_metadata_failure_rolls_back_finalized_file(
-    client: TestClient, upload_dir: Path, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    upload_dir: Path,
+    document_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_save_metadata(*args: object, **kwargs: object) -> None:
         raise OSError("simulated metadata write failure")
@@ -254,3 +268,4 @@ def test_metadata_failure_rolls_back_finalized_file(
         _post_file(client, "report.pdf", _PDF_BYTES, "application/pdf")
 
     assert list(upload_dir.iterdir()) == []
+    assert list(document_data_dir.iterdir()) == []

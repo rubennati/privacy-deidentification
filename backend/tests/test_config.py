@@ -2,10 +2,42 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+
+
+def test_storage_configuration_uses_clear_names_and_accepts_legacy_upload_dir() -> None:
+    settings = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+    )
+    legacy = Settings(UPLOAD_DIR="/tmp/legacy-uploads", DOCUMENT_DATA_DIR="/tmp/app-data")
+
+    assert settings.upload_storage_dir == Path("/tmp/originals")
+    assert settings.document_data_dir == Path("/tmp/document-data")
+    assert legacy.upload_storage_dir == Path("/tmp/legacy-uploads")
+
+
+@pytest.mark.parametrize(
+    ("upload_dir", "document_data_dir"),
+    [
+        ("/tmp/storage", "/tmp/storage"),
+        ("/tmp/storage", "/tmp/storage/document-data"),
+        ("/tmp/storage/uploads", "/tmp/storage"),
+    ],
+)
+def test_storage_configuration_rejects_equal_or_nested_roots(
+    upload_dir: str, document_data_dir: str
+) -> None:
+    with pytest.raises(ValueError, match="must be separate"):
+        Settings(
+            UPLOAD_STORAGE_DIR=upload_dir,
+            DOCUMENT_DATA_DIR=document_data_dir,
+        )
 
 
 def test_config_returns_effective_upload_constraints(client: TestClient) -> None:

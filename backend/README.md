@@ -7,7 +7,7 @@ picture and how to run everything with Docker Compose.
 ## Endpoints
 
 - `GET /api/health/live` — liveness.
-- `GET /api/health/ready` — readiness (upload directory writable).
+- `GET /api/health/ready` — readiness (both persistent storage directories writable).
 - `POST /api/uploads` — upload one document (`multipart/form-data`, field `file`).
 - `GET /api/documents/{id}` — return one uploaded document's metadata.
 - `POST /api/documents/{id}/audit` — verify and audit an original artifact.
@@ -22,14 +22,15 @@ picture and how to run everything with Docker Compose.
 
 - `app/config.py` — environment-based settings (`pydantic-settings`).
 - `app/api/` — HTTP routers (health, uploads, documents, audits).
-- `app/services/upload_service.py` — validation + safe storage (trust boundary).
+- `app/services/upload_service.py` — validation + safe original storage (trust boundary).
+- `app/services/document_service.py` — per-document metadata storage and deletion.
 - `app/services/audit_service.py` — synchronous PDF/DOCX/image structural analysis.
 - `app/services/ocr_service.py` — per-page text-layer/OCR routing and text artifact creation.
 - `app/services/ocr_adapters.py` — lazy PaddleOCR adapter boundary.
 - `app/services/pdf_renderer.py` — replaceable pdf2image/Poppler page renderer.
 - `app/services/pii_service.py` — page-aware detection orchestration and PII artifact creation.
 - `app/services/pii_adapters.py` — lazy Presidio/spaCy adapter boundary.
-- `app/services/artifact_service.py` — atomic file-based derived artifact storage.
+- `app/services/artifact_service.py` — atomic per-document derived artifact storage.
 - `app/main.py` — app factory, middleware (security headers, correlation id), error handling.
 - `tests/` — pytest suite (validation paths, health).
 

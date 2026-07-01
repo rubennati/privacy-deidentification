@@ -13,9 +13,10 @@
 - Pages: `/` landing, `/upload` upload, `/documents` list + delete, and
   `/documents/{id}` manual workstation control + review.
 - Upload validates extension whitelist **and** magic-byte content signature, plus size; stores
-  file + JSON metadata sidecar under `./volumes/uploads` (host bind mount).
+  only UUID-named originals under `./volumes/uploads` and per-document `document.json` plus
+  `artifacts/` under the separate `./volumes/document-data` bind mount.
 - New uploads compute SHA-256 while streaming, record a server-verified MIME type, and embed an
-  independently identified original artifact in the JSON sidecar.
+  independently identified original artifact in `document.json`.
 - Audit v1 verifies original integrity and records per-page PDF text-layer statistics, DOCX
   paragraph statistics, or PNG/JPEG dimensions as immutable JSON artifacts.
 - OCR/Text v1 reverifies the original, routes PDF pages individually between pypdf and a lazy
@@ -35,6 +36,10 @@
   [ADR-0007](../docs/adr/0007-ocr-runtime-and-model-provisioning.md).
 - PII v1 analyzes page text separately where available, preserves exact page-local and global
   offsets, and stores immutable `pii_result` artifacts. It performs no anonymization or redaction.
+- Audit, OCR/Text, and PII JSON artifacts live under
+  `document-data/{document_id}/artifacts/{artifact_id}.json`; delete removes the original and only
+  that document's validated data directory. Old co-located dev data is never migrated or deleted
+  automatically and must be re-uploaded or moved manually.
 - PII defaults to high-precision structured recognizers only (EMAIL_ADDRESS, PHONE_NUMBER,
   IBAN_CODE, CREDIT_CARD, IP_ADDRESS, URL); PERSON/ORGANIZATION/LOCATION and DATE_TIME stay
   supported but opt-in via `PII_ENTITY_TYPES`. The `presidio-analyzer` logger is capped at WARNING.

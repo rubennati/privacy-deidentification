@@ -18,3 +18,6 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
 - [ADR-0007](../docs/adr/0007-ocr-runtime-and-model-provisioning.md) — OCR runtime hardening
   (native libs, CPU MKL-DNN off, model names), idempotent PaddleOCR model provisioning under
   `volumes/ocr-models`, and slim/pii/ocr/full build profiles with smoke tests.
+- [ADR-0008](../docs/adr/0008-separate-upload-and-document-data-storage.md) — Separate original
+  uploads from per-document metadata and immutable artifacts, with validated deletion boundaries
+  and no automatic migration of old local development data.

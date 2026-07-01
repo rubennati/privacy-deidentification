@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MiB
@@ -57,7 +57,14 @@ class Settings(BaseSettings):
         default=frozenset({"pdf", "docx", "png", "jpg", "jpeg"}),
         alias="ALLOWED_EXTENSIONS",
     )
-    upload_dir: Path = Field(default=Path("/data/uploads"), alias="UPLOAD_DIR")
+    upload_storage_dir: Path = Field(
+        default=Path("/data/uploads"),
+        validation_alias=AliasChoices("UPLOAD_STORAGE_DIR", "UPLOAD_DIR"),
+    )
+    document_data_dir: Path = Field(
+        default=Path("/data/document-data"),
+        alias="DOCUMENT_DATA_DIR",
+    )
     ocr_model_dir: Path | None = Field(default=None, alias="OCR_MODEL_DIR")
     # Names of the locally provisioned PaddleOCR models. They must match the models placed under
     # OCR_MODEL_DIR/text_detection and OCR_MODEL_DIR/text_recognition (see
@@ -135,6 +142,21 @@ class Settings(BaseSettings):
     def _empty_model_name_falls_back_to_default(cls, value: object) -> object:
         """An empty env value means 'let PaddleOCR pick its default name' (None)."""
         return None if value == "" else value
+
+    @model_validator(mode="after")
+    def _storage_directories_are_separate(self) -> Settings:
+        """Reject equal or nested roots so originals and application data cannot mix."""
+        upload_root = self.upload_storage_dir.resolve()
+        document_root = self.document_data_dir.resolve()
+        if (
+            upload_root == document_root
+            or upload_root.is_relative_to(document_root)
+            or document_root.is_relative_to(upload_root)
+        ):
+            raise ValueError(
+                "UPLOAD_STORAGE_DIR and DOCUMENT_DATA_DIR must be separate directories"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

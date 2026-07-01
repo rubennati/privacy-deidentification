@@ -31,7 +31,7 @@ def get_verified_original(
     if original is None:
         raise OriginalArtifactConflictError("Document has no verified original artifact.")
 
-    original_path = settings.upload_dir / original.storage_filename
+    original_path = settings.upload_storage_dir / original.storage_filename
     if not original_path.is_file():
         raise OriginalArtifactConflictError("Original artifact file is unavailable.")
     if sha256_file(original_path) != original.sha256:
