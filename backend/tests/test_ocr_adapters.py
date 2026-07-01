@@ -67,6 +67,7 @@ def test_local_models_are_loaded_lazily_and_results_are_parsed(
     assert initialization_arguments == [
         {
             "device": "cpu",
+            "enable_mkldnn": False,
             "text_detection_model_dir": str(detection_dir),
             "text_recognition_model_dir": str(recognition_dir),
             "use_doc_orientation_classify": False,
@@ -74,6 +75,35 @@ def test_local_models_are_loaded_lazily_and_results_are_parsed(
             "use_textline_orientation": False,
         }
     ]
+
+
+def test_configured_model_names_are_passed_to_paddle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "text_detection").mkdir()
+    (tmp_path / "text_recognition").mkdir()
+    initialization_arguments: list[dict[str, object]] = []
+
+    class FakeEngine:
+        def predict(self, input: str) -> object:
+            return [SimpleNamespace(json={"res": {"rec_texts": ["ok"]}})]
+
+    def paddle_ocr(**kwargs: object) -> FakeEngine:
+        initialization_arguments.append(kwargs)
+        return FakeEngine()
+
+    monkeypatch.setattr(
+        "app.services.ocr_adapters.import_module",
+        lambda name: SimpleNamespace(PaddleOCR=paddle_ocr),
+    )
+
+    PaddleOcrAdapter(
+        tmp_path, "PP-OCRv5_mobile_det", "latin_PP-OCRv5_mobile_rec"
+    ).extract_text(tmp_path / "image.png")
+
+    (kwargs,) = initialization_arguments
+    assert kwargs["text_detection_model_name"] == "PP-OCRv5_mobile_det"
+    assert kwargs["text_recognition_model_name"] == "latin_PP-OCRv5_mobile_rec"
 
 
 def test_paddle_initialization_failure_returns_503(

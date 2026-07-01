@@ -23,6 +23,26 @@ def test_empty_ocr_model_directory_is_unconfigured() -> None:
     assert settings.ocr_model_dir is None
 
 
+def test_ocr_model_names_default_to_latin_capable_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OCR_DETECTION_MODEL_NAME", raising=False)
+    monkeypatch.delenv("OCR_RECOGNITION_MODEL_NAME", raising=False)
+
+    settings = Settings()
+
+    assert settings.ocr_detection_model_name == "PP-OCRv5_mobile_det"
+    # The Latin recognizer covers German/Latin-script documents (umlauts, ß).
+    assert settings.ocr_recognition_model_name == "latin_PP-OCRv5_mobile_rec"
+
+
+def test_empty_ocr_model_names_fall_back_to_paddle_default() -> None:
+    settings = Settings(OCR_DETECTION_MODEL_NAME="", OCR_RECOGNITION_MODEL_NAME="")
+
+    assert settings.ocr_detection_model_name is None
+    assert settings.ocr_recognition_model_name is None
+
+
 def test_pii_configuration_is_normalized() -> None:
     settings = Settings(
         PII_LANGUAGE=" DE ",

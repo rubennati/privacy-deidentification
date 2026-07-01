@@ -15,3 +15,6 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
 - [ADR-0006](../docs/adr/0006-docx-extraction-and-pii-precision.md) — Shared table-aware DOCX
   extraction for Audit and OCR/Text, precision-first PII default allowlist (spaCy NER opt-in), and
   Presidio log hardening.
+- [ADR-0007](../docs/adr/0007-ocr-runtime-and-model-provisioning.md) — OCR runtime hardening
+  (native libs, CPU MKL-DNN off, model names), idempotent PaddleOCR model provisioning under
+  `volumes/ocr-models`, and slim/pii/ocr/full build profiles with smoke tests.

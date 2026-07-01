@@ -27,6 +27,12 @@
   optional image build extra so standard quality gates remain model-free.
 - OCR render workspaces live only on `/tmp` tmpfs. PaddleOCR requires explicitly provisioned local
   detection/recognition models and never intentionally downloads models as a fallback.
+- OCR models are provisioned reproducibly via `scripts/fetch-ocr-models.sh` (`make ocr-models`)
+  into `volumes/ocr-models/{text_detection,text_recognition}`, mounted read-only at `/models/ocr`.
+  Default models: `PP-OCRv5_mobile_det` + `latin_PP-OCRv5_mobile_rec` (German/Latin). The adapter
+  passes model names and disables CPU MKL-DNN; OCR images add libGL/glib/libgomp. Build profiles
+  slim/pii/ocr/full via make targets; `make ocr-smoke`/`pii-smoke` test the real runtimes. See
+  [ADR-0007](../docs/adr/0007-ocr-runtime-and-model-provisioning.md).
 - PII v1 analyzes page text separately where available, preserves exact page-local and global
   offsets, and stores immutable `pii_result` artifacts. It performs no anonymization or redaction.
 - PII defaults to high-precision structured recognizers only (EMAIL_ADDRESS, PHONE_NUMBER,
