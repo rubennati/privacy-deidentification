@@ -130,6 +130,14 @@ def _build_synthetic_corpus(tmp_path: Path) -> SimpleNamespace:
                 ],
                 "entity_counts": {"EMAIL_ADDRESS": 1},
                 "flags": [],
+                "validation": {
+                    "enabled": True,
+                    "kept": 1,
+                    "dropped": 1,
+                    "score_down": 0,
+                    "dropped_by_reason": {"STOPWORD_ONLY": 1},
+                    "score_down_by_reason": {},
+                },
             },
         },
     )
@@ -218,6 +226,12 @@ def test_end_to_end_report_matches_and_scores(tmp_path: Path) -> None:
     assert pii_global["total_tp"] == 1
     assert pii_global["total_fp"] == 0
     assert pii_global["total_fn"] == 0
+
+    validation = report["pii_benchmark"]["validation"]
+    assert validation["documents_considered"] == 1
+    assert validation["total_kept"] == 1
+    assert validation["total_dropped"] == 1
+    assert validation["dropped_by_reason"] == {"STOPWORD_ONLY": 1}
 
 
 def test_end_to_end_report_json_contains_no_raw_or_masked_values(tmp_path: Path) -> None:

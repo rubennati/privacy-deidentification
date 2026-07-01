@@ -38,8 +38,8 @@ volumes/
 | `best_text_result` | ✅ today (as `text_result`) | **Canonical text** for PII + review | OCR/Text | **yes** | yes | yes (`text_result`) | yes | no (large/raw) |
 | `layout_text_result` | 🔜 planned (OCR L5–6) | **Human-readable** text: paragraphs, reading order, tables | OCR/Text | **yes** | yes | yes | yes | no |
 | `structured_document_result` | 🔜 planned (OCR L7) | Structured output: tables, sections, key-value pairs | OCR/Text | **yes** | yes | yes | partial (structure yes, values no) |
-| `pii_result` | ✅ today | Detected PII spans + offsets + per-type counts | PII | via spans | **yes** | yes | yes | yes (counts/offsets, not values) |
-| `pii_validation_result` | 🔜 planned (PII L5) | Per-candidate validation verdict + reason + score delta | PII (post-processing) | via referenced spans | yes | yes | yes | yes |
+| `pii_result` | ✅ today | Detected PII spans + offsets + per-type counts, **plus an additive Engine-5 candidate-validation summary and per-entity verdict** | PII (+ post-processing) | via spans | **yes** | yes | yes | yes (counts/offsets, not values) |
+| ~~`pii_validation_result`~~ | ✅ delivered differently (PII L5) | Considered as a separate artifact, **not built**: candidate validation is additive fields/summary directly on `pii_result` instead (no independent lineage — see [ADR-0013](../adr/0013-pii-candidate-validation.md)) | — | — | — | — | — | — |
 | `review_result` | 🔜 planned (Review L2+) | Human confirm/reject/add/comment over a `pii_result` | Review | via spans | yes | yes | yes | yes |
 | `benchmark_result` | ✅ today (private report) | Aggregate routing + PII P/R/F1 regression report | Benchmark runner | **no** (guarded) | **no** (guarded) | report file(s) | yes | yes (trend) |
 
@@ -70,23 +70,23 @@ at OCR L5–L6.
 - **Text artifacts** (`best_text_result`, `layout_text_result`, `structured_document_result`,
   `ocr_result`, `text_layer_result`) contain raw extracted text and therefore PII. They live only
   under the git-ignored document-data root, are never logged, and are **not** DB-indexed as raw text.
-- **PII artifacts** (`pii_result`, `pii_validation_result`, `review_result`) contain PII *values*
-  (as spans of the stored text) and stay inside the protected artifact directory in cleartext; they
-  are never written to logs.
+- **PII artifacts** (`pii_result`, `review_result`) contain PII *values* (as spans of the stored
+  text) and stay inside the protected artifact directory in cleartext; they are never written to
+  logs. Candidate validation (Engine-5) is additive fields/summary on `pii_result` — counts and
+  reason codes only, never a value — not a separate PII artifact.
 
 ## Versioning
 
 - Each artifact type carries an explicit version field (`audit_version`, `ocr_version`,
   `pii_version`) so its schema can evolve without breaking older artifacts. New artifact types
-  (`quality_report`, `layout_text_result`, `structured_document_result`, `pii_validation_result`,
-  `review_result`) will follow the same `<name>_version` convention.
+  (`quality_report`, `layout_text_result`, `structured_document_result`, `review_result`) will
+  follow the same `<name>_version` convention.
 - Artifacts are **append-only and immutable**: a re-run creates a new `artifact_id`, never mutates an
   existing one. "Latest" is resolved by creation time.
 - **Lineage** is explicit: `text_result` references its `input_artifact_id` (original) and
   `input_audit_artifact_id` (audit); `pii_result` references `input_text_artifact_id`. New artifacts
-  extend this chain (`pii_validation_result` → `pii_result`; `review_result` → `pii_result` +
-  `text_result`). Downstream artifacts whose input changed are marked **stale**, never silently
-  reused.
+  extend this chain (`review_result` → `pii_result` + `text_result`). Downstream artifacts whose
+  input changed are marked **stale**, never silently reused.
 - **Backward compatibility** is preserved additively: e.g. audit artifacts written before the L3
   quality gate have no `needs_ocr`, and routing falls back to the original `has_text_layer` rule.
   New fields are optional so older artifacts still validate.

@@ -80,6 +80,11 @@ class Settings(BaseSettings):
         default=_DEFAULT_PII_ENTITY_TYPES,
         alias="PII_ENTITY_TYPES",
     )
+    # Engine-5 candidate validation (subtractive post-processing, not a new recognizer). Defaults
+    # on; kept as an explicit escape hatch to fall back to raw detection output if needed.
+    pii_candidate_validation_enabled: bool = Field(
+        default=True, alias="PII_CANDIDATE_VALIDATION_ENABLED"
+    )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @field_validator("allowed_extensions", mode="before")

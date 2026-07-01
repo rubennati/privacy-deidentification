@@ -318,13 +318,31 @@ The last group includes sensitive document metadata, not only classical PII. Gen
 require an adjacent label; strong, type-specific formats can match directly. Presidio's existing
 types are reused for AT/DE phone, IBAN, credit card, and URL improvements.
 
-`structured-only` remains the default. The spaCy NER types remain **opt-in** because the small
-German model over-tags them at a fixed score that the score threshold cannot filter. Select a
-profile, for example `PII_PROFILE=insurance-at-de`. `PII_ENTITY_TYPES` remains a backwards-
-compatible explicit allowlist override and is recorded as profile `custom` if it differs from the
-selected profile. The score threshold stays `0.5`. Candidate validation/false-positive suppression
-is deliberately not part of this pack. The `presidio-analyzer` logger is capped at WARNING so its
-initialization messages do not flood logs, while genuine warnings still surface.
+`structured-only` is the conservative **code fallback** if `PII_PROFILE` is left completely unset
+(see `backend/app/config.py`, `docker-compose.yml`); it is intentionally narrow — high precision,
+low coverage. [`.env.example`](.env.example) instead sets the **recommended local review default**,
+`PII_PROFILE=review-heavy`, for broadest coverage when a human reviews the results. Use
+`insurance-at-de` for fewer false positives. The spaCy NER types remain **opt-in** (via
+`broad-review`/`review-heavy`) because the small German model over-tags them at a fixed score that
+the score threshold cannot filter.
+`PII_ENTITY_TYPES` remains a backwards-compatible explicit allowlist override — set, it replaces
+`PII_PROFILE` entirely and is recorded as profile `custom`; unset **or empty**, it has no effect
+and the selected profile applies. The score threshold stays `0.5`. The `presidio-analyzer` logger
+is capped at WARNING so its initialization messages do not flood logs, while genuine warnings
+still surface.
+
+After detection, **candidate validation** (Engine-5) inspects every already-detected candidate and
+keeps, downgrades, or drops it — a subtractive post-processing filter, never a new recognizer. Full
+lexical/context rules run on `PERSON`/`ORGANIZATION`/`LOCATION`/`DATE_TIME` (the dominant NER
+false-positive source); a lighter context-presence check runs on `BIC` and a handful of domain
+identifiers; every other type is an intentional pass-through. A dropped candidate never appears in
+`pii_result.entities`; a downgraded candidate's score is capped at `0.3` (below the default `0.5`
+threshold, so it is excluded from the final list unless the threshold is deliberately lowered).
+`pii_result` additively records, per surviving entity, `original_score`/`validation_status`/
+`validation_reasons`, plus a document-level `validation` summary (`kept`/`dropped`/`score_down` and
+reason-code counts — never a candidate's text). Set `PII_CANDIDATE_VALIDATION_ENABLED=false` to
+fall back to raw detection output. See
+[ADR-0013](docs/adr/0013-pii-candidate-validation.md) for the full rule set and rationale.
 
 The runtime can be smoke-tested separately from the standard quality gates:
 
@@ -379,6 +397,34 @@ See [`.env.example`](.env.example) for available settings, including:
 * optional local OCR model directory
 * optional PII runtime, language, model, score threshold, and entity allowlist
 * log level
+
+### Environment profiles
+
+For normal local testing, copy [`.env.example`](.env.example) to `.env` — it is heavily commented
+and is the source of truth for every setting below.
+
+**Recommended local mode:** `PII_PROFILE=review-heavy` with
+`PII_CANDIDATE_VALIDATION_ENABLED=true`, run via `make up-full` (needs `make ocr-models` once).
+This is what `.env.example` sets by default.
+
+**PII profile quick guide:**
+
+* `review-heavy` — default for local human review, broadest coverage
+* `broad-review` — broad NER without DATE_TIME
+* `insurance-at-de` — structured + AT/DE/domain IDs, fewer false positives
+* `structured-only` — minimal smoke-test profile
+
+If too little is detected, use `review-heavy` and rerun PII.
+If too much is detected, use `insurance-at-de`.
+
+Leave `PII_ENTITY_TYPES` commented out unless you intentionally want a custom allowlist instead of
+a named profile — see `.env.example` section 7 for exactly how it interacts with `PII_PROFILE`.
+
+**Common debugging steps:** after any `.env` change, recreate the containers (the relevant
+`make up*` target again) and re-run the affected station for the document you're checking —
+existing artifacts are immutable and never reflect a config change retroactively. If PII detection
+looks empty, see the "If PII detects nothing" checklist in `.env.example` section 14 before
+assuming something is broken.
 
 ## Development and quality
 

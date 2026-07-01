@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.errors import ApiError
-from app.schemas import PiiArtifact, PiiContent, PiiEntity, TextArtifact
+from app.schemas import PiiArtifact, PiiContent, PiiEntity, PiiValidationSummary, TextArtifact
 from app.services.artifact_service import (
     get_latest_pii_artifact,
     get_latest_text_artifact,
@@ -15,6 +15,7 @@ from app.services.artifact_service import (
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.pii_adapters import DetectedEntity, PiiAnalyzer
+from app.services.pii_candidate_validation import ValidatedEntity, validate_candidates
 
 
 class PiiConflictError(ApiError):
@@ -110,8 +111,16 @@ def _analyze_text(
         except Exception as exc:
             raise PiiProcessingError from exc
 
+    page_texts = _page_text_map(text_artifact)
+    validated_detected, validation_summary = validate_candidates(
+        detected,
+        page_texts,
+        settings.pii_score_threshold,
+        settings.pii_candidate_validation_enabled,
+    )
+
     try:
-        entities = _build_entities(text, detected)
+        entities = _build_entities(text, validated_detected)
     except ApiError:
         raise
     except Exception as exc:
@@ -131,24 +140,41 @@ def _analyze_text(
         entity_counts=dict(sorted(counts.items())),
         tool_versions={} if flags else analyzer.tool_versions(),
         flags=flags,
+        validation=PiiValidationSummary(
+            enabled=validation_summary.enabled,
+            kept=validation_summary.kept,
+            dropped=validation_summary.dropped,
+            score_down=validation_summary.score_down,
+            dropped_by_reason=validation_summary.dropped_by_reason,
+            score_down_by_reason=validation_summary.score_down_by_reason,
+        ),
     )
+
+
+def _page_text_map(text_artifact: TextArtifact) -> dict[int | None, str]:
+    """Map each page number (``None`` for a non-paged document) to its exact analyzed text, so
+    candidate validation can slice a local context window without re-deriving global offsets."""
+    if text_artifact.content.pages:
+        return {page.page_number: page.text for page in text_artifact.content.pages}
+    return {None: text_artifact.content.text}
 
 
 def _build_entities(
-    source_text: str, detected: list[tuple[DetectedEntity, int, int | None]]
+    source_text: str, validated: list[tuple[ValidatedEntity, int, int | None]]
 ) -> list[PiiEntity]:
     sorted_entities = sorted(
-        detected,
+        validated,
         key=lambda item: (
-            item[0].start + item[1],
-            item[0].end + item[1],
-            item[0].entity_type,
-            item[0].recognizer,
-            -item[0].score,
+            item[0].entity.start + item[1],
+            item[0].entity.end + item[1],
+            item[0].entity.entity_type,
+            item[0].entity.recognizer,
+            -item[0].entity.score,
         ),
     )
     entities: list[PiiEntity] = []
-    for detected_entity, global_base, page_number in sorted_entities:
+    for validated_entity, global_base, page_number in sorted_entities:
+        detected_entity = validated_entity.entity
         start = detected_entity.start + global_base
         end = detected_entity.end + global_base
         if (
@@ -170,6 +196,9 @@ def _build_entities(
                 page_end_offset=detected_entity.end if page_number is not None else None,
                 score=detected_entity.score,
                 recognizer=detected_entity.recognizer,
+                original_score=validated_entity.original_score,
+                validation_status=validated_entity.validation_status,
+                validation_reasons=list(validated_entity.validation_reasons),
             )
         )
     return entities

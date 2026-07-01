@@ -204,6 +204,30 @@ class PiiEntity(BaseModel):
     page_end_offset: int | None = Field(default=None, ge=1)
     score: float = Field(ge=0, le=1)
     recognizer: str
+    original_score: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description=(
+            "Detection score before Engine-5 candidate validation. None on artifacts written "
+            "before candidate validation existed, or equal to score when validation kept the "
+            "candidate unchanged."
+        ),
+    )
+    validation_status: Literal["kept", "score_down"] | None = Field(
+        default=None,
+        description=(
+            "Candidate validation verdict for this surviving entity. None on artifacts written "
+            "before candidate validation existed. Dropped candidates never appear here."
+        ),
+    )
+    validation_reasons: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Machine-readable validation reason codes; empty unless validation_status is "
+            "score_down."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_offsets(self) -> PiiEntity:
@@ -228,6 +252,18 @@ class PiiEntity(BaseModel):
         return self
 
 
+class PiiValidationSummary(BaseModel):
+    """Aggregate Engine-5 candidate-validation counts. Counts and reason codes only — never a
+    candidate's raw text, position, or context."""
+
+    enabled: bool
+    kept: int = Field(ge=0)
+    dropped: int = Field(ge=0)
+    score_down: int = Field(ge=0)
+    dropped_by_reason: dict[str, int] = Field(default_factory=dict)
+    score_down_by_reason: dict[str, int] = Field(default_factory=dict)
+
+
 class PiiContent(BaseModel):
     """Versioned detection-only output produced by the PII workstation."""
 
@@ -243,6 +279,13 @@ class PiiContent(BaseModel):
     entity_counts: dict[str, int] = Field(default_factory=dict)
     tool_versions: dict[str, str] = Field(default_factory=dict)
     flags: list[str] = Field(default_factory=list)
+    validation: PiiValidationSummary | None = Field(
+        default=None,
+        description=(
+            "Engine-5 candidate-validation summary. None on artifacts written before candidate "
+            "validation existed."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_entity_summary(self) -> PiiContent:

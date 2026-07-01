@@ -98,6 +98,18 @@ class DetectedEntity:
 
 
 @dataclass(frozen=True)
+class ValidationSummary:
+    """Engine-5 candidate-validation summary: counts and reason codes only, never a value."""
+
+    enabled: bool
+    kept: int
+    dropped: int
+    score_down: int
+    dropped_by_reason: dict[str, int]
+    score_down_by_reason: dict[str, int]
+
+
+@dataclass(frozen=True)
 class PiiSummary:
     artifact_id: str
     created_at: str
@@ -108,6 +120,7 @@ class PiiSummary:
     entities: tuple[DetectedEntity, ...]
     entity_counts: dict[str, int]
     flags: tuple[str, ...]
+    validation: ValidationSummary | None = None
 
 
 @dataclass(frozen=True)
@@ -293,6 +306,25 @@ def _parse_pii(raw: dict[str, Any]) -> PiiSummary:
         entities=entities,
         entity_counts=dict(content.get("entity_counts") or {}),
         flags=tuple(content.get("flags") or ()),
+        validation=_parse_validation(content.get("validation")),
+    )
+
+
+def _parse_validation(raw: Any) -> ValidationSummary | None:
+    if not isinstance(raw, dict):
+        return None
+    return ValidationSummary(
+        enabled=bool(raw.get("enabled", False)),
+        kept=int(raw.get("kept", 0)),
+        dropped=int(raw.get("dropped", 0)),
+        score_down=int(raw.get("score_down", 0)),
+        dropped_by_reason={
+            str(reason): int(count) for reason, count in (raw.get("dropped_by_reason") or {}).items()
+        },
+        score_down_by_reason={
+            str(reason): int(count)
+            for reason, count in (raw.get("score_down_by_reason") or {}).items()
+        },
     )
 
 

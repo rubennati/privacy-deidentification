@@ -16,7 +16,12 @@ from typing import Any
 from artifact_loader import LocalDocument
 from document_matching import AmbiguousMatch, MatchedDocument, MatchResult
 from ocr_metrics import ArtifactAvailability, DocumentOcrMetrics, OcrAggregateMetrics
-from pii_matching import DocumentPiiMetrics, EntityTypeMetrics, GlobalPiiMetrics
+from pii_matching import (
+    DocumentPiiMetrics,
+    EntityTypeMetrics,
+    GlobalPiiMetrics,
+    ValidationBenchmarkSummary,
+)
 
 # Documents called out explicitly in the PR spec because PR #6's text-layer quality gate and
 # OCR fallback changed their expected routing.
@@ -151,6 +156,18 @@ def _global_pii_to_dict(metrics: GlobalPiiMetrics) -> dict[str, Any]:
     }
 
 
+def _validation_aggregate_to_dict(summary: ValidationBenchmarkSummary) -> dict[str, Any]:
+    return {
+        "documents_considered": summary.documents_considered,
+        "documents_with_validation_enabled": summary.documents_with_validation_enabled,
+        "total_kept": summary.total_kept,
+        "total_dropped": summary.total_dropped,
+        "total_score_down": summary.total_score_down,
+        "dropped_by_reason": dict(summary.dropped_by_reason),
+        "score_down_by_reason": dict(summary.score_down_by_reason),
+    }
+
+
 def _highlighted_documents(documents_section: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     highlighted: dict[str, list[dict[str, Any]]] = {}
     for entry in documents_section:
@@ -175,6 +192,7 @@ def build_report(
     pii_per_document: Sequence[DocumentPiiMetrics],
     global_pii: GlobalPiiMetrics | None,
     missing_artifacts: Sequence[dict[str, Any]],
+    validation_aggregate: ValidationBenchmarkSummary | None = None,
 ) -> dict[str, Any]:
     """Build the full JSON-serializable report structure. Markdown is rendered from this."""
     documents_by_id = {doc.document_id: doc for doc in local_documents}
@@ -217,9 +235,11 @@ def build_report(
             "highlighted_documents": _highlighted_documents(documents_section),
         }
 
-    pii_benchmark = (
-        {"global": _global_pii_to_dict(global_pii)} if global_pii is not None else None
-    )
+    pii_benchmark = None
+    if global_pii is not None:
+        pii_benchmark = {"global": _global_pii_to_dict(global_pii)}
+        if validation_aggregate is not None:
+            pii_benchmark["validation"] = _validation_aggregate_to_dict(validation_aggregate)
 
     return {
         "generated_at": generated_at,
@@ -418,6 +438,21 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"precision={g['precision']}, recall={g['recall']}, f1={g['f1']}",
             "",
         ]
+        validation = pii_benchmark.get("validation")
+        if validation:
+            lines += [
+                "### Candidate Validation (Engine-5)",
+                "",
+                f"- Documents considered: {validation['documents_considered']} "
+                f"({validation['documents_with_validation_enabled']} with validation enabled)",
+                f"- Kept: {validation['total_kept']}, dropped: {validation['total_dropped']}, "
+                f"score_down: {validation['total_score_down']}",
+            ]
+            if validation["dropped_by_reason"]:
+                lines.append(f"- Dropped by reason: {validation['dropped_by_reason']}")
+            if validation["score_down_by_reason"]:
+                lines.append(f"- Score-down by reason: {validation['score_down_by_reason']}")
+            lines.append("")
     else:
         lines.append("_PII metrics skipped (`--no-pii`)._")
         lines.append("")

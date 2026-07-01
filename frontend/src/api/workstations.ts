@@ -76,6 +76,19 @@ export interface PiiEntity {
   page_end_offset: number | null;
   score: number;
   recognizer: string;
+  // Engine-5 candidate validation. Absent on artifacts written before it existed.
+  original_score?: number | null;
+  validation_status?: "kept" | "score_down" | null;
+  validation_reasons?: string[];
+}
+
+export interface PiiValidationSummary {
+  enabled: boolean;
+  kept: number;
+  dropped: number;
+  score_down: number;
+  dropped_by_reason: Record<string, number>;
+  score_down_by_reason: Record<string, number>;
 }
 
 export interface PiiArtifact {
@@ -98,6 +111,8 @@ export interface PiiArtifact {
     entity_counts: Record<string, number>;
     tool_versions: Record<string, string>;
     flags: string[];
+    // Engine-5 candidate validation summary. Absent on artifacts written before it existed.
+    validation?: PiiValidationSummary | null;
   };
 }
 

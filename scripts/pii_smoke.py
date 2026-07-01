@@ -1,13 +1,20 @@
-"""Smoke-test the real Presidio/spaCy PII runtime.
+"""Smoke-test the real Presidio/spaCy PII runtime end to end.
 
 Deliberately not part of ``make test``: it needs the PII image extra and the spaCy model. Run
 via ``make pii-smoke``. Uses synthetic values only — no real or private sample data.
+
+The smoke exercises the *full* detection path used by the PII workstation: raw Presidio/spaCy
+detection **and** the Engine-5 candidate-validation post-processing that runs after it. Asserting
+only on raw detection (as an earlier version did) would stay green even if candidate validation
+dropped or scored down every candidate, hiding exactly the kind of regression that empties the
+final result. So this test also asserts that the structured/insurance types survive validation.
 """
 
 from __future__ import annotations
 
 from app.config import get_settings
 from app.services.pii_adapters import PiiUnavailableError, PresidioAnalyzerAdapter
+from app.services.pii_candidate_validation import validate_candidates
 
 _SAMPLE = (
     "Kontakt: max@example.at; UID: ATU12345678; "
@@ -34,12 +41,37 @@ def main() -> int:
         return 1
 
     detected_types = {result.entity_type for result in results}
-    print(f"detected types: {sorted(detected_types)}")
+    print(f"detected types (raw): {sorted(detected_types)}")
     missing = set(_ENTITY_TYPES).difference(detected_types)
     if missing:
         print(f"FAIL: expected entity types were not detected: {sorted(missing)}")
         return 1
-    print("OK: PII runtime detected the structured and insurance-at-de smoke types.")
+
+    # Run the same candidate-validation pass the workstation applies before persisting the
+    # result, then assert the final (post-validation) layer is non-empty and still carries the
+    # expected structured/insurance types. This guards against a validation change that empties
+    # the final result even though raw detection still works.
+    candidates = [(result, 0, None) for result in results]
+    validated, summary = validate_candidates(
+        candidates, {None: _SAMPLE}, settings.pii_score_threshold, enabled=True
+    )
+    final_types = {item.entity.entity_type for item, _, _ in validated}
+    print(f"final types (post-validation): {sorted(final_types)}")
+    print(
+        f"validation summary: kept={summary.kept} dropped={summary.dropped} "
+        f"score_down={summary.score_down}"
+    )
+    if not validated:
+        print("FAIL: candidate validation emptied the final result (0 surviving entities).")
+        return 1
+    dropped_expected = set(_ENTITY_TYPES).difference(final_types)
+    if dropped_expected:
+        print(
+            "FAIL: candidate validation removed expected structured/insurance types: "
+            f"{sorted(dropped_expected)}"
+        )
+        return 1
+    print("OK: PII runtime detected and validation kept the structured and insurance-at-de types.")
     return 0
 
 

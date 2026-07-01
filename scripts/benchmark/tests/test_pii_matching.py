@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from artifact_loader import DetectedEntity
+from artifact_loader import DetectedEntity, ValidationSummary
 from document_matching import GroundTruthEntityAnchor
 from pii_matching import (
+    aggregate_validation_summaries,
     build_document_pii_metrics,
     build_global_pii_metrics,
     canonicalize,
@@ -159,3 +160,60 @@ def test_build_global_pii_metrics_aggregates_across_documents() -> None:
     email_group = global_metrics.by_type_group["structured_types"]
     assert email_group.tp == 1
     assert email_group.fn == 1
+
+
+def test_aggregate_validation_summaries_sums_counts_and_merges_reasons() -> None:
+    doc_a = ValidationSummary(
+        enabled=True,
+        kept=10,
+        dropped=3,
+        score_down=2,
+        dropped_by_reason={"STOPWORD_ONLY": 2, "GENERIC_DOCUMENT_WORD": 1},
+        score_down_by_reason={"ORG_WITHOUT_ORG_SIGNAL": 2},
+    )
+    doc_b = ValidationSummary(
+        enabled=True,
+        kept=5,
+        dropped=1,
+        score_down=0,
+        dropped_by_reason={"STOPWORD_ONLY": 1},
+        score_down_by_reason={},
+    )
+
+    summary = aggregate_validation_summaries([doc_a, doc_b])
+
+    assert summary.documents_considered == 2
+    assert summary.documents_with_validation_enabled == 2
+    assert summary.total_kept == 15
+    assert summary.total_dropped == 4
+    assert summary.total_score_down == 2
+    assert summary.dropped_by_reason == {"STOPWORD_ONLY": 3, "GENERIC_DOCUMENT_WORD": 1}
+    assert summary.score_down_by_reason == {"ORG_WITHOUT_ORG_SIGNAL": 2}
+
+
+def test_aggregate_validation_summaries_skips_missing_documents() -> None:
+    summary = aggregate_validation_summaries(
+        [
+            None,
+            ValidationSummary(
+                enabled=False,
+                kept=4,
+                dropped=0,
+                score_down=0,
+                dropped_by_reason={},
+                score_down_by_reason={},
+            ),
+        ]
+    )
+
+    assert summary.documents_considered == 1
+    assert summary.documents_with_validation_enabled == 0
+    assert summary.total_kept == 4
+
+
+def test_aggregate_validation_summaries_handles_empty_input() -> None:
+    summary = aggregate_validation_summaries([])
+
+    assert summary.documents_considered == 0
+    assert summary.total_kept == 0
+    assert summary.dropped_by_reason == {}

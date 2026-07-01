@@ -17,8 +17,8 @@ and optional AI. Redaction is the final foundation, deliberately last.
 | Engine-2 | OCR L4–L5 hardening (confidence + quality report + readable text) | planned |
 | Engine-3 | OCR layout/table spike | planned (spike) |
 | Engine-4 | PII L2–L3 `insurance-at-de` recognizer pack | ✅ **done** |
-| Engine-5 | PII L5 candidate validation | planned (priority) |
-| Engine-6 | Review/feedback model (Review L2–L4) | planned |
+| Engine-5 | PII L5 candidate validation | ✅ **done** |
+| Engine-6 | Review/feedback model (Review L2–L4) | planned (priority) |
 | Engine-7 | DB architecture spike | planned (spike) |
 | Engine-8 | Optional local AI / VLM spike | planned (spike) |
 | Engine-9 | Redaction / de-identification foundation | planned (later) |
@@ -101,22 +101,29 @@ and optional AI. Redaction is the final foundation, deliberately last.
 - **Acceptance:** synthetic AT/DE + domain identifiers detected; measurable recall lift on the
   benchmark with acceptable precision.
 
-## Engine-5 — PII L5 candidate validation  *(priority)*
+## Engine-5 — PII L5 candidate validation  ✅ *done*
 
 - **Goal:** raise NER precision by pruning/scoring-down obvious false positives — a subtractive,
   auditable post-processing step (see
   [PII engine: candidate validation](pii-engine-levels.md#candidate-validation-is-a-post-processing-exclusion-step)).
-- **Scope:** deterministic validation rules over spaCy POS/stopword info (stopword/article/preposition
-  → drop `PERSON`; generic doc word → score down `ORGANIZATION`; no-context → score down `LOCATION`;
-  `DATE_TIME` context roles); emit a `pii_validation_result`; keep original detections.
+- **Delivered:** dependency-free lexical/shape validation rules (`pii_validation_rules.py`,
+  `pii_candidate_validation.py`) producing KEEP/SCORE_DOWN/DROP with a fixed reason-code set;
+  wired into `pii_service.py` before persistence. `pii_result` gains additive per-entity
+  `original_score`/`validation_status`/`validation_reasons` and a content-level `validation`
+  summary — no new artifact type. `PII_CANDIDATE_VALIDATION_ENABLED` (default on) is an escape
+  hatch. Benchmark runner aggregates validation counts corpus-wide.
 - **Non-scope:** new detection, AI plausibility (Engine-8), review actions (Engine-6).
-- **Affected files:** `backend/app/services/pii_service.py` (post-processing), `pii_adapters.py`
-  (expose POS/features), `schemas.py` (validation artifact), benchmark, `docs/engine/*`.
-- **New dependency:** no (features already available via the spaCy model).
-- **Tests:** validation-rule unit tests; on/off precision delta test; **no true-positive loss**.
-- **Benchmark:** NER precision rises substantially with negligible recall loss; `broad-review`
-  becomes usable.
-- **Risk:** medium-high (must not suppress true positives).
+- **Affected files:** `backend/app/services/pii_service.py`, `pii_candidate_validation.py`,
+  `pii_validation_rules.py` (new), `config.py`, `schemas.py`, `scripts/benchmark/*`, tests,
+  `docs/engine/*`, `docs/adr/0013-pii-candidate-validation.md`.
+- **New dependency:** no (lexical/shape rules only; no spaCy POS/model dependency introduced).
+- **Tests:** validation-rule unit tests, pii_service integration tests (drop excluded, summary
+  counts, profile stability), privacy tests (no raw values in reasons/logs/summary), benchmark
+  unit + end-to-end tests.
+- **Benchmark:** see the before/after numbers in
+  [`quality-metrics.md`](quality-metrics.md#benchmark-snapshot-aggregate-private-beforeafter-run).
+- **Risk:** medium-high (must not suppress true positives) — mitigated by preferring SCORE_DOWN
+  over DROP whenever a rule is ambiguous.
 - **Acceptance:** NER precision materially improves on the benchmark, every suppression carries a
   reason, and true positives are preserved.
 
@@ -187,7 +194,7 @@ and optional AI. Redaction is the final foundation, deliberately last.
 | Area | Current level | Justification | Next level | Next PR |
 | --- | --- | --- | --- | --- |
 | OCR / Text engine | **L3 done, L4 partial** | per-page routing + quality verdicts shipped; no OCR confidence, no `quality_report`, no readable rendering | L4 → L5 | Engine-2 |
-| PII engine | **L3 done, L4 partial** | AT/DE + domain pack and named coverage profiles shipped; address and validation posture remain open | L5 | Engine-5 |
+| PII engine | **L5 done** | AT/DE + domain pack, named coverage profiles, and candidate validation shipped; address/contact-line recognition and per-profile benchmark reporting remain open | L6 | Engine-6 (entity resolution overlaps into Review) |
 | Review / feedback | **L1 done** | detail page lists candidates + lineage-safe highlights; no persisted decisions | L2 | Engine-6 |
 | Benchmark / regression | **L2** | reproducible routing + PII P/R/F1 from existing artifacts; single snapshot, no trend/CI gate | L3 (trend + CI) | Engine-2 + later CI |
 | Storage / core | **sufficient for MVP** | separated roots, immutable artifacts, validated deletes | — | — |
