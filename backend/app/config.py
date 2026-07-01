@@ -33,6 +33,7 @@ class Settings(BaseSettings):
         alias="ALLOWED_EXTENSIONS",
     )
     upload_dir: Path = Field(default=Path("/data/uploads"), alias="UPLOAD_DIR")
+    ocr_model_dir: Path | None = Field(default=None, alias="OCR_MODEL_DIR")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @field_validator("allowed_extensions", mode="before")
@@ -51,6 +52,12 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
+
+    @field_validator("ocr_model_dir", mode="before")
+    @classmethod
+    def _empty_model_dir_is_unconfigured(cls, value: object) -> object:
+        """Treat Compose's empty optional environment value as no configured models."""
+        return None if value == "" else value
 
 
 @lru_cache(maxsize=1)

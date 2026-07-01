@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -17,20 +16,11 @@ from app.errors import ApiError
 from app.schemas import AuditArtifact, AuditContent, AuditPageResult, OriginalArtifact
 from app.services.artifact_service import get_latest_audit_artifact, save_audit_artifact
 from app.services.document_service import DocumentNotFoundError, get_document_record
+from app.services.original_artifact_service import get_verified_original
 
 _PDF_MIME_TYPE = "application/pdf"
 _DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _IMAGE_FORMAT_BY_MIME_TYPE = {"image/png": "PNG", "image/jpeg": "JPEG"}
-_HASH_CHUNK_SIZE = 1024 * 1024
-
-
-class AuditConflictError(ApiError):
-    """Raised when a document has no usable verified original artifact."""
-
-    def __init__(self, detail: str) -> None:
-        super().__init__(detail, 409)
-
-
 class AuditProcessingError(ApiError):
     """Raised when a verified original cannot be analyzed by Audit v1."""
 
@@ -47,7 +37,7 @@ class AuditNotFoundError(ApiError):
 
 def create_audit(settings: Settings, document_id: str) -> AuditArtifact:
     """Verify, analyze, and persist a new immutable audit artifact."""
-    original, original_path = _verified_original(settings, document_id)
+    original, original_path = get_verified_original(settings, document_id)
     content = _analyze_original(document_id, original, original_path)
     artifact = AuditArtifact(
         id=uuid4().hex,
@@ -68,22 +58,6 @@ def get_latest_audit(settings: Settings, document_id: str) -> AuditArtifact:
     if artifact is None:
         raise AuditNotFoundError
     return artifact
-
-
-def _verified_original(settings: Settings, document_id: str) -> tuple[OriginalArtifact, Path]:
-    record = get_document_record(settings, document_id)
-    if record is None:
-        raise DocumentNotFoundError
-    original = record.original_artifact
-    if original is None:
-        raise AuditConflictError("Document has no verified original artifact.")
-
-    original_path = settings.upload_dir / original.storage_filename
-    if not original_path.is_file():
-        raise AuditConflictError("Original artifact file is unavailable.")
-    if _sha256(original_path) != original.sha256:
-        raise AuditConflictError("Original artifact integrity check failed.")
-    return original, original_path
 
 
 def _analyze_original(
@@ -173,14 +147,6 @@ def _analyze_image(
         flags=["image_opened"],
         tool_versions={"Pillow": version("Pillow")},
     )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as original_file:
-        while chunk := original_file.read(_HASH_CHUNK_SIZE):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _now_utc_iso() -> str:

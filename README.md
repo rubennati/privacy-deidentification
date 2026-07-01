@@ -4,9 +4,9 @@ A Docker-first application foundation for privacy-focused document preparation a
 
 Users can upload documents through a web interface. The backend validates the upload, stores the file safely under `./volumes/uploads` on the host, and exposes health checks for local operation and development.
 
-> **Step 2:** This version provides the application foundation, upload/document management and
-> a structural Audit v1 station. OCR, review, de-identification and redaction will be added in
-> later steps through dedicated tool integrations.
+> **Step 3:** This version provides upload/document management, structural Audit v1 and a
+> synchronous OCR/Text Workstation v1. Review, de-identification and redaction remain separate
+> later steps.
 
 ## Approach: tool-first / adapter-only
 
@@ -70,6 +70,8 @@ docker compose down
 | DELETE | `/api/documents/{id}`  | Delete a document's file and metadata                      |
 | POST   | `/api/documents/{id}/audit` | Create an immutable Audit v1 result                   |
 | GET    | `/api/documents/{id}/audit`  | Get the newest Audit v1 result                       |
+| POST   | `/api/documents/{id}/ocr`   | Create an immutable routed text result                |
+| GET    | `/api/documents/{id}/ocr`    | Get the newest text result                            |
 
 `POST /api/uploads` returns `201` with:
 
@@ -102,6 +104,53 @@ Invalid uploads return clean JSON errors with a correlation ID:
 
 Stack traces are not exposed to clients.
 
+### Optional OCR runtime
+
+PDF text layers and DOCX body text are extracted without PaddleOCR. Image documents and PDF
+pages without a text layer require the optional PaddleOCR/PaddlePaddle runtime:
+
+```bash
+INSTALL_OCR=true docker compose build backend
+```
+
+The regular image deliberately omits those heavy packages and returns `503` only when a request
+actually needs PaddleOCR. Imports and model initialization are lazy, so startup and all quality
+gates remain model-free. Poppler is installed in the backend runtime for the encapsulated
+`pdf2image` PDF-page renderer. Rendered pages use the container's `/tmp` tmpfs and are never
+written to the persistent upload volume.
+
+Installing the optional packages is not sufficient to enable OCR. Approved model files must be
+prepared separately, made available inside the container, and selected with `OCR_MODEL_DIR`.
+The directory must contain both model directories:
+
+```text
+/models/ocr/
+├── text_detection/
+└── text_recognition/
+```
+
+The adapter passes both local paths to PaddleOCR and returns `503` before importing PaddleOCR if
+the configuration or directories are missing. It never intentionally falls back to downloading
+models. A deployment can bake those directories into a dedicated OCR runtime image or mount them
+read-only through a Compose override. PaddlePaddle's published platform wheels determine which
+CPU architectures can build the optional image; on ARM hosts an amd64 container/emulation may be
+required.
+
+With compatible, locally provisioned models under `./models/ocr`, the optional runtime can be
+built and smoke-tested without a test-suite model download:
+
+```bash
+INSTALL_OCR=true docker compose build backend
+
+docker compose run --rm --no-deps \
+  -e OCR_MODEL_DIR=/models/ocr \
+  -v "$PWD/models/ocr:/models/ocr:ro" \
+  backend python -c "from pathlib import Path; from PIL import Image, ImageDraw, ImageFont; from app.services.ocr_adapters import PaddleOcrAdapter; p=Path('/tmp/ocr-smoke.png'); image=Image.new('RGB', (320, 80), 'white'); font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 32); ImageDraw.Draw(image).text((10, 20), 'OCR smoke', fill='black', font=font); image.save(p); text=PaddleOcrAdapter(Path('/models/ocr')).extract_text(p); print(text); assert text.strip(), 'OCR returned no text'"
+```
+
+This smoke test is deliberately separate from `make test`: it requires platform-compatible
+PaddlePaddle wheels, sufficient RAM, and explicitly provisioned model files.
+
 ## Configuration
 
 Configuration is handled through environment variables.
@@ -111,6 +160,7 @@ See [`.env.example`](.env.example) for available settings, including:
 * upload size limit
 * allowed file extensions
 * upload directory
+* optional local OCR model directory
 * log level
 
 ## Development and quality

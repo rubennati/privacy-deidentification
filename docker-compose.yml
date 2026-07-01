@@ -4,11 +4,14 @@ services:
   backend:
     build:
       context: ./backend
+      args:
+        INSTALL_OCR: ${INSTALL_OCR:-false}
     image: deid-pilot-backend:0.1.0
     environment:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-pdf,docx,png,jpg,jpeg}
       UPLOAD_DIR: /data/uploads
+      OCR_MODEL_DIR: ${OCR_MODEL_DIR:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./volumes/uploads:/data/uploads
