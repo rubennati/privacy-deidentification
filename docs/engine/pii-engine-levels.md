@@ -135,6 +135,12 @@ those profiles — there is no profile branching in the validator itself.
   address/date/financial-context lists) — **no spaCy POS dependency, no new detection model**.
 - **Acceptance:** on the benchmark, NER precision rises substantially with negligible true-positive
   loss, and every suppression carries a reason.
+- **Layout-context hardening:** candidate validation is not only token-level — it also accounts
+  for document-layout context: address-line house/stair/door numbers (not `DATE_TIME`), AT
+  postal-code lines, a company-form suffix immediately after an `ORGANIZATION` candidate,
+  academic/professional-title and contact-role-label context for `PERSON`, and a top-of-document
+  header/address-block position for `PERSON`/`ORGANIZATION`/`LOCATION`. See
+  [ADR-0014](../adr/0014-pii-candidate-validation-context-hardening.md).
 - **Detail:** see the [dedicated section below](#candidate-validation-is-a-post-processing-exclusion-step).
 
 ## Level 6 — Entity resolution / overlap logic  ⛔ *open*

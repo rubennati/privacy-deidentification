@@ -17,15 +17,20 @@ from typing import Literal
 
 from app.services.pii_adapters import DetectedEntity
 from app.services.pii_validation_rules import (
-    has_company_form_signal,
+    has_address_line_context,
+    has_company_suffix_context,
+    has_contact_label_context,
     has_date_context,
     has_domain_label_context,
     has_financial_context,
     has_location_signal,
     has_name_context,
     has_name_shape,
+    has_person_title_context,
+    has_postal_code_context,
     is_function_word,
     is_generic_document_word,
+    is_in_header_block,
     is_numeric_only,
     is_stopword,
     is_year_only,
@@ -89,15 +94,24 @@ class ValidationSummary:
 
 
 def validate_candidate(
-    entity_type: str, text: str, context_before: str, context_after: str, score: float
+    entity_type: str,
+    text: str,
+    context_before: str,
+    context_after: str,
+    score: float,
+    in_header_block: bool = False,
 ) -> ValidationDecision:
     """Decide KEEP/SCORE_DOWN/DROP for one already-detected candidate.
 
     Pure function: the candidate text/context are used only for in-memory comparisons and never
-    appear in the returned decision.
+    appear in the returned decision. ``in_header_block`` marks a candidate that sits in the
+    top-of-document header/address block (see ``is_in_header_block``), where a generic-word
+    ORGANIZATION/LOCATION candidate is scored down rather than hard-dropped.
     """
     if entity_type in STRONGLY_VALIDATED_TYPES:
-        return _validate_strong(entity_type, text, context_before, context_after, score)
+        return _validate_strong(
+            entity_type, text, context_before, context_after, score, in_header_block
+        )
     if entity_type == "BIC":
         return _validate_bic(context_before, context_after, score)
     if entity_type in MODERATELY_VALIDATED_TYPES:
@@ -108,7 +122,12 @@ def validate_candidate(
 
 
 def _validate_strong(
-    entity_type: str, text: str, context_before: str, context_after: str, score: float
+    entity_type: str,
+    text: str,
+    context_before: str,
+    context_after: str,
+    score: float,
+    in_header_block: bool,
 ) -> ValidationDecision:
     stripped = text.strip()
     if entity_type == "DATE_TIME":
@@ -126,13 +145,19 @@ def _validate_strong(
     if entity_type == "PERSON":
         return _validate_person(stripped, context_before, context_after, score)
     if entity_type == "ORGANIZATION":
-        return _validate_organization(stripped, score)
-    return _validate_location(stripped, context_before, context_after, score)
+        return _validate_organization(
+            stripped, context_before, context_after, score, in_header_block
+        )
+    return _validate_location(stripped, context_before, context_after, score, in_header_block)
 
 
 def _validate_person(
     text: str, context_before: str, context_after: str, score: float
 ) -> ValidationDecision:
+    if has_contact_label_context(context_before, context_after):
+        return ValidationDecision("KEEP", ("CONTACT_PERSON_CONTEXT",), score)
+    if has_person_title_context(context_before, context_after):
+        return ValidationDecision("KEEP", ("PERSON_TITLE_CONTEXT",), score)
     if has_name_context(context_before, context_after) or has_name_shape(text):
         return ValidationDecision("KEEP", (), score)
     tokens = tokenize(text)
@@ -143,10 +168,16 @@ def _validate_person(
     )
 
 
-def _validate_organization(text: str, score: float) -> ValidationDecision:
-    if has_company_form_signal(text):
-        return ValidationDecision("KEEP", (), score)
+def _validate_organization(
+    text: str, context_before: str, context_after: str, score: float, in_header_block: bool
+) -> ValidationDecision:
+    if has_company_suffix_context(text, context_before, context_after):
+        return ValidationDecision("KEEP", ("COMPANY_SUFFIX_CONTEXT",), score)
     if is_generic_document_word(text):
+        if in_header_block:
+            return ValidationDecision(
+                "SCORE_DOWN", ("HEADER_BLOCK_CONTEXT",), min(score, SCORE_DOWN_CAP)
+            )
         return ValidationDecision("DROP", ("GENERIC_DOCUMENT_WORD",), score)
     return ValidationDecision(
         "SCORE_DOWN", ("ORG_WITHOUT_ORG_SIGNAL",), min(score, SCORE_DOWN_CAP)
@@ -154,11 +185,15 @@ def _validate_organization(text: str, score: float) -> ValidationDecision:
 
 
 def _validate_location(
-    text: str, context_before: str, context_after: str, score: float
+    text: str, context_before: str, context_after: str, score: float, in_header_block: bool
 ) -> ValidationDecision:
     if has_location_signal(text, context_before, context_after):
         return ValidationDecision("KEEP", (), score)
     if is_generic_document_word(text):
+        if in_header_block:
+            return ValidationDecision(
+                "SCORE_DOWN", ("HEADER_BLOCK_CONTEXT",), min(score, SCORE_DOWN_CAP)
+            )
         return ValidationDecision("DROP", ("GENERIC_DOCUMENT_WORD",), score)
     return ValidationDecision(
         "SCORE_DOWN", ("LOCATION_WITHOUT_LOCATION_SIGNAL",), min(score, SCORE_DOWN_CAP)
@@ -168,7 +203,15 @@ def _validate_location(
 def _validate_date_time(
     text: str, context_before: str, context_after: str, score: float
 ) -> ValidationDecision:
+    if has_address_line_context(text, context_before, context_after):
+        return ValidationDecision(
+            "SCORE_DOWN", ("ADDRESS_LINE_NUMERIC_CONTEXT",), min(score, SCORE_DOWN_CAP)
+        )
     if is_year_only(text):
+        if has_postal_code_context(text, context_before, context_after):
+            return ValidationDecision(
+                "SCORE_DOWN", ("POSTAL_CODE_CONTEXT",), min(score, SCORE_DOWN_CAP)
+            )
         if has_date_context(context_before, context_after):
             return ValidationDecision("KEEP", (), score)
         return ValidationDecision("SCORE_DOWN", ("DATE_YEAR_ONLY",), min(score, SCORE_DOWN_CAP))
@@ -233,7 +276,12 @@ def validate_candidates(
         context_after = local_text[entity.end : entity.end + _CONTEXT_WINDOW]
 
         decision = validate_candidate(
-            entity.entity_type, candidate_text, context_before, context_after, entity.score
+            entity.entity_type,
+            candidate_text,
+            context_before,
+            context_after,
+            entity.score,
+            is_in_header_block(local_text, entity.start),
         )
 
         if decision.verdict == "DROP":
