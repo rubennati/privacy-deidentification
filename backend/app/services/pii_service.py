@@ -122,6 +122,7 @@ def _analyze_text(
     return PiiContent(
         document_id=text_artifact.document_id,
         input_text_artifact_id=text_artifact.id,
+        profile=settings.effective_pii_profile,
         language=settings.pii_language,
         score_threshold=settings.pii_score_threshold,
         text_char_count=len(text),

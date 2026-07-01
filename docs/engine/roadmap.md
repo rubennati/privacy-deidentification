@@ -12,11 +12,11 @@ and optional AI. Redaction is the final foundation, deliberately last.
 
 | ID | Title | Status |
 | --- | --- | --- |
-| Engine-0 | Capability model / target architecture | **this PR** |
+| Engine-0 | Capability model / target architecture | ✅ **done** (PR #8) |
 | Engine-1 | Benchmark runner / regression metrics | ✅ **done** (PR #7) |
 | Engine-2 | OCR L4–L5 hardening (confidence + quality report + readable text) | planned |
 | Engine-3 | OCR layout/table spike | planned (spike) |
-| Engine-4 | PII L2–L3 `insurance-at-de` recognizer pack | planned (priority) |
+| Engine-4 | PII L2–L3 `insurance-at-de` recognizer pack | ✅ **done** |
 | Engine-5 | PII L5 candidate validation | planned (priority) |
 | Engine-6 | Review/feedback model (Review L2–L4) | planned |
 | Engine-7 | DB architecture spike | planned (spike) |
@@ -81,14 +81,14 @@ and optional AI. Redaction is the final foundation, deliberately last.
 - **Risk:** low (isolated); medium if adopted (heavy deps).
 - **Acceptance:** a written recommendation on layout/table tooling with measured evidence.
 
-## Engine-4 — PII L2–L3 `insurance-at-de` recognizer pack  *(priority)*
+## Engine-4 — PII L2–L3 `insurance-at-de` recognizer pack  ✅ *done*
 
 - **Goal:** close the biggest detection gaps the benchmark shows — AT/DE structured recall and the
   zero-coverage domain-sensitive group.
-- **Scope:** Presidio custom recognizers for AT/DE phone, `SVNR_AT`, `UID_AT`, `FN_AT`, `BIC`,
-  addresses (L2) and insurance/legal numbers — `POLICY_NUMBER`, `CLAIM_NUMBER`, `CONTRACT_NUMBER`,
-  `CASE_NUMBER`, `INVOICE_NUMBER`, `OFFER_NUMBER`, `CUSTOMER_NUMBER`, license plate, passport/ID
-  (L3); seed named profiles (PII L4 foundation).
+- **Delivered:** dependency-free Presidio pattern specifications materialized lazily by the adapter;
+  AT/DE structured + insurance/legal/business identifiers; four named coverage profiles recorded in
+  `pii_result`; benchmark canonical mappings for the new types.
+- **Remaining:** address/contact-line recognizers and L4 per-profile benchmark reporting.
 - **Non-scope:** candidate validation (Engine-5), NER retuning, any new heavy model.
 - **Affected files:** `backend/app/services/pii_adapters.py` (custom recognizers), `config.py`
   (supported types/profiles), `schemas.py` (entity types), `scripts/benchmark/pii_matching.py`
@@ -187,7 +187,7 @@ and optional AI. Redaction is the final foundation, deliberately last.
 | Area | Current level | Justification | Next level | Next PR |
 | --- | --- | --- | --- | --- |
 | OCR / Text engine | **L3 done, L4 partial** | per-page routing + quality verdicts shipped; no OCR confidence, no `quality_report`, no readable rendering | L4 → L5 | Engine-2 |
-| PII engine | **L1 done, L4 foundation** | structured recognizers run; `PII_ENTITY_TYPES` allowlist only; no AT/DE or domain packs; no validation | L2–L3 | Engine-4 |
+| PII engine | **L3 done, L4 partial** | AT/DE + domain pack and named coverage profiles shipped; address and validation posture remain open | L5 | Engine-5 |
 | Review / feedback | **L1 done** | detail page lists candidates + lineage-safe highlights; no persisted decisions | L2 | Engine-6 |
 | Benchmark / regression | **L2** | reproducible routing + PII P/R/F1 from existing artifacts; single snapshot, no trend/CI gate | L3 (trend + CI) | Engine-2 + later CI |
 | Storage / core | **sufficient for MVP** | separated roots, immutable artifacts, validated deletes | — | — |

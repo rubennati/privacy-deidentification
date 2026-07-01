@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.services.pii_profiles import DOMAIN_SENSITIVE_TYPES, STRUCTURED_TYPES
 
 
 def test_storage_configuration_uses_clear_names_and_accepts_legacy_upload_dir() -> None:
@@ -85,6 +86,7 @@ def test_pii_configuration_is_normalized() -> None:
     assert settings.pii_language == "de"
     assert settings.pii_score_threshold == 0.7
     assert settings.pii_entity_types == ("PERSON", "EMAIL_ADDRESS")
+    assert settings.effective_pii_profile == "custom"
 
 
 def test_pii_configuration_rejects_unsupported_entity_type() -> None:
@@ -99,14 +101,9 @@ def test_default_pii_entity_types_are_structured_recognizers_only(
 
     settings = Settings()
 
-    assert settings.pii_entity_types == (
-        "EMAIL_ADDRESS",
-        "PHONE_NUMBER",
-        "IBAN_CODE",
-        "CREDIT_CARD",
-        "IP_ADDRESS",
-        "URL",
-    )
+    assert settings.pii_profile == "structured-only"
+    assert settings.effective_pii_profile == "structured-only"
+    assert settings.pii_entity_types == STRUCTURED_TYPES
     # The noisy spaCy NER types and DATE_TIME are opt-in, not default.
     for opt_in in ("PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME"):
         assert opt_in not in settings.pii_entity_types
@@ -116,3 +113,43 @@ def test_spacy_ner_types_remain_supported_and_opt_in() -> None:
     settings = Settings(PII_ENTITY_TYPES="PERSON,ORGANIZATION,LOCATION,DATE_TIME")
 
     assert settings.pii_entity_types == ("PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME")
+
+
+def test_insurance_profile_includes_domain_types_without_ner() -> None:
+    settings = Settings(PII_PROFILE="insurance-at-de")
+
+    assert settings.effective_pii_profile == "insurance-at-de"
+    assert set(DOMAIN_SENSITIVE_TYPES).issubset(settings.pii_entity_types)
+    for ner_type in ("PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME"):
+        assert ner_type not in settings.pii_entity_types
+
+
+def test_broad_and_review_heavy_profiles_keep_ner_explicit() -> None:
+    broad = Settings(PII_PROFILE="broad-review")
+    review_heavy = Settings(PII_PROFILE="review-heavy")
+
+    assert {"PERSON", "ORGANIZATION", "LOCATION"}.issubset(broad.pii_entity_types)
+    assert "DATE_TIME" not in broad.pii_entity_types
+    assert "DATE_TIME" in review_heavy.pii_entity_types
+
+
+def test_explicit_entity_types_override_named_profile() -> None:
+    settings = Settings(
+        PII_PROFILE="insurance-at-de",
+        PII_ENTITY_TYPES="EMAIL_ADDRESS,UID_AT",
+    )
+
+    assert settings.pii_entity_types == ("EMAIL_ADDRESS", "UID_AT")
+    assert settings.effective_pii_profile == "custom"
+
+
+def test_empty_entity_type_override_uses_named_profile() -> None:
+    settings = Settings(PII_PROFILE="insurance-at-de", PII_ENTITY_TYPES="")
+
+    assert settings.effective_pii_profile == "insurance-at-de"
+    assert set(DOMAIN_SENSITIVE_TYPES).issubset(settings.pii_entity_types)
+
+
+def test_unknown_pii_profile_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        Settings(PII_PROFILE="maximum-everything")

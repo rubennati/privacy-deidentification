@@ -44,13 +44,16 @@ CANONICAL_TYPE_MAP: dict[str, str] = {
     # concept the current pipeline has no dedicated recognizer for. Merging it would inflate
     # recall without the pipeline actually distinguishing birthdates from generic dates.
     "BIRTH_DATE": "BIRTH_DATE",
-    # Austrian / domain-sensitive identifiers: kept under their own canonical name (no current
-    # recognizer exists for any of these; see `TYPE_GROUPS["domain_sensitive_types"]`).
+    # Austrian / domain-sensitive identifiers: kept under their own canonical name. The Engine-4
+    # `insurance-at-de` pack now provides recognizers for these; see
+    # `TYPE_GROUPS["domain_sensitive_types"]`.
     "UID_AT": "UID_AT",
     "FN_AT": "FN_AT",
     "SVNR_AT": "SVNR_AT",
     "BIC": "BIC",
-    "STEUERNUMMER": "TAX_ID",
+    "STEUERNUMMER": "TAX_ID_AT",
+    "TAX_ID": "TAX_ID_AT",
+    "TAX_ID_AT": "TAX_ID_AT",
     "POLIZZENUMMER": "POLICY_NUMBER",
     "SCHADENNUMMER": "CLAIM_NUMBER",
     "VERTRAGSNUMMER": "CONTRACT_NUMBER",
@@ -58,9 +61,19 @@ CANONICAL_TYPE_MAP: dict[str, str] = {
     "RECHNUNGSNUMMER": "INVOICE_NUMBER",
     "ANGEBOTSNUMMER": "OFFER_NUMBER",
     "KUNDENNUMMER": "CUSTOMER_NUMBER",
-    "KFZ_KENNZEICHEN": "LICENSE_PLATE",
+    "KFZ_KENNZEICHEN": "LICENSE_PLATE_AT",
+    "LICENSE_PLATE": "LICENSE_PLATE_AT",
+    "LICENSE_PLATE_AT": "LICENSE_PLATE_AT",
     "REISEPASS": "PASSPORT_NUMBER",
     "PERSONALAUSWEIS": "ID_CARD_NUMBER",
+    "FILE_REFERENCE": "FILE_REFERENCE",
+    "BERICHTSNUMMER": "REPORT_NUMBER",
+    "REPORT_NUMBER": "REPORT_NUMBER",
+    "GUTACHTENNUMMER": "ASSESSMENT_NUMBER",
+    "ASSESSMENT_NUMBER": "ASSESSMENT_NUMBER",
+    "PROJECT_ID": "PROJECT_ID",
+    "TRANSACTION_ID": "TRANSACTION_ID",
+    "USER_ID": "USER_ID",
 }
 
 TYPE_GROUPS: dict[str, frozenset[str]] = {
@@ -73,7 +86,7 @@ TYPE_GROUPS: dict[str, frozenset[str]] = {
             "UID_AT",
             "FN_AT",
             "SVNR_AT",
-            "TAX_ID",
+            "TAX_ID_AT",
             "POLICY_NUMBER",
             "CLAIM_NUMBER",
             "CONTRACT_NUMBER",
@@ -81,10 +94,16 @@ TYPE_GROUPS: dict[str, frozenset[str]] = {
             "INVOICE_NUMBER",
             "OFFER_NUMBER",
             "CUSTOMER_NUMBER",
-            "LICENSE_PLATE",
+            "LICENSE_PLATE_AT",
             "PASSPORT_NUMBER",
             "ID_CARD_NUMBER",
             "BIC",
+            "FILE_REFERENCE",
+            "REPORT_NUMBER",
+            "ASSESSMENT_NUMBER",
+            "PROJECT_ID",
+            "TRANSACTION_ID",
+            "USER_ID",
         }
     ),
 }

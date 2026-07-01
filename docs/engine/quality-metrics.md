@@ -40,7 +40,7 @@ real customer documents would defeat the privacy model, so CER/WER are only mean
 | recall | tp / (tp+fn) | ✅ |
 | f1 | harmonic mean | ✅ |
 | per-entity-type metrics | P/R/F1 per type | ✅ — per-type table |
-| per-profile metrics | P/R/F1 per named profile | ⛔ — no named profiles yet (PII L4) |
+| per-profile metrics | P/R/F1 per named profile | ⏳ — profile is recorded; runner still reports one active artifact set |
 | unsupported types | GT types with no recognizer for a document | ✅ — from each doc's `configured_entity_types` |
 | false-positive categories | *why* something was a FP (stopword/generic/no-context) | ⛔ — needs candidate validation + review reasons (PII L5, Review L4) |
 | false-negative categories | *why* something was missed (no recognizer/format) | ⏳ — inferable from per-type FN + unsupported list; not categorised |
@@ -56,7 +56,7 @@ Grouping today: metrics are aggregated into `structured_types`, `ner_types`,
 | run_id | identifier for a benchmark run | ⏳ — timestamped report dir; not a stored id |
 | engine version | OCR/PII code version | ⏳ — `repo_commit` captured; not per-engine |
 | model version | OCR/spaCy model versions | ⏳ — tool versions live in artifacts, not surfaced in the report |
-| profile | active PII profile | ⛔ — no named profiles yet |
+| profile | active PII profile | ⏳ — recorded in new `pii_result`; not surfaced in benchmark report yet |
 | document count | corpus size | ✅ |
 | artifact coverage | which docs have audit/text/pii artifacts | ✅ — coverage + `missing` list |
 | routing mismatch | routing vs expectation mismatches | ✅ |
@@ -73,11 +73,12 @@ types per document, and the privacy-guard pass/fail gate.
 - OCR **confidence**, **runtime/page**, **peak memory** → OCR L4 / L8.
 - **CER/WER** on a synthetic corpus (privacy-safe) → OCR L4+ (synthetic only).
 - **Layout readability**, **table reconstruction quality** → OCR L5–L7.
-- **Per-profile** PII metrics and **FP/FN categories** → PII L4/L5, Review L4.
+- Benchmark comparison across **multiple profiles** and **FP/FN categories** → PII L4/L5,
+  Review L4.
 - **Review corrections** as a metric → Review L2+.
 - **Trend/history** across runs and a **CI regression gate** → benchmark maturity L3.
 
-## Benchmark snapshot (aggregate, one local run)
+## Benchmark snapshot (aggregate private before/after run)
 
 From one local `make benchmark-private` run over a 12-document private corpus (plus 1 unsupported
 `.txt`). These are **aggregate regression signals against a candidate ground truth**, not a
@@ -87,12 +88,20 @@ validated accuracy claim, and no document names, text, or PII values are reprodu
   routed to OCR. Routing matched the expected category on 10/12 documents; the 2 mismatches were the
   gate routing *all* pages of a bad scan to OCR where a partial fallback was expected — more
   conservative, not incorrect.
-- **PII, structured group** — precision ≈ 0.91, recall ≈ 0.37: `EMAIL_ADDRESS` and `IP_ADDRESS`
-  strong; `IBAN_CODE` precise but low recall; **`PHONE_NUMBER` and `URL` recall 0** on AT/DE formats.
+- **PII global (`review-heavy`)** — expected stayed 209. Detected 523 → 606, TP 63 → 119,
+  FP 460 → 487, FN 146 → 90, precision 0.1205 → 0.1964, recall 0.3014 → 0.5694,
+  F1 0.1721 → 0.2920.
+- **PII global (`insurance-at-de`)** — expected 209, detected 109, TP 77, FP 32, FN 132,
+  precision 0.7064, recall 0.3684, F1 0.4843. NER is intentionally unsupported by this profile.
+- **PII, structured group** — precision 0.9130 → 0.7937, recall 0.3684 → 0.8772, F1
+  0.5250 → 0.8333.
 - **PII, NER group** (run with NER opt-in enabled) — recall ≈ 0.59 but precision ≈ 0.08: heavy
   over-tagging of `LOCATION`/`ORGANIZATION`/`PERSON`.
-- **PII, domain-sensitive group** — detected **0** (no recognizers exist yet).
+- **PII, domain-sensitive group** — zero coverage → 27 TP / 19 FP / 20 FN (precision 0.5870,
+  recall 0.5745, F1 0.5806). Canonical mapping moved four expected labels out of `other_types`, so
+  the group denominator changed from 43 to 47.
 
-Interpretation: structured detection needs AT/DE + domain recognizers (PII L2/L3) for recall, and
-NER needs candidate validation (PII L5) for precision. These findings drive the
-[roadmap](roadmap.md).
+Interpretation: Engine-4 materially improves structured/domain recall. NER remains deliberately
+opt-in and still needs candidate validation (PII L5); address/contact-line and related semantic
+types remain unsupported. Reports stay private under `volumes/`; rerun with
+`make benchmark-private` after generating PII artifacts for the profile being compared.

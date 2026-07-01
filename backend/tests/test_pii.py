@@ -249,6 +249,7 @@ def test_empty_text_creates_empty_result_without_loading_analyzer(
 
     content = response.json()["content"]
     assert response.status_code == 201
+    assert content["profile"] == "custom"
     assert content["entities"] == []
     assert content["entity_counts"] == {}
     assert content["flags"] == ["empty_text"]
@@ -285,6 +286,7 @@ def test_service_forwards_configured_allowlist_verbatim(
     assert response.json()["content"]["configured_entity_types"] == list(
         settings.pii_entity_types
     )
+    assert response.json()["content"]["profile"] == "structured-only"
 
 
 def test_missing_text_result_returns_409(

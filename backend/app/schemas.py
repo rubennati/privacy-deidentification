@@ -234,6 +234,7 @@ class PiiContent(BaseModel):
     document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     input_text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     pii_version: Literal["1"] = "1"
+    profile: str = "custom"
     language: str
     score_threshold: float = Field(ge=0, le=1)
     text_char_count: int = Field(ge=0)

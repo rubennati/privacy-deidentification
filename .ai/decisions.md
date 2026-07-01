@@ -38,3 +38,7 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   dependency change. Anchors current standing (OCR L3/L4-partial, PII L1/L4-foundation, Review L1)
   in the repo and one aggregate private benchmark run; establishes north star, canonical vs
   human-readable text split, detection-only, and local/assistive/auditable AI guardrails.
+- [ADR-0012](../docs/adr/0012-insurance-at-de-pii-recognizers.md) — Presidio-based AT/DE and
+  insurance/legal/business identifier pack, stable structured/domain/NER type groups, four named
+  coverage profiles with a precision-first default, and immediate-label context for generic domain
+  values. Candidate validation remains a separate follow-up.

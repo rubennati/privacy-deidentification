@@ -18,15 +18,15 @@ Level numbers are cumulative and **not** comparable to the OCR or Review ladders
 
 ## Profiles (the configuration axis)
 
-Profiles bundle *which entity types are active* and *how aggressively* candidates are validated.
-They become first-class from L4; today they exist only as the `PII_ENTITY_TYPES` env allowlist.
+Profiles bundle *which entity types are active*. They are now first-class configuration and are
+recorded in `pii_result`; per-profile validation posture remains future L5 work.
 
 | Profile | Intent | Entity coverage | Validation posture |
 | --- | --- | --- | --- |
-| `structured-only` | High precision, low noise (current default) | EMAIL/PHONE/IBAN/CREDIT_CARD/IP/URL | strict |
-| `insurance-at-de` | AT/DE + insurance/legal domain identifiers | structured + AT/DE + policy/claim/contract/… | strict |
-| `broad-review` | Maximise recall for a human reviewer | above + PERSON/ORGANIZATION/LOCATION/DATE_TIME | moderate (validation suppresses NER noise) |
-| `review-heavy` | Nothing missed; reviewer resolves everything | widest coverage | lenient (keep candidates, lower scores) |
+| `structured-only` | High precision, low noise (current default) | EMAIL/PHONE/IBAN/CREDIT_CARD/IP/URL | validation not implemented |
+| `insurance-at-de` | AT/DE + insurance/legal domain identifiers | structured + AT/DE + policy/claim/contract/… | validation not implemented |
+| `broad-review` | Maximise recall for a human reviewer | above + PERSON/ORGANIZATION/LOCATION | validation not implemented |
+| `review-heavy` | Nothing missed; reviewer resolves everything | above + DATE_TIME | validation not implemented |
 
 ---
 
@@ -54,28 +54,28 @@ They become first-class from L4; today they exist only as the `PII_ENTITY_TYPES`
   data (see [current state](#where-the-project-stands-pii)) — EMAIL/IP are strong, while `PHONE_NUMBER`
   and `URL` had zero recall on the local corpus. Hardening them is L2 work, not new levels.
 
-## Level 2 — AT/DE pattern pack  ⛔ *open (priority)*
+## Level 2 — AT/DE pattern pack  ✅ *core pack delivered*
 
 - **Goal:** reliably detect Austrian/German-formatted structured identifiers the generic
   recognizers miss.
 - **Entity types:** AT/DE phone formats, `SVNR_AT` (social-security), `UID_AT` (VAT/UID),
-  `FN_AT` (Firmenbuchnummer), `BIC`, `TAX_ID`, AT/DE `IBAN` variants, postal/address patterns.
+  `FN_AT` (Firmenbuchnummer), `BIC`, `TAX_ID_AT`, AT/DE `IBAN`/URL/credit-card variants.
 - **Profiles:** feeds `insurance-at-de` and `broad-review`.
 - **Artifacts:** `pii_result` with the new types populated; `configured_entity_types` reflects them.
 - **Metrics:** per-type P/R/F1 for the AT/DE types; recall lift on `PHONE_NUMBER`/`IBAN_CODE`.
 - **Tests/benchmarks:** recognizer unit tests with synthetic AT/DE-shaped values; benchmark deltas.
 - **Tools:** Presidio custom pattern/context recognizers (no new heavy dependency).
-- **Not in scope:** insurance/legal domain numbers (L3), NER tuning (L5), any real values in tests.
+- **Not in scope:** postal/address recognition remains open; NER tuning (L5); real values in tests.
 - **Acceptance:** synthetic AT/DE identifiers are detected; `PHONE_NUMBER` recall rises materially
   on the benchmark without wrecking precision.
 
-## Level 3 — Insurance / legal domain pack  ⛔ *open (priority)*
+## Level 3 — Insurance / legal domain pack  ✅ *delivered*
 
 - **Goal:** detect the domain identifiers that dominate insurance/legal documents.
-- **Entity types:** `POLICY_NUMBER` (Polizzennummer), `CLAIM_NUMBER` (Schadennummer),
-  `CONTRACT_NUMBER`, `CASE_NUMBER` (Aktenzeichen), `INVOICE_NUMBER`, `OFFER_NUMBER`,
-  `CUSTOMER_NUMBER`, `LICENSE_PLATE`, `PASSPORT_NUMBER`, `ID_CARD_NUMBER`, and context lines
-  (contact/customer blocks).
+- **Entity types:** `POLICY_NUMBER`, `CLAIM_NUMBER`, `CONTRACT_NUMBER`, `CASE_NUMBER`,
+  `FILE_REFERENCE`, `REPORT_NUMBER`, `ASSESSMENT_NUMBER`, `INVOICE_NUMBER`, `OFFER_NUMBER`,
+  `CUSTOMER_NUMBER`, `PROJECT_ID`, `TRANSACTION_ID`, `USER_ID`, `LICENSE_PLATE_AT`,
+  `PASSPORT_NUMBER`, and `ID_CARD_NUMBER`.
 - **Profiles:** completes `insurance-at-de`.
 - **Artifacts:** `pii_result` with domain types; context-aware confidence.
 - **Metrics:** per-type P/R/F1 for domain types; coverage of the domain-sensitive group (0 today).
@@ -85,12 +85,12 @@ They become first-class from L4; today they exist only as the `PII_ENTITY_TYPES`
 - **Acceptance:** the `domain_sensitive_types` benchmark group moves off zero with acceptable
   precision on synthetic and corpus data.
 
-## Level 4 — Entity profiles  ⏳ *foundation partial*
+## Level 4 — Entity profiles  ⏳ *coverage/configuration delivered; validation posture open*
 
 - **Goal:** make coverage/aggressiveness a named, selectable profile rather than an ad-hoc env list.
 - **Entity types:** whatever the chosen profile enables (see the [profiles table](#profiles-the-configuration-axis)).
-- **Profiles:** `structured-only` / `insurance-at-de` / `broad-review` / `review-heavy` become
-  first-class, with per-profile defaults for entity set and validation posture.
+- **Profiles:** `structured-only` / `insurance-at-de` / `broad-review` / `review-heavy` are
+  first-class for entity coverage; per-profile validation posture remains open.
 - **Artifacts:** `pii_result` records the active profile name; `configured_entity_types` derived
   from it.
 - **Metrics:** per-profile P/R/F1; profile chosen vs profile appropriate for the document type.
@@ -100,9 +100,9 @@ They become first-class from L4; today they exist only as the `PII_ENTITY_TYPES`
   (L5).
 - **Acceptance:** a named profile fully determines the entity set + validation posture and is
   recorded in the artifact.
-- **Status today:** the `PII_ENTITY_TYPES` allowlist (structured default; NER opt-in) is the seed —
-  it already lets a run behave as `structured-only` vs `broad-review` — but there are **no named
-  profiles** and no per-profile validation posture. → **partial.**
+- **Status today:** `PII_PROFILE` provides all four named coverage profiles and `pii_result` records
+  the effective name (`custom` for an allowlist override). Per-profile validation posture and
+  benchmark runs are still missing. → **partial.**
 
 ## Level 5 — Candidate validation / false-positive suppression  ⛔ *open (priority)*
 
@@ -220,9 +220,9 @@ verdict + reason both survive, so a human (or a later review action) can overrid
 | --- | --- | --- |
 | 0 None | n/a | — |
 | 1 Structured basics | ✅ done (quality uneven on AT/DE) | Presidio structured recognizers, default allowlist |
-| 2 AT/DE pattern pack | ⛔ open | no SVNR_AT/UID_AT/FN_AT; PHONE/URL recall 0 on corpus |
-| 3 Insurance/legal pack | ⛔ open | domain-sensitive group detected 0 |
-| 4 Entity profiles | ⏳ foundation | `PII_ENTITY_TYPES` allowlist only; no named profiles |
+| 2 AT/DE pattern pack | ✅ core delivered | Presidio pattern/context recognizers; address remains open |
+| 3 Insurance/legal pack | ✅ done | domain-sensitive recognizers and benchmark coverage |
+| 4 Entity profiles | ⏳ partial | named coverage profiles recorded; validation posture open |
 | 5 Candidate validation | ⛔ open | no post-processing; NER over-tags |
 | 6 Entity resolution | ⛔ open | display-only overlap resolution exists |
 | 7 Human review actions | ⛔ open | review UI is display-only |
@@ -230,20 +230,21 @@ verdict + reason both survive, so a human (or a later review action) can overrid
 | 9 Local AI plausibility | ⛔ open | — |
 | 10 Production-grade | ⛔ open | — |
 
-**Benchmark signal (aggregate, one local run, candidate ground truth — a regression signal, not a
-gold standard).** With NER enabled (a `broad-review`-style run) over a 12-document corpus:
+**Benchmark signal (aggregate private before/after run, candidate ground truth — a regression
+signal, not a gold standard).** With NER enabled (`review-heavy`) over a 12-document corpus:
 
-- **Structured group** — high precision (~0.91) but only ~0.37 recall: `EMAIL_ADDRESS` and
-  `IP_ADDRESS` strong, `IBAN_CODE` precise but low recall, and **`PHONE_NUMBER` and `URL` at zero
-  recall** on AT/DE-formatted values. → confirms the L2 priority.
+- **Structured group** — recall rose from ~0.37 to ~0.88; precision moved from ~0.91 to ~0.79 as
+  additional AT/DE phone, IBAN, and URL formats became visible.
 - **NER group** — high recall (~0.59) but very low precision (~0.08): `LOCATION`/`ORGANIZATION`/
   `PERSON` over-tag massively at a fixed score. → confirms the L5 (candidate validation) priority.
-- **Domain-sensitive group** — detected **zero** (no recognizers). → confirms the L3 priority.
+- **Domain-sensitive group** — moved from zero coverage to 27 TP / 19 FP / 20 FN (~0.59 precision,
+  ~0.57 recall). Four expected labels moved from the old `other` bucket into this canonical group.
+- **Precision hardening** — the final `insurance-at-de` run produced 77 TP / 32 FP / 132 FN
+  globally (precision ~0.71, recall ~0.37); broad NER is intentionally absent from that profile.
 
-**What is missing for the next level (L1 → L2/L3):**
-1. AT/DE recognizer pack (phone, SVNR_AT, UID_AT, FN_AT, BIC, addresses) — fixes structured recall.
-2. Insurance/legal domain pack (policy/claim/contract/case/invoice/offer numbers) — fills the
-   domain-sensitive zero.
-3. Then L5 candidate validation to make `broad-review` usable by cutting NER false positives.
+**What is missing next:**
+1. L5 candidate validation to make `broad-review` usable by cutting NER false positives.
+2. Address/contact-line recognition and the seven remaining unsupported semantic labels.
+3. Per-profile benchmark runs and validation posture to complete L4.
 
-See [`roadmap.md`](roadmap.md) (Engine-4, Engine-5) for sequencing.
+See [`roadmap.md`](roadmap.md) (Engine-5) for the next step.
