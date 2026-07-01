@@ -318,12 +318,17 @@ The last group includes sensitive document metadata, not only classical PII. Gen
 require an adjacent label; strong, type-specific formats can match directly. Presidio's existing
 types are reused for AT/DE phone, IBAN, credit card, and URL improvements.
 
-`structured-only` remains the default. The spaCy NER types remain **opt-in** because the small
-German model over-tags them at a fixed score that the score threshold cannot filter. Select a
-profile, for example `PII_PROFILE=insurance-at-de`. `PII_ENTITY_TYPES` remains a backwards-
-compatible explicit allowlist override and is recorded as profile `custom` if it differs from the
-selected profile. The score threshold stays `0.5`. The `presidio-analyzer` logger is capped at
-WARNING so its initialization messages do not flood logs, while genuine warnings still surface.
+`structured-only` is the conservative **code fallback** if `PII_PROFILE` is left completely unset
+(see `backend/app/config.py`, `docker-compose.yml`); it is intentionally narrow — high precision,
+low coverage. [`.env.example`](.env.example) instead sets the **recommended local default**,
+`PII_PROFILE=insurance-at-de`, because `structured-only` alone under-detects for insurance/legal
+documents. The spaCy NER types remain **opt-in** (via `broad-review`/`review-heavy`) because the
+small German model over-tags them at a fixed score that the score threshold cannot filter.
+`PII_ENTITY_TYPES` remains a backwards-compatible explicit allowlist override — set, it replaces
+`PII_PROFILE` entirely and is recorded as profile `custom`; unset **or empty**, it has no effect
+and the selected profile applies. The score threshold stays `0.5`. The `presidio-analyzer` logger
+is capped at WARNING so its initialization messages do not flood logs, while genuine warnings
+still surface.
 
 After detection, **candidate validation** (Engine-5) inspects every already-detected candidate and
 keeps, downgrades, or drops it — a subtractive post-processing filter, never a new recognizer. Full
@@ -391,6 +396,33 @@ See [`.env.example`](.env.example) for available settings, including:
 * optional local OCR model directory
 * optional PII runtime, language, model, score threshold, and entity allowlist
 * log level
+
+### Environment profiles
+
+For normal local testing, copy [`.env.example`](.env.example) to `.env` — it is heavily commented
+and is the source of truth for every setting below.
+
+**Recommended local mode:** `PII_PROFILE=insurance-at-de` with
+`PII_CANDIDATE_VALIDATION_ENABLED=true`, run via `make up-full` (needs `make ocr-models` once).
+This is what `.env.example` sets by default.
+
+**PII profiles** (see [Optional PII runtime](#optional-pii-runtime) above for the full type
+lists):
+
+* `structured-only` — minimal, privacy-strict smoke test; the conservative code fallback, not the
+  recommended day-to-day profile.
+* `insurance-at-de` — **recommended** for this project's documents.
+* `broad-review` / `review-heavy` — maximum candidate volume for a human-reviewed workflow; expect
+  more false positives.
+
+Leave `PII_ENTITY_TYPES` commented out unless you intentionally want a custom allowlist instead of
+a named profile — see `.env.example` section 12 for exactly how it interacts with `PII_PROFILE`.
+
+**Common debugging steps:** after any `.env` change, recreate the containers (the relevant
+`make up*` target again) and re-run the affected station for the document you're checking —
+existing artifacts are immutable and never reflect a config change retroactively. If PII detection
+looks empty, see the "If PII detects nothing" checklist in `.env.example` section 14 before
+assuming something is broken.
 
 ## Development and quality
 

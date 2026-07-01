@@ -23,7 +23,7 @@ recorded in `pii_result`; per-profile validation posture remains future L5 work.
 
 | Profile | Intent | Entity coverage | Validation posture |
 | --- | --- | --- | --- |
-| `structured-only` | High precision, low noise (current default) | EMAIL/PHONE/IBAN/CREDIT_CARD/IP/URL | validation runs, near-zero drops (light types pass through) |
+| `structured-only` | High precision, low noise (conservative code fallback if `PII_PROFILE` is unset; `.env.example` recommends `insurance-at-de` instead) | EMAIL/PHONE/IBAN/CREDIT_CARD/IP/URL | validation runs, near-zero drops (light types pass through) |
 | `insurance-at-de` | AT/DE + insurance/legal domain identifiers | structured + AT/DE + policy/claim/contract/… | validation runs; only `BIC` + a few domain IDs get a context check |
 | `broad-review` | Maximise recall for a human reviewer | above + PERSON/ORGANIZATION/LOCATION | full lexical/context validation on PERSON/ORGANIZATION/LOCATION |
 | `review-heavy` | Nothing missed; reviewer resolves everything | above + DATE_TIME | above, plus DATE_TIME year-only/shape checks |
@@ -49,7 +49,8 @@ those profiles — there is no profile branching in the validator itself.
 - **Goal:** detect high-precision, pattern-based structured identifiers.
 - **Entity types:** `EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, CREDIT_CARD, IP_ADDRESS, URL`
   (default allowlist). `PERSON/ORGANIZATION/LOCATION/DATE_TIME` are **supported but opt-in**.
-- **Profiles:** `structured-only` (as the env default).
+- **Profiles:** `structured-only` (the conservative code fallback when `PII_PROFILE` is unset;
+  `.env.example` recommends `insurance-at-de` as the local project default — see there for why).
 - **Artifacts:** `pii_result` with page-local + global offsets, per-type counts, tool versions.
 - **Metrics:** per-type precision/recall/F1, TP/FP/FN vs candidate ground truth.
 - **Tests/benchmarks:** `pii_adapters` unit tests, `pii-smoke`, benchmark PII table.
