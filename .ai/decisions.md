@@ -10,3 +10,5 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   file-based JSON result artifacts.
 - [ADR-0004](../docs/adr/0004-ocr-workstation.md) — Synchronous per-page OCR/text routing with
   replaceable PaddleOCR and PDF-rendering adapter boundaries.
+- [ADR-0005](../docs/adr/0005-pii-workstation.md) — Synchronous, detection-only PII labeling over
+  immutable text artifacts with a lazy Presidio/spaCy adapter.

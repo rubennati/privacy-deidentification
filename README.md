@@ -4,9 +4,9 @@ A Docker-first application foundation for privacy-focused document preparation a
 
 Users can upload documents through a web interface. The backend validates the upload, stores the file safely under `./volumes/uploads` on the host, and exposes health checks for local operation and development.
 
-> **Step 3:** This version provides upload/document management, structural Audit v1 and a
-> synchronous OCR/Text Workstation v1. Review, de-identification and redaction remain separate
-> later steps.
+> **Step 4:** This version provides upload/document management, structural Audit v1, the
+> synchronous OCR/Text Workstation v1, and detection-only PII Workstation v1. Review,
+> anonymization and redaction remain separate later steps.
 
 ## Approach: tool-first / adapter-only
 
@@ -72,6 +72,8 @@ docker compose down
 | GET    | `/api/documents/{id}/audit`  | Get the newest Audit v1 result                       |
 | POST   | `/api/documents/{id}/ocr`   | Create an immutable routed text result                |
 | GET    | `/api/documents/{id}/ocr`    | Get the newest text result                            |
+| POST   | `/api/documents/{id}/pii`   | Detect and label PII in the newest text result         |
+| GET    | `/api/documents/{id}/pii`    | Get the newest PII result                              |
 
 `POST /api/uploads` returns `201` with:
 
@@ -151,6 +153,31 @@ docker compose run --rm --no-deps \
 This smoke test is deliberately separate from `make test`: it requires platform-compatible
 PaddlePaddle wheels, sufficient RAM, and explicitly provisioned model files.
 
+### Optional PII runtime
+
+PII Workstation v1 uses Microsoft Presidio Analyzer and spaCy behind a lazy adapter. The regular
+image omits both packages. Build a PII-capable image explicitly:
+
+```bash
+INSTALL_PII=true docker compose build backend
+```
+
+The optional `pii` dependency extra pins Presidio, spaCy, and the German
+`de_core_news_sm` model wheel, so the model is installed reproducibly during image build. Requests
+never download a model. Missing packages, an unavailable model, or a language/model mismatch
+returns `503`; normal tests replace the adapter and load no model.
+
+The runtime can be smoke-tested separately from the standard quality gates:
+
+```bash
+INSTALL_PII=true docker compose build backend
+docker compose run --rm --no-deps backend python -c "from app.services.pii_adapters import PresidioAnalyzerAdapter; a=PresidioAnalyzerAdapter('de', 'de_core_news_sm'); r=a.analyze('Kontakt: max@example.at', 'de', ('EMAIL_ADDRESS',), 0.5); print(r); assert any(x.entity_type == 'EMAIL_ADDRESS' for x in r)"
+```
+
+PII v1 only detects and labels spans in the persisted text artifact. It does not anonymize,
+mask, redact, or alter source documents. Detected entity text is stored in a cleartext JSON
+artifact under the same protected document artifact directory and is not written to logs.
+
 ## Configuration
 
 Configuration is handled through environment variables.
@@ -161,6 +188,7 @@ See [`.env.example`](.env.example) for available settings, including:
 * allowed file extensions
 * upload directory
 * optional local OCR model directory
+* optional PII runtime, language, model, score threshold, and entity allowlist
 * log level
 
 ## Development and quality

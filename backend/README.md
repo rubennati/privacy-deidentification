@@ -13,6 +13,8 @@ picture and how to run everything with Docker Compose.
 - `GET /api/documents/{id}/audit` — return the newest audit result.
 - `POST /api/documents/{id}/ocr` — route text extraction from the original and latest audit.
 - `GET /api/documents/{id}/ocr` — return the newest text result.
+- `POST /api/documents/{id}/pii` — detect and label PII in the newest text result.
+- `GET /api/documents/{id}/pii` — return the newest PII result.
 - `GET /api/docs` — OpenAPI / Swagger UI.
 
 ## Layout
@@ -24,6 +26,8 @@ picture and how to run everything with Docker Compose.
 - `app/services/ocr_service.py` — per-page text-layer/OCR routing and text artifact creation.
 - `app/services/ocr_adapters.py` — lazy PaddleOCR adapter boundary.
 - `app/services/pdf_renderer.py` — replaceable pdf2image/Poppler page renderer.
+- `app/services/pii_service.py` — page-aware detection orchestration and PII artifact creation.
+- `app/services/pii_adapters.py` — lazy Presidio/spaCy adapter boundary.
 - `app/services/artifact_service.py` — atomic file-based derived artifact storage.
 - `app/main.py` — app factory, middleware (security headers, correlation id), error handling.
 - `tests/` — pytest suite (validation paths, health).
@@ -39,3 +43,9 @@ DOCX extraction do not initialize or require PaddleOCR. Real OCR additionally re
 `OCR_MODEL_DIR` with local `text_detection/` and `text_recognition/` directories; missing or
 uninitializable models return `503` without an intentional download fallback. See the root README
 for the read-only model-volume layout and smoke-test command.
+
+Presidio Analyzer, spaCy, and the pinned German spaCy model are an optional `pii` dependency
+extra. Set `INSTALL_PII=true` to bake them into the image. Initialization is lazy and performs no
+request-time download; an unavailable runtime returns `503`. PII v1 stores labels and exact text
+offsets only—it performs no anonymization or redaction. See the root README for configuration and
+the model-backed smoke-test command.

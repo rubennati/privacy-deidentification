@@ -20,6 +20,11 @@ ocr = [
     "paddleocr==3.7.0",
     "paddlepaddle==3.3.1",
 ]
+pii = [
+    "presidio-analyzer==2.2.362",
+    "spacy==3.8.14",
+    "de-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl",
+]
 
 [dependency-groups]
 dev = [
@@ -35,6 +40,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff]
 target-version = "py312"
