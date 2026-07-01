@@ -18,6 +18,15 @@ Tesseract, MinerU), PII/PHI detection (e.g. Presidio, noirdoc) and redaction (e.
 are integrated behind a port/interface. Our own code is orchestration, the review UI, file
 handling, export logic and secure integration. See [`AGENTS.md`](AGENTS.md).
 
+## Engine capability model
+
+The core of the project is the engine: local OCR/Text, local PII/sensitive-data, review/feedback,
+and optional (later) local AI assist. [`docs/engine/`](docs/engine/README.md) defines what each
+sub-engine should do level 0→10, the artifacts and metrics, the tool strategy, the target
+architecture (including the database and optional-local-AI questions), and the reframed roadmap.
+See [ADR-0011](docs/adr/0011-engine-capability-model.md). Current standing (summary): OCR/Text at
+Level 3 (Level 4 partial), PII at Level 1 (Level 4 foundation), review at Level 1.
+
 ## Architecture
 
 ```text

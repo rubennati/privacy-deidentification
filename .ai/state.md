@@ -65,6 +65,12 @@
   field or PII-shaped string would otherwise be written. See
   [ADR-0010](../docs/adr/0010-private-benchmark-runner.md) and
   [`scripts/benchmark/README.md`](../scripts/benchmark/README.md).
+- An engine capability model under [`docs/engine/`](../docs/engine/README.md) defines the OCR/Text,
+  PII/sensitive-data, and review/feedback sub-engines as 0–10 level ladders, plus the artifact
+  model, quality metrics, tool strategy, target architecture (DB + optional local-AI questions),
+  and an Engine-0…9 roadmap. Docs-only, no behaviour/dependency change. Current standing: OCR/Text
+  **L3 done / L4 partial**, PII **L1 done / L4 foundation**, review **L1**, benchmark **L2**. See
+  [ADR-0011](../docs/adr/0011-engine-capability-model.md).
 
 ## Approach (tool-first / adapter-only)
 
@@ -76,9 +82,14 @@ logic and secure integration. See [`AGENTS.md`](../AGENTS.md).
 
 ## Immediate next steps
 
-1. Define human review decisions over immutable PII labels.
-2. Design a separate redaction/export station after review approval.
-3. Add CI/CD gates (lint/typecheck/test/SAST/SCA).
+Driven by the engine roadmap ([`docs/engine/roadmap.md`](../docs/engine/roadmap.md)); benchmark
+signals prioritise closing PII detection gaps before review/redaction:
+
+1. Engine-4 — PII L2–L3 `insurance-at-de` recognizer pack (AT/DE + insurance/legal identifiers).
+2. Engine-5 — PII L5 candidate validation (subtractive false-positive suppression for NER).
+3. Engine-6 — Review/feedback model: persist human confirm/reject/add over immutable PII labels.
+4. Engine-2 — OCR L4–L5 hardening (OCR confidence + `quality_report` + human-readable text).
+5. Add CI/CD gates (lint/typecheck/test/SAST/SCA) and a benchmark regression gate.
 
 ## Active constraints
 
