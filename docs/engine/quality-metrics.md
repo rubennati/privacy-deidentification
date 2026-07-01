@@ -88,14 +88,17 @@ validated accuracy claim, and no document names, text, or PII values are reprodu
   routed to OCR. Routing matched the expected category on 10/12 documents; the 2 mismatches were the
   gate routing *all* pages of a bad scan to OCR where a partial fallback was expected — more
   conservative, not incorrect.
-- **PII global** — expected stayed 209. Detected 523 → 621, TP 63 → 120, FP 460 → 501,
-  FN 146 → 89, precision 0.1205 → 0.1932, recall 0.3014 → 0.5742, F1 0.1721 → 0.2892.
-- **PII, structured group** — precision 0.9130 → 0.6757, recall 0.3684 → 0.8772, F1
-  0.5250 → 0.7634.
+- **PII global (`review-heavy`)** — expected stayed 209. Detected 523 → 606, TP 63 → 119,
+  FP 460 → 487, FN 146 → 90, precision 0.1205 → 0.1964, recall 0.3014 → 0.5694,
+  F1 0.1721 → 0.2920.
+- **PII global (`insurance-at-de`)** — expected 209, detected 109, TP 77, FP 32, FN 132,
+  precision 0.7064, recall 0.3684, F1 0.4843. NER is intentionally unsupported by this profile.
+- **PII, structured group** — precision 0.9130 → 0.7937, recall 0.3684 → 0.8772, F1
+  0.5250 → 0.8333.
 - **PII, NER group** (run with NER opt-in enabled) — recall ≈ 0.59 but precision ≈ 0.08: heavy
   over-tagging of `LOCATION`/`ORGANIZATION`/`PERSON`.
-- **PII, domain-sensitive group** — zero coverage → 28 TP / 22 FP / 19 FN (precision 0.5600,
-  recall 0.5957, F1 0.5773). Canonical mapping moved four expected labels out of `other_types`, so
+- **PII, domain-sensitive group** — zero coverage → 27 TP / 19 FP / 20 FN (precision 0.5870,
+  recall 0.5745, F1 0.5806). Canonical mapping moved four expected labels out of `other_types`, so
   the group denominator changed from 43 to 47.
 
 Interpretation: Engine-4 materially improves structured/domain recall. NER remains deliberately

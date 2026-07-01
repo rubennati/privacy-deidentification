@@ -233,12 +233,14 @@ verdict + reason both survive, so a human (or a later review action) can overrid
 **Benchmark signal (aggregate private before/after run, candidate ground truth — a regression
 signal, not a gold standard).** With NER enabled (`review-heavy`) over a 12-document corpus:
 
-- **Structured group** — recall rose from ~0.37 to ~0.88; precision moved from ~0.91 to ~0.68 as
+- **Structured group** — recall rose from ~0.37 to ~0.88; precision moved from ~0.91 to ~0.79 as
   additional AT/DE phone, IBAN, and URL formats became visible.
 - **NER group** — high recall (~0.59) but very low precision (~0.08): `LOCATION`/`ORGANIZATION`/
   `PERSON` over-tag massively at a fixed score. → confirms the L5 (candidate validation) priority.
-- **Domain-sensitive group** — moved from zero coverage to 28 TP / 22 FP / 19 FN (~0.56 precision,
-  ~0.60 recall). Four expected labels moved from the old `other` bucket into this canonical group.
+- **Domain-sensitive group** — moved from zero coverage to 27 TP / 19 FP / 20 FN (~0.59 precision,
+  ~0.57 recall). Four expected labels moved from the old `other` bucket into this canonical group.
+- **Precision hardening** — the final `insurance-at-de` run produced 77 TP / 32 FP / 132 FN
+  globally (precision ~0.71, recall ~0.37); broad NER is intentionally absent from that profile.
 
 **What is missing next:**
 1. L5 candidate validation to make `broad-review` usable by cutting NER false positives.
