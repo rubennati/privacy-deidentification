@@ -320,10 +320,11 @@ types are reused for AT/DE phone, IBAN, credit card, and URL improvements.
 
 `structured-only` is the conservative **code fallback** if `PII_PROFILE` is left completely unset
 (see `backend/app/config.py`, `docker-compose.yml`); it is intentionally narrow — high precision,
-low coverage. [`.env.example`](.env.example) instead sets the **recommended local default**,
-`PII_PROFILE=insurance-at-de`, because `structured-only` alone under-detects for insurance/legal
-documents. The spaCy NER types remain **opt-in** (via `broad-review`/`review-heavy`) because the
-small German model over-tags them at a fixed score that the score threshold cannot filter.
+low coverage. [`.env.example`](.env.example) instead sets the **recommended local review default**,
+`PII_PROFILE=review-heavy`, for broadest coverage when a human reviews the results. Use
+`insurance-at-de` for fewer false positives. The spaCy NER types remain **opt-in** (via
+`broad-review`/`review-heavy`) because the small German model over-tags them at a fixed score that
+the score threshold cannot filter.
 `PII_ENTITY_TYPES` remains a backwards-compatible explicit allowlist override — set, it replaces
 `PII_PROFILE` entirely and is recorded as profile `custom`; unset **or empty**, it has no effect
 and the selected profile applies. The score threshold stays `0.5`. The `presidio-analyzer` logger
@@ -402,21 +403,22 @@ See [`.env.example`](.env.example) for available settings, including:
 For normal local testing, copy [`.env.example`](.env.example) to `.env` — it is heavily commented
 and is the source of truth for every setting below.
 
-**Recommended local mode:** `PII_PROFILE=insurance-at-de` with
+**Recommended local mode:** `PII_PROFILE=review-heavy` with
 `PII_CANDIDATE_VALIDATION_ENABLED=true`, run via `make up-full` (needs `make ocr-models` once).
 This is what `.env.example` sets by default.
 
-**PII profiles** (see [Optional PII runtime](#optional-pii-runtime) above for the full type
-lists):
+**PII profile quick guide:**
 
-* `structured-only` — minimal, privacy-strict smoke test; the conservative code fallback, not the
-  recommended day-to-day profile.
-* `insurance-at-de` — **recommended** for this project's documents.
-* `broad-review` / `review-heavy` — maximum candidate volume for a human-reviewed workflow; expect
-  more false positives.
+* `review-heavy` — default for local human review, broadest coverage
+* `broad-review` — broad NER without DATE_TIME
+* `insurance-at-de` — structured + AT/DE/domain IDs, fewer false positives
+* `structured-only` — minimal smoke-test profile
+
+If too little is detected, use `review-heavy` and rerun PII.
+If too much is detected, use `insurance-at-de`.
 
 Leave `PII_ENTITY_TYPES` commented out unless you intentionally want a custom allowlist instead of
-a named profile — see `.env.example` section 12 for exactly how it interacts with `PII_PROFILE`.
+a named profile — see `.env.example` section 7 for exactly how it interacts with `PII_PROFILE`.
 
 **Common debugging steps:** after any `.env` change, recreate the containers (the relevant
 `make up*` target again) and re-run the affected station for the document you're checking —

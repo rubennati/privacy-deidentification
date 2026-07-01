@@ -49,8 +49,9 @@ those profiles — there is no profile branching in the validator itself.
 - **Goal:** detect high-precision, pattern-based structured identifiers.
 - **Entity types:** `EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, CREDIT_CARD, IP_ADDRESS, URL`
   (default allowlist). `PERSON/ORGANIZATION/LOCATION/DATE_TIME` are **supported but opt-in**.
-- **Profiles:** `structured-only` (the conservative code fallback when `PII_PROFILE` is unset;
-  `.env.example` recommends `insurance-at-de` as the local project default — see there for why).
+- **Profiles:** `structured-only` (the conservative code fallback when `PII_PROFILE` is unset).
+  `.env.example` uses `review-heavy` as the local interactive review default; `insurance-at-de`
+  remains the recommended precision-oriented profile.
 - **Artifacts:** `pii_result` with page-local + global offsets, per-type counts, tool versions.
 - **Metrics:** per-type precision/recall/F1, TP/FP/FN vs candidate ground truth.
 - **Tests/benchmarks:** `pii_adapters` unit tests, `pii-smoke`, benchmark PII table.
