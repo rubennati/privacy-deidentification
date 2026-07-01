@@ -70,6 +70,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _repo_commit() -> str | None:
+    """Best-effort short commit hash. Falls back to reading ``.git/HEAD`` directly so this still
+    works in a minimal container image (e.g. ``python:3.12-slim``) that has no ``git`` binary."""
+    commit = _repo_commit_via_git_cli()
+    return commit if commit is not None else _repo_commit_via_git_dir()
+
+
+def _repo_commit_via_git_cli() -> str | None:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -84,6 +91,32 @@ def _repo_commit() -> str | None:
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
+
+
+def _repo_commit_via_git_dir() -> str | None:
+    git_dir = _REPO_ROOT / ".git"
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+    if not head.startswith("ref:"):
+        return head[:8] or None
+
+    ref = head.split(" ", 1)[1].strip()
+    try:
+        sha = (git_dir / ref).read_text(encoding="utf-8").strip()
+        return sha[:8] or None
+    except OSError:
+        pass
+
+    try:
+        for line in (git_dir / "packed-refs").read_text(encoding="utf-8").splitlines():
+            if line.endswith(f" {ref}"):
+                return line.split(" ", 1)[0][:8] or None
+    except OSError:
+        return None
+    return None
 
 
 def _missing_artifacts(local_artifacts: list[DocumentArtifacts]) -> list[dict[str, Any]]:
