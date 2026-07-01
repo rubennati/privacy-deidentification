@@ -10,10 +10,10 @@ compared, or returned by this module.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from artifact_loader import DetectedEntity
+from artifact_loader import DetectedEntity, ValidationSummary
 from document_matching import GroundTruthEntityAnchor
 
 # Ground-truth/detected entity type name -> canonical type name. Unknown types pass through
@@ -417,3 +417,47 @@ def build_global_pii_metrics(per_document: Sequence[DocumentPiiMetrics]) -> Glob
         by_type_group=by_group,
         unsupported_entity_types=unsupported,
     )
+
+
+@dataclass(frozen=True)
+class ValidationBenchmarkSummary:
+    """Corpus-wide aggregate of each document's Engine-5 candidate-validation summary.
+
+    Counts and reason codes only, summed across documents — never a candidate's text, offsets,
+    or context. A document without a ``pii_result`` or without a ``validation`` block (an
+    artifact written before Engine-5 existed) is simply not counted.
+    """
+
+    documents_considered: int
+    documents_with_validation_enabled: int
+    total_kept: int
+    total_dropped: int
+    total_score_down: int
+    dropped_by_reason: dict[str, int]
+    score_down_by_reason: dict[str, int]
+
+
+def aggregate_validation_summaries(
+    summaries: Sequence[ValidationSummary | None],
+) -> ValidationBenchmarkSummary:
+    """Sum per-document candidate-validation summaries into one corpus-wide summary."""
+    present = [summary for summary in summaries if summary is not None]
+    return ValidationBenchmarkSummary(
+        documents_considered=len(present),
+        documents_with_validation_enabled=sum(1 for summary in present if summary.enabled),
+        total_kept=sum(summary.kept for summary in present),
+        total_dropped=sum(summary.dropped for summary in present),
+        total_score_down=sum(summary.score_down for summary in present),
+        dropped_by_reason=_merge_reason_counts(summary.dropped_by_reason for summary in present),
+        score_down_by_reason=_merge_reason_counts(
+            summary.score_down_by_reason for summary in present
+        ),
+    )
+
+
+def _merge_reason_counts(reason_dicts: Iterable[dict[str, int]]) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for reason_dict in reason_dicts:
+        for reason, count in reason_dict.items():
+            merged[reason] = merged.get(reason, 0) + count
+    return dict(sorted(merged.items()))

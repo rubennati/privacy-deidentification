@@ -42,3 +42,9 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   insurance/legal/business identifier pack, stable structured/domain/NER type groups, four named
   coverage profiles with a precision-first default, and immediate-label context for generic domain
   values. Candidate validation remains a separate follow-up.
+- [ADR-0013](../docs/adr/0013-pii-candidate-validation.md) — PII candidate validation (Engine-5):
+  a dependency-free KEEP/SCORE_DOWN/DROP post-processing filter over already-detected candidates,
+  delivered as additive fields/summary on the existing `pii_result` artifact (not a separate
+  `pii_validation_result`), a `PII_CANDIDATE_VALIDATION_ENABLED` escape hatch, and a benchmark
+  aggregation of validation counts. PERSON/ORGANIZATION/LOCATION stay opt-in; no new recognizer,
+  entity type, or dependency.

@@ -24,6 +24,7 @@ services:
       PII_SCORE_THRESHOLD: ${PII_SCORE_THRESHOLD:-0.5}
       PII_PROFILE: ${PII_PROFILE:-structured-only}
       PII_ENTITY_TYPES: ${PII_ENTITY_TYPES:-}
+      PII_CANDIDATE_VALIDATION_ENABLED: ${PII_CANDIDATE_VALIDATION_ENABLED:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./volumes/uploads:${UPLOAD_STORAGE_DIR:-/data/uploads}

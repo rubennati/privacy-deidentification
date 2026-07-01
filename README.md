@@ -322,9 +322,21 @@ types are reused for AT/DE phone, IBAN, credit card, and URL improvements.
 German model over-tags them at a fixed score that the score threshold cannot filter. Select a
 profile, for example `PII_PROFILE=insurance-at-de`. `PII_ENTITY_TYPES` remains a backwards-
 compatible explicit allowlist override and is recorded as profile `custom` if it differs from the
-selected profile. The score threshold stays `0.5`. Candidate validation/false-positive suppression
-is deliberately not part of this pack. The `presidio-analyzer` logger is capped at WARNING so its
-initialization messages do not flood logs, while genuine warnings still surface.
+selected profile. The score threshold stays `0.5`. The `presidio-analyzer` logger is capped at
+WARNING so its initialization messages do not flood logs, while genuine warnings still surface.
+
+After detection, **candidate validation** (Engine-5) inspects every already-detected candidate and
+keeps, downgrades, or drops it — a subtractive post-processing filter, never a new recognizer. Full
+lexical/context rules run on `PERSON`/`ORGANIZATION`/`LOCATION`/`DATE_TIME` (the dominant NER
+false-positive source); a lighter context-presence check runs on `BIC` and a handful of domain
+identifiers; every other type is an intentional pass-through. A dropped candidate never appears in
+`pii_result.entities`; a downgraded candidate's score is capped at `0.3` (below the default `0.5`
+threshold, so it is excluded from the final list unless the threshold is deliberately lowered).
+`pii_result` additively records, per surviving entity, `original_score`/`validation_status`/
+`validation_reasons`, plus a document-level `validation` summary (`kept`/`dropped`/`score_down` and
+reason-code counts — never a candidate's text). Set `PII_CANDIDATE_VALIDATION_ENABLED=false` to
+fall back to raw detection output. See
+[ADR-0013](docs/adr/0013-pii-candidate-validation.md) for the full rule set and rationale.
 
 The runtime can be smoke-tested separately from the standard quality gates:
 

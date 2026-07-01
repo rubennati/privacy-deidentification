@@ -8,16 +8,24 @@ the PR that introduces it. It complements the existing stack decision
 ## Station pipeline (target)
 
 ```text
-Upload ─▶ Audit ─▶ OCR/Text ─▶ [Layout] ─▶ [Structure] ─▶ PII ─▶ [Validation] ─▶ Review ─▶ [Redaction]
-  │        │          │            │            │           │          │            │            │
-  │        │          │            │            │           │          │            │            └ later phase
-  ▼        ▼          ▼            ▼            ▼           ▼          ▼            ▼
-document  audit_   best_text_   layout_    structured_  pii_    pii_valid.   review_   (de-identified
-.json     result   result       text_res.  document_r.  result  result       result    output)
-                   (canonical)  (readable) (tables/kv)
+Upload ─▶ Audit ─▶ OCR/Text ─▶ [Layout] ─▶ [Structure] ─▶ PII (detect + validate) ─▶ Review ─▶ [Redaction]
+  │        │          │            │            │                   │                    │            │
+  │        │          │            │            │                   │                    │            └ later phase
+  ▼        ▼          ▼            ▼            ▼                   ▼                    ▼
+document  audit_   best_text_   layout_    structured_           pii_               review_   (de-identified
+.json     result   result       text_res.  document_r.           result             result    output)
+                   (canonical)  (readable) (tables/kv)   (entities + validation
+                                                            summary, additive)
 ```
 
-`[bracketed]` stations are planned. Each station:
+`[bracketed]` stations are planned. Engine-5 (candidate validation) shipped as an **additive
+post-processing step inside the PII station**, not the separate `pii_validation_result` artifact
+this diagram originally sketched: it filters/downgrades candidates before `pii_result` is written,
+and records a privacy-safe validation summary plus per-entity `validation_status`/
+`validation_reasons`/`original_score` on the same artifact. This avoided a second artifact type,
+new lineage edges, and new API surface for a subtractive filter that has no independent existence
+without its `pii_result` input — see
+[ADR-0013](../adr/0013-pii-candidate-validation.md). Each station:
 
 - reads its input artifact, appends an **immutable** output artifact referencing that input,
 - runs **synchronously** for now (no queue), behind **adapters** for every external tool,

@@ -128,3 +128,71 @@ def test_detected_entity_has_no_raw_text_field() -> None:
     field_names = {f for f in DetectedEntity.__dataclass_fields__}
     assert "text" not in field_names
     assert "entity_text" not in field_names
+
+
+def _pii_artifact_with_validation(artifact_id: str, document_id: str, created_at: str) -> dict:
+    return {
+        "id": artifact_id,
+        "document_id": document_id,
+        "artifact_type": "pii_result",
+        "created_at": created_at,
+        "content": {
+            "language": "de",
+            "score_threshold": 0.5,
+            "text_char_count": 10,
+            "configured_entity_types": ["EMAIL_ADDRESS"],
+            "entities": [],
+            "entity_counts": {},
+            "flags": [],
+            "validation": {
+                "enabled": True,
+                "kept": 2,
+                "dropped": 1,
+                "score_down": 1,
+                "dropped_by_reason": {"STOPWORD_ONLY": 1},
+                "score_down_by_reason": {"MISSING_REQUIRED_CONTEXT": 1},
+            },
+        },
+    }
+
+
+def test_load_local_corpus_parses_the_validation_summary(tmp_path: Path) -> None:
+    document_data_dir = tmp_path / "document-data"
+    document_id = "9" * 32
+    _write_json(
+        document_data_dir / document_id / "document.json",
+        _document_json(document_id, "Report.pdf", f"{document_id}.pdf", 100),
+    )
+    _write_json(
+        document_data_dir / document_id / "artifacts" / "pii.json",
+        _pii_artifact_with_validation("pii1", document_id, "2026-07-01T10:03:00Z"),
+    )
+
+    corpus = load_local_corpus(tmp_path / "uploads", document_data_dir)
+
+    assert corpus[0].pii is not None
+    validation = corpus[0].pii.validation
+    assert validation is not None
+    assert validation.enabled is True
+    assert validation.kept == 2
+    assert validation.dropped == 1
+    assert validation.score_down == 1
+    assert validation.dropped_by_reason == {"STOPWORD_ONLY": 1}
+    assert validation.score_down_by_reason == {"MISSING_REQUIRED_CONTEXT": 1}
+
+
+def test_pii_artifact_without_validation_block_parses_as_none(tmp_path: Path) -> None:
+    document_data_dir = tmp_path / "document-data"
+    document_id = "8" * 32
+    _write_json(
+        document_data_dir / document_id / "document.json",
+        _document_json(document_id, "Report.pdf", f"{document_id}.pdf", 100),
+    )
+    legacy_artifact = _pii_artifact_with_validation("pii1", document_id, "2026-07-01T10:03:00Z")
+    del legacy_artifact["content"]["validation"]
+    _write_json(document_data_dir / document_id / "artifacts" / "pii.json", legacy_artifact)
+
+    corpus = load_local_corpus(tmp_path / "uploads", document_data_dir)
+
+    assert corpus[0].pii is not None
+    assert corpus[0].pii.validation is None

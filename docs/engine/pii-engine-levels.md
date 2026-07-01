@@ -23,10 +23,16 @@ recorded in `pii_result`; per-profile validation posture remains future L5 work.
 
 | Profile | Intent | Entity coverage | Validation posture |
 | --- | --- | --- | --- |
-| `structured-only` | High precision, low noise (current default) | EMAIL/PHONE/IBAN/CREDIT_CARD/IP/URL | validation not implemented |
-| `insurance-at-de` | AT/DE + insurance/legal domain identifiers | structured + AT/DE + policy/claim/contract/… | validation not implemented |
-| `broad-review` | Maximise recall for a human reviewer | above + PERSON/ORGANIZATION/LOCATION | validation not implemented |
-| `review-heavy` | Nothing missed; reviewer resolves everything | above + DATE_TIME | validation not implemented |
+| `structured-only` | High precision, low noise (current default) | EMAIL/PHONE/IBAN/CREDIT_CARD/IP/URL | validation runs, near-zero drops (light types pass through) |
+| `insurance-at-de` | AT/DE + insurance/legal domain identifiers | structured + AT/DE + policy/claim/contract/… | validation runs; only `BIC` + a few domain IDs get a context check |
+| `broad-review` | Maximise recall for a human reviewer | above + PERSON/ORGANIZATION/LOCATION | full lexical/context validation on PERSON/ORGANIZATION/LOCATION |
+| `review-heavy` | Nothing missed; reviewer resolves everything | above + DATE_TIME | above, plus DATE_TIME year-only/shape checks |
+
+Validation intensity is a function of *entity type*, not profile — see
+[Level 5](#level-5--candidate-validation--false-positive-suppression--done) and
+[ADR-0013](../adr/0013-pii-candidate-validation.md). Because `structured-only`/`insurance-at-de`
+never configure PERSON/ORGANIZATION/LOCATION/DATE_TIME, the strong rules simply never fire for
+those profiles — there is no profile branching in the validator itself.
 
 ---
 
@@ -104,19 +110,27 @@ recorded in `pii_result`; per-profile validation posture remains future L5 work.
   the effective name (`custom` for an allowlist override). Per-profile validation posture and
   benchmark runs are still missing. → **partial.**
 
-## Level 5 — Candidate validation / false-positive suppression  ⛔ *open (priority)*
+## Level 5 — Candidate validation / false-positive suppression  ✅ *done*
 
 - **Goal:** prune or score-down obvious false positives *after* detection, especially NER noise.
-- **Entity types:** applies to all, but primarily tames `PERSON/ORGANIZATION/LOCATION/DATE_TIME`.
-- **Profiles:** the "validation posture" column becomes real here.
-- **Artifacts:** a `pii_validation_result` (or an annotation on `pii_result`) recording, per
-  candidate, the validation verdict + reason + score adjustment. The original detection is retained;
-  validation is additive and auditable.
-- **Metrics:** precision lift at fixed recall; FP reduction per type; false-suppression rate
-  (validation must not remove true positives).
-- **Tests/benchmarks:** validation-rule unit tests; benchmark precision delta with validation on/off.
-- **Tools:** deterministic rules over spaCy POS/stopword info (already available via the spaCy model
-  behind the adapter); optional dictionaries — **no new detection model**.
+- **Entity types:** full rules on `PERSON`/`ORGANIZATION`/`LOCATION`/`DATE_TIME`; a single
+  context-presence check on `BIC` and the domain identifiers with weaker recognizer-level context
+  requirements (`OFFER_NUMBER`, `CASE_NUMBER`, `PROJECT_ID`, `USER_ID`, `FILE_REFERENCE`,
+  `REPORT_NUMBER`, `ASSESSMENT_NUMBER`, `CUSTOMER_NUMBER`); every other type is a deliberate
+  pass-through.
+- **Profiles:** the "validation posture" column is real, but emerges from *which entity types a
+  profile enables* rather than profile-specific branching in the validator.
+- **Artifacts:** `pii_result` gains additive per-entity `original_score`/`validation_status`/
+  `validation_reasons` and a content-level `validation` summary (counts + reason codes, never a
+  value). The original detection score is retained via `original_score`; validation is additive
+  and auditable. A separate `pii_validation_result` artifact was considered and deliberately not
+  built — see [ADR-0013](../adr/0013-pii-candidate-validation.md).
+- **Metrics:** precision lift at fixed recall; FP reduction per type; dropped/score-down counts by
+  reason code, corpus-wide via the benchmark runner.
+- **Tests/benchmarks:** validation-rule unit tests; pii_service integration tests; benchmark
+  before/after (see [`quality-metrics.md`](quality-metrics.md)).
+- **Tools:** deterministic lexical/shape rules (small stopword/generic-word/company-form/name/
+  address/date/financial-context lists) — **no spaCy POS dependency, no new detection model**.
 - **Acceptance:** on the benchmark, NER precision rises substantially with negligible true-positive
   loss, and every suppression carries a reason.
 - **Detail:** see the [dedicated section below](#candidate-validation-is-a-post-processing-exclusion-step).
@@ -222,8 +236,8 @@ verdict + reason both survive, so a human (or a later review action) can overrid
 | 1 Structured basics | ✅ done (quality uneven on AT/DE) | Presidio structured recognizers, default allowlist |
 | 2 AT/DE pattern pack | ✅ core delivered | Presidio pattern/context recognizers; address remains open |
 | 3 Insurance/legal pack | ✅ done | domain-sensitive recognizers and benchmark coverage |
-| 4 Entity profiles | ⏳ partial | named coverage profiles recorded; validation posture open |
-| 5 Candidate validation | ⛔ open | no post-processing; NER over-tags |
+| 4 Entity profiles | ⏳ partial | named coverage profiles recorded; per-profile benchmark reporting open |
+| 5 Candidate validation | ✅ done | KEEP/SCORE_DOWN/DROP post-processing; NER over-tagging reduced |
 | 6 Entity resolution | ⛔ open | display-only overlap resolution exists |
 | 7 Human review actions | ⛔ open | review UI is display-only |
 | 8 Feedback rules | ⛔ open | — |
@@ -231,20 +245,49 @@ verdict + reason both survive, so a human (or a later review action) can overrid
 | 10 Production-grade | ⛔ open | — |
 
 **Benchmark signal (aggregate private before/after run, candidate ground truth — a regression
-signal, not a gold standard).** With NER enabled (`review-heavy`) over a 12-document corpus:
+signal, not a gold standard), 12-document corpus, two deterministic runs per profile:**
 
-- **Structured group** — recall rose from ~0.37 to ~0.88; precision moved from ~0.91 to ~0.79 as
-  additional AT/DE phone, IBAN, and URL formats became visible.
-- **NER group** — high recall (~0.59) but very low precision (~0.08): `LOCATION`/`ORGANIZATION`/
-  `PERSON` over-tag massively at a fixed score. → confirms the L5 (candidate validation) priority.
-- **Domain-sensitive group** — moved from zero coverage to 27 TP / 19 FP / 20 FN (~0.59 precision,
-  ~0.57 recall). Four expected labels moved from the old `other` bucket into this canonical group.
-- **Precision hardening** — the final `insurance-at-de` run produced 77 TP / 32 FP / 132 FN
-  globally (precision ~0.71, recall ~0.37); broad NER is intentionally absent from that profile.
+**`review-heavy` (NER opt-in) — Engine-4 final → Engine-5 (candidate validation on):**
+
+| Metric | Before (Engine-4) | After (Engine-5) |
+| --- | --- | --- |
+| Global | 119 TP / 487 FP / 90 FN, P=0.1964, R=0.5694, F1=0.2920 | 118 TP / 145 FP / 91 FN, P=0.4487, R=0.5646, F1=0.5000 |
+| NER group | 42 TP / 455 FP / 29 FN, P≈0.08, R≈0.59 | 41 TP / 118 FP / 30 FN, P=0.2579, R=0.5775, F1=0.3565 |
+| Structured group | P=0.9130→0.7937 (Engine-4 delta), R=0.8772 | unchanged: P=0.7937, R=0.8772, F1=0.8333 |
+| Domain-sensitive group | 27 TP / 19 FP / 20 FN, P=0.5870, R=0.5745 | 27 TP / 14 FP / 20 FN, P=0.6585, R=0.5745, F1=0.6136 |
+| Validation | — | kept=263, dropped=14, score_down=329 (12/12 docs, validation enabled) |
+| Dropped by reason | — | `TOO_SHORT_SINGLE_TOKEN`=10, `GENERIC_DOCUMENT_WORD`=2, `NER_SINGLE_COMMON_WORD`=1, `NUMERIC_ONLY_FOR_NER`=1 |
+| Score-down by reason | — | `ORG_WITHOUT_ORG_SIGNAL`=147, `LOCATION_WITHOUT_LOCATION_SIGNAL`=108, `MISSING_REQUIRED_CONTEXT`=69, `BIC_WITHOUT_FINANCIAL_CONTEXT`=5 |
+
+NER precision more than tripled (FP −74%, 455→118) for a true-positive cost of exactly 1 (42→41),
+and global FP fell 70% (487→145) while recall moved by −0.0048 — confirming the L5 goal: raise
+precision without collapsing recall. `ORG_WITHOUT_ORG_SIGNAL` and
+`LOCATION_WITHOUT_LOCATION_SIGNAL` dominate, exactly the generic-word-without-signal FP class the
+rules target.
+
+**`insurance-at-de` (no NER) — Engine-4 final → Engine-5:**
+
+| Metric | Before | After |
+| --- | --- | --- |
+| Global | 77 TP / 32 FP / 132 FN, P=0.7064, R=0.3684, F1=0.4843 | 77 TP / 27 FP / 132 FN, P=0.7404, R=0.3684, F1=0.4920 |
+| Domain-sensitive group | P=0.5870, R=0.5745 | P=0.6585, R=0.5745, F1=0.6136 (5 `BIC` score-downs) |
+| Structured group | P=0.7937, R=0.8772 | unchanged: P=0.7937, R=0.8772, F1=0.8333 |
+
+No regression: precision improved slightly (the 5 unlabelled `BIC` candidates were the only
+change), recall and the structured group are bit-for-bit unchanged, confirming light/pass-through
+types are untouched.
+
+**Determinism:** two consecutive `make benchmark-private` runs per profile produced identical
+reports (timestamps aside).
+
+**Unsupported types** (both profiles, after regenerating artifacts): exactly the seven documented
+labels — `ADDRESS`, `BIRTH_DATE`, `BIRTH_PLACE`, `CONTACT_LINE`, `CUSTOMER_LINE`, `FAMILY_NAME`,
+`GIVEN_NAME`.
 
 **What is missing next:**
-1. L5 candidate validation to make `broad-review` usable by cutting NER false positives.
-2. Address/contact-line recognition and the seven remaining unsupported semantic labels.
-3. Per-profile benchmark runs and validation posture to complete L4.
+1. Address/contact-line recognition and the seven remaining unsupported semantic labels.
+2. Per-profile benchmark runs in one invocation (today: rerun per configured profile) and
+   validation posture surfaced per-profile, to complete L4.
+3. Review/feedback persistence (Engine-6) so a human can act on validation-surviving candidates.
 
 See [`roadmap.md`](roadmap.md) (Engine-5) for the next step.

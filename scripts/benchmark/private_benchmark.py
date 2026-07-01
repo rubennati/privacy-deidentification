@@ -36,7 +36,11 @@ from document_matching import (  # noqa: E402
     match_documents,
 )
 from ocr_metrics import aggregate_ocr_metrics, compute_document_ocr_metrics  # noqa: E402
-from pii_matching import build_document_pii_metrics, build_global_pii_metrics  # noqa: E402
+from pii_matching import (  # noqa: E402
+    aggregate_validation_summaries,
+    build_document_pii_metrics,
+    build_global_pii_metrics,
+)
 from privacy_guard import PrivacyGuardError, assert_report_is_safe, assert_text_is_safe  # noqa: E402
 from report_builder import build_report, render_markdown  # noqa: E402
 
@@ -185,6 +189,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     pii_per_document = []
     global_pii = None
+    validation_aggregate = None
     if not args.no_pii:
         for matched in match_result.matched:
             groundtruth_doc = groundtruth_by_filename.get(matched.benchmark_filename)
@@ -207,6 +212,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 )
             )
         global_pii = build_global_pii_metrics(pii_per_document)
+        # Independent of ground truth: every matched document with a pii_result contributes its
+        # Engine-5 candidate-validation summary, whether or not it also has benchmark ground truth.
+        validation_aggregate = aggregate_validation_summaries(
+            artifacts_by_id[matched.document_id].pii.validation
+            for matched in match_result.matched
+            if artifacts_by_id[matched.document_id].pii is not None
+        )
 
     inputs = {
         "uploads_dir": str(args.uploads_dir),
@@ -229,6 +241,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         ocr_aggregate=ocr_aggregate,
         pii_per_document=pii_per_document,
         global_pii=global_pii,
+        validation_aggregate=validation_aggregate,
         missing_artifacts=_missing_artifacts(local_artifacts),
     )
     return report
@@ -337,6 +350,15 @@ def main(argv: list[str] | None = None) -> int:
             f"tp={g['total_tp']} fp={g['total_fp']} fn={g['total_fn']} "
             f"precision={g['precision']} recall={g['recall']} f1={g['f1']}"
         )
+        validation = report["pii_benchmark"].get("validation")
+        if validation:
+            print(
+                "PII candidate validation: "
+                f"kept={validation['total_kept']} dropped={validation['total_dropped']} "
+                f"score_down={validation['total_score_down']} "
+                f"(documents={validation['documents_considered']}, "
+                f"validation_enabled={validation['documents_with_validation_enabled']})"
+            )
     return 0
 
 

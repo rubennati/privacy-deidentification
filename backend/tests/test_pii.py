@@ -166,6 +166,9 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
         "page_end_offset": None,
         "score": 0.86,
         "recognizer": "FakeRecognizer",
+        "original_score": 0.86,
+        "validation_status": "kept",
+        "validation_reasons": [],
     }
     assert pii_fake.calls == ["Max Mustermann"]
     artifact_path = document_data_dir / document_id / "artifacts" / f"{artifact['id']}.json"
@@ -177,10 +180,13 @@ def test_pdf_pages_have_local_and_global_offsets(
 ) -> None:
     upload = _upload_document(client)
     document_id = str(upload["id"])
-    pages = ["Anna", "Kontakt max@example.at"]
+    # A two-token capitalized name survives candidate validation by shape, unlike a bare
+    # single-token candidate (see test_pii_candidate_validation.py) — this test is about
+    # page-local/global offset math, not validation, so the fixture is chosen to pass through.
+    pages = ["Max Mustermann", "Kontakt max@example.at"]
     _save_text(settings, document_id, "\n\n".join(pages), pages=pages)
     pii_fake.results = {
-        "Anna": [_entity("PERSON", 0, 4)],
+        "Max Mustermann": [_entity("PERSON", 0, 14)],
         "Kontakt max@example.at": [_entity("EMAIL_ADDRESS", 8, 22)],
     }
 
@@ -188,8 +194,8 @@ def test_pdf_pages_have_local_and_global_offsets(
 
     assert response.status_code == 201
     first, second = response.json()["content"]["entities"]
-    assert (first["start_offset"], first["end_offset"], first["page_number"]) == (0, 4, 1)
-    assert (first["page_start_offset"], first["page_end_offset"]) == (0, 4)
+    assert (first["start_offset"], first["end_offset"], first["page_number"]) == (0, 14, 1)
+    assert (first["page_start_offset"], first["page_end_offset"]) == (0, 14)
     assert (second["start_offset"], second["end_offset"], second["page_number"]) == (
         len(pages[0]) + 2 + 8,
         len(pages[0]) + 2 + 22,
@@ -222,19 +228,26 @@ def test_entities_are_sorted_and_counts_are_derived(
 ) -> None:
     upload = _upload_document(client)
     document_id = str(upload["id"])
-    text = "Anna in Wien mit Bob"
+    # Two-token capitalized names survive candidate validation by shape (unlike a bare
+    # single-token candidate); this test is about sort order and count derivation, not
+    # validation, so the fixture is chosen to pass through unchanged.
+    text = "Max Mustermann in Wien mit Erika Musterfrau"
     _save_text(settings, document_id, text)
     pii_fake.results[text] = [
-        _entity("PERSON", 17, 20),
-        _entity("LOCATION", 8, 12),
-        _entity("PERSON", 0, 4),
+        _entity("PERSON", 27, 43),  # "Erika Musterfrau"
+        _entity("LOCATION", 18, 22),  # "Wien"
+        _entity("PERSON", 0, 14),  # "Max Mustermann"
     ]
 
     response = client.post(f"/api/documents/{document_id}/pii")
 
     content = response.json()["content"]
     assert response.status_code == 201
-    assert [entity["text"] for entity in content["entities"]] == ["Anna", "Wien", "Bob"]
+    assert [entity["text"] for entity in content["entities"]] == [
+        "Max Mustermann",
+        "Wien",
+        "Erika Musterfrau",
+    ]
     assert content["entity_counts"] == {"LOCATION": 1, "PERSON": 2}
 
 
@@ -407,4 +420,188 @@ def test_logs_do_not_contain_source_or_entity_text(
         response = client.post(f"/api/documents/{document_id}/pii")
 
     assert response.status_code == 201
+    assert all(secret not in record.getMessage() for record in caplog.records)
+
+
+# --- Engine-5 candidate validation integration ---------------------------------------------------
+
+
+def test_dropped_candidate_is_excluded_from_final_entities_and_counted(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    text = "Für Kontakt max@example.at"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, text)
+    pii_fake.results[text] = [
+        _entity("PERSON", 0, 3),  # "Für" — function word, obvious false positive
+        _entity("EMAIL_ADDRESS", 12, 26),  # "max@example.at"
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    content = response.json()["content"]
+    assert response.status_code == 201
+    assert [entity["entity_type"] for entity in content["entities"]] == ["EMAIL_ADDRESS"]
+    assert content["entity_counts"] == {"EMAIL_ADDRESS": 1}
+    assert content["validation"]["enabled"] is True
+    assert content["validation"]["dropped"] == 1
+    assert content["validation"]["dropped_by_reason"] == {"FUNCTION_WORD_ONLY": 1}
+    assert content["validation"]["kept"] == 1
+
+
+def test_score_down_candidate_is_excluded_by_default_threshold_but_counted(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    text = "Musterhaft"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, text)
+    pii_fake.results[text] = [_entity("PERSON", 0, len(text), 0.85)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    content = response.json()["content"]
+    assert response.status_code == 201
+    assert content["entities"] == []
+    assert content["validation"]["score_down"] == 1
+    assert content["validation"]["dropped"] == 0
+    assert content["validation"]["score_down_by_reason"] == {"MISSING_REQUIRED_CONTEXT": 1}
+
+
+def test_structured_only_profile_is_stable_under_validation(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_profile = "structured-only"
+    settings.pii_entity_types = (
+        "EMAIL_ADDRESS",
+        "PHONE_NUMBER",
+        "IBAN_CODE",
+        "CREDIT_CARD",
+        "IP_ADDRESS",
+        "URL",
+    )
+    text = "Kontakt max@example.at"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, text)
+    pii_fake.results[text] = [_entity("EMAIL_ADDRESS", 8, 22, 0.6)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    content = response.json()["content"]
+    assert response.status_code == 201
+    assert content["profile"] == "structured-only"
+    assert len(content["entities"]) == 1
+    assert content["entities"][0]["score"] == 0.6
+    assert content["validation"]["dropped"] == 0
+    assert content["validation"]["score_down"] == 0
+
+
+def test_insurance_at_de_domain_types_stay_stable_bic_gets_moderate_check(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_profile = "insurance-at-de"
+    settings.pii_entity_types = ("EMAIL_ADDRESS", "PHONE_NUMBER", "URL", "POLICY_NUMBER", "BIC")
+    text = "Polizzennummer POL-KFZ-2026-00871 Kennung ABCDEFGH"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, text)
+    pii_fake.results[text] = [
+        _entity("POLICY_NUMBER", 15, 33, 0.7),  # POL-KFZ-2026-00871 — unaffected light type
+        _entity("BIC", 42, 50, 0.7),  # ABCDEFGH — no bank/BIC/IBAN context word nearby
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    content = response.json()["content"]
+    assert response.status_code == 201
+    entities_by_type = {entity["entity_type"]: entity for entity in content["entities"]}
+    assert entities_by_type["POLICY_NUMBER"]["score"] == 0.7
+    assert entities_by_type["POLICY_NUMBER"]["validation_status"] == "kept"
+    # BIC has no adjacent bank/BIC/IBAN keyword here, so it is scored down (not hard-dropped).
+    assert content["validation"]["score_down_by_reason"] == {"BIC_WITHOUT_FINANCIAL_CONTEXT": 1}
+
+
+def test_broad_review_profile_applies_validation_to_organization(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_entity_types = (
+        "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "CREDIT_CARD", "IP_ADDRESS", "URL",
+        "PERSON", "ORGANIZATION", "LOCATION",
+    )
+    text = "Rechnung von Muster GmbH"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, text)
+    pii_fake.results[text] = [
+        _entity("ORGANIZATION", 0, 8),  # "Rechnung" — generic document word
+        _entity("ORGANIZATION", 13, 24),  # "Muster GmbH" — has a company-form signal
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    content = response.json()["content"]
+    assert response.status_code == 201
+    assert [entity["text"] for entity in content["entities"]] == ["Muster GmbH"]
+    assert content["validation"]["dropped_by_reason"] == {"GENERIC_DOCUMENT_WORD": 1}
+
+
+def test_review_heavy_profile_applies_validation_to_date_time(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_entity_types = (
+        "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "CREDIT_CARD", "IP_ADDRESS", "URL",
+        "PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME",
+    )
+    # The two dates are kept far enough apart (> the 60-char context window) that the unrelated
+    # "Geburtsdatum" label cannot leak into the bare year's context window.
+    text = (
+        "Geschaeftsjahr 2025 ist im internen Vermerk ohne weiteren Bezug eingetragen worden "
+        "heute. Geburtsdatum 12.04.1980"
+    )
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, text)
+    pii_fake.results[text] = [
+        _entity("DATE_TIME", 15, 19, 0.85),  # "2025" — bare year, no date-role context nearby
+        _entity("DATE_TIME", 103, 113, 0.85),  # "12.04.1980" — has "Geburtsdatum" context
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    content = response.json()["content"]
+    assert response.status_code == 201
+    assert [entity["text"] for entity in content["entities"]] == ["12.04.1980"]
+    assert content["validation"]["score_down_by_reason"] == {"DATE_YEAR_ONLY": 1}
+
+
+def test_validation_summary_and_reasons_never_contain_the_raw_secret(
+    client: TestClient,
+    settings: Settings,
+    pii_fake: FakePiiAnalyzer,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "VerySecretUnlabelledName"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, secret)
+    pii_fake.results[secret] = [_entity("PERSON", 0, len(secret), 0.85)]
+
+    with caplog.at_level(logging.INFO, logger="app"):
+        response = client.post(f"/api/documents/{document_id}/pii")
+
+    content = response.json()["content"]
+    assert response.status_code == 201
+    assert content["entities"] == []
+    assert content["validation"]["score_down"] == 1
+    known_reason_codes = {
+        "STOPWORD_ONLY", "FUNCTION_WORD_ONLY", "GENERIC_DOCUMENT_WORD",
+        "TOO_SHORT_SINGLE_TOKEN", "NUMERIC_ONLY_FOR_NER", "MISSING_REQUIRED_CONTEXT",
+        "LOW_SHAPE_CONFIDENCE", "NER_SINGLE_COMMON_WORD", "DATE_YEAR_ONLY",
+        "ORG_WITHOUT_ORG_SIGNAL", "LOCATION_WITHOUT_LOCATION_SIGNAL",
+        "BIC_WITHOUT_FINANCIAL_CONTEXT",
+    }
+    assert set(content["validation"]["score_down_by_reason"]).issubset(known_reason_codes)
+    assert secret not in str(content["validation"])
     assert all(secret not in record.getMessage() for record in caplog.records)
