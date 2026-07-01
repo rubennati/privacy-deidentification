@@ -89,9 +89,9 @@ and scanned PDF pages need the OCR runtime plus provisioned models.
 | GET    | `/api/documents`       | List uploaded documents, newest first                      |
 | GET    | `/api/documents/{id}`  | Get one uploaded document                                  |
 | DELETE | `/api/documents/{id}`  | Delete a document's file and metadata                      |
-| POST   | `/api/documents/{id}/audit` | Create an immutable Audit v1 result                   |
+| POST   | `/api/documents/{id}/audit` | Create an immutable Audit v1 result (per-page text-quality) |
 | GET    | `/api/documents/{id}/audit`  | Get the newest Audit v1 result                       |
-| POST   | `/api/documents/{id}/ocr`   | Create an immutable routed text result                |
+| POST   | `/api/documents/{id}/ocr`   | Create an immutable text result (per-page text-layer/OCR) |
 | GET    | `/api/documents/{id}/ocr`    | Get the newest text result                            |
 | POST   | `/api/documents/{id}/pii`   | Detect and label PII in the newest text result         |
 | GET    | `/api/documents/{id}/pii`    | Get the newest PII result                              |
@@ -156,6 +156,54 @@ by older versions (`<id>.meta.json` and `artifacts/<id>/` below `volumes/uploads
 not discovered by the new layout. For local development, re-upload those documents if they are
 still needed, or copy them manually only after backing up `volumes/` and reshaping them to the
 layout above. Old files remain untouched until a developer removes them explicitly.
+
+### Text-layer quality gate and page-level OCR fallback
+
+`has_text_layer` alone is not enough. Some PDFs ship a formally present but **broken/encoded**
+text layer: many characters, almost no letters, mostly digits/symbols/control characters.
+Extracting that layer yields garbage that pollutes PII detection, while OCR of the same page
+produces usable text. Audit therefore assesses each PDF page's *character/token plausibility* with
+a dependency-free heuristic (no ML, no dictionary; see
+[`text_quality.py`](backend/app/services/text_quality.py)) and records the verdict additively on
+the page — only aggregate metrics, **never the page text**:
+
+```json
+{
+  "page_number": 1,
+  "has_text_layer": true,
+  "text_char_count": 6183,
+  "text_quality_status": "BROKEN_TEXT_LAYER",
+  "text_quality_score": 0,
+  "text_quality_reasons": ["very_low_letter_ratio", "high_symbol_or_digit_ratio", "few_word_tokens"],
+  "recommended_text_source": "ocr",
+  "needs_ocr": true
+}
+```
+
+| Status | Meaning | OCR/Text routing |
+| ------ | ------- | ---------------- |
+| `GOOD_TEXT_LAYER` | Enough text, plausible characters/tokens | Use text layer |
+| `LOW_CONFIDENCE_TEXT_LAYER` | Sparse or mixed signals (e.g. a short line, or a partly-usable scan page) | Use text layer (conservative) |
+| `BROKEN_TEXT_LAYER` | Enough characters, but clearly implausible | **OCR** |
+| `EMPTY_TEXT_LAYER` | No meaningful text (blank or scanned page) | **OCR** |
+
+A high digit ratio alone never means "broken": tables and invoices are number-heavy. The decisive
+signal is the near-total absence of **real words** — broken pages extract as digit/symbol tokens
+with `letter_ratio ≈ 0` and no word tokens, while even the most number-heavy legitimate page keeps
+its label words (`letter_ratio ≥ 0.64` on the local corpus). A hard fail therefore requires a
+symbol/digit-dominated page together with almost no letters (or essentially no real words).
+Thresholds are deliberately conservative and covered by unit tests
+([`test_text_quality.py`](backend/tests/test_text_quality.py)).
+
+Consequences:
+
+- OCR/Text decides **per page**. A clean text-layer PDF never renders a page or initializes
+  PaddleOCR; a mixed PDF OCRs only the empty/broken pages.
+- A broken text layer is **never silently used** as the result. If a page needs OCR and the OCR
+  runtime/models are missing, the request fails cleanly with `503` (the existing behavior) instead
+  of falling back to garbage.
+- Audit artifacts written before this gate carry no `needs_ocr`; routing then falls back to the
+  original rule (OCR only pages without any text layer).
 
 ### Optional OCR runtime
 

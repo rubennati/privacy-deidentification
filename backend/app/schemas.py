@@ -29,11 +29,29 @@ class OriginalArtifact(BaseModel):
 
 
 class AuditPageResult(BaseModel):
-    """Text-layer statistics for one PDF page."""
+    """Text-layer statistics and quality assessment for one PDF page.
+
+    The quality fields are additive and optional so audit artifacts written before the text-layer
+    quality gate still validate. ``has_text_layer`` keeps its original meaning (the page has any
+    extractable text); ``needs_ocr`` is the routing decision derived from ``text_quality_status``.
+    """
 
     page_number: int = Field(ge=1)
     text_char_count: int = Field(ge=0)
     has_text_layer: bool
+    text_quality_status: (
+        Literal[
+            "GOOD_TEXT_LAYER",
+            "LOW_CONFIDENCE_TEXT_LAYER",
+            "BROKEN_TEXT_LAYER",
+            "EMPTY_TEXT_LAYER",
+        ]
+        | None
+    ) = None
+    text_quality_score: int | None = Field(default=None, ge=0, le=100)
+    text_quality_reasons: list[str] = Field(default_factory=list)
+    recommended_text_source: Literal["text_layer", "ocr"] | None = None
+    needs_ocr: bool | None = None
 
 
 class AuditContent(BaseModel):

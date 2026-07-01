@@ -18,10 +18,16 @@
 - New uploads compute SHA-256 while streaming, record a server-verified MIME type, and embed an
   independently identified original artifact in `document.json`.
 - Audit v1 verifies original integrity and records per-page PDF text-layer statistics, DOCX
-  paragraph statistics, or PNG/JPEG dimensions as immutable JSON artifacts.
-- OCR/Text v1 reverifies the original, routes PDF pages individually between pypdf and a lazy
-  PaddleOCR adapter, extracts DOCX text via a shared table-aware helper (paragraphs, tables, and
-  section headers/footers in document order), and stores immutable text artifacts.
+  paragraph statistics, or PNG/JPEG dimensions as immutable JSON artifacts. Each PDF page also gets
+  a text-layer quality verdict (`text_quality_status`/`score`/`reasons`, `recommended_text_source`,
+  `needs_ocr`) from a pure, dependency-free heuristic (`services/text_quality.py`) — metrics only,
+  never the page text. See [ADR-0009](../docs/adr/0009-text-layer-quality-routing.md).
+- OCR/Text v1 reverifies the original, routes PDF pages individually on the audit's per-page
+  `needs_ocr` (GOOD/LOW_CONFIDENCE keep the text layer; BROKEN/EMPTY use the lazy PaddleOCR
+  adapter), extracts DOCX text via a shared table-aware helper (paragraphs, tables, and
+  section headers/footers in document order), and stores immutable text artifacts. A broken text
+  layer is never silently used: an OCR-required page with no OCR runtime still returns `503`. Audits
+  predating the quality gate fall back to routing on `has_text_layer`.
 - Audit and OCR/Text share one DOCX extraction helper (`services/docx_extraction.py`) so their
   DOCX character counts cannot diverge (see [ADR-0006](../docs/adr/0006-docx-extraction-and-pii-precision.md)).
 - PDF rendering is isolated behind a pdf2image/Poppler adapter; PaddleOCR/PaddlePaddle are an

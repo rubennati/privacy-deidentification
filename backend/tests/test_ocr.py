@@ -146,6 +146,23 @@ def _artifact_path(
     return document_data_dir / str(document_id) / "artifacts" / f"{artifact_id}.json"
 
 
+def _set_audit_page_fields(
+    document_data_dir: Path,
+    document_id: object,
+    audit_id: object,
+    page_index: int,
+    **fields: object,
+) -> None:
+    """Overwrite persisted audit page fields to stage a specific per-page routing decision."""
+    path = _artifact_path(document_data_dir, document_id, audit_id)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["content"]["pages"][page_index].update(fields)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+_GOOD_TEXT = "The quick brown fox jumps over the lazy dog near the calm winding river today"
+
+
 def test_pdf_text_layer_creates_text_artifact_without_ocr(
     client: TestClient,
     document_data_dir: Path,
@@ -293,6 +310,174 @@ def test_image_uses_ocr_once(
     assert content["text"] == "Image text"
     assert content["pages"][0]["page_number"] == 1
     assert len(adapter.calls) == 1
+    assert renderer.calls == []
+
+
+def test_good_text_pdf_does_not_initialize_ocr(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    upload, _ = _upload_and_audit(
+        client, "good.pdf", _pdf_pages_bytes(_GOOD_TEXT), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["source"] == "pdf_text_layer"
+    # A clean text-layer PDF never renders a page or touches the OCR adapter (no PaddleOCR init).
+    assert adapter.calls == []
+    assert renderer.calls == []
+
+
+def test_broken_text_layer_page_routes_to_ocr(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    adapter.outputs = ["OCR recovered text"]
+    upload, audit = _upload_and_audit(
+        client, "broken.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    _set_audit_page_fields(
+        document_data_dir,
+        upload["id"],
+        audit["id"],
+        0,
+        text_quality_status="BROKEN_TEXT_LAYER",
+        needs_ocr=True,
+        recommended_text_source="ocr",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["source"] == "paddleocr"
+    page = content["pages"][0]
+    assert page["source"] == "paddleocr"
+    assert page["ocr_used"] is True
+    assert page["has_text_layer"] is False
+    assert page["text"] == "OCR recovered text"
+    assert renderer.calls == [1]
+    assert len(adapter.calls) == 1
+
+
+def test_empty_text_layer_page_routes_to_ocr(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    adapter.outputs = ["Scanned page text"]
+    upload, _ = _upload_and_audit(
+        client, "scan.pdf", _pdf_pages_bytes(None), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["source"] == "paddleocr"
+    assert content["pages"][0]["ocr_used"] is True
+    assert renderer.calls == [1]
+    assert len(adapter.calls) == 1
+
+
+def test_mixed_quality_pdf_routes_each_page(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    adapter.outputs = ["Broken page OCR", "Scanned page OCR"]
+    upload, audit = _upload_and_audit(
+        client, "mixed.pdf", _pdf_pages_bytes(_GOOD_TEXT, _GOOD_TEXT, None), "application/pdf"
+    )
+    # Page 1 stays GOOD (text layer), page 2 is corrupted to BROKEN, page 3 is empty — the two
+    # OCR-required pages must be rendered while the good page is not.
+    _set_audit_page_fields(
+        document_data_dir,
+        upload["id"],
+        audit["id"],
+        1,
+        text_quality_status="BROKEN_TEXT_LAYER",
+        needs_ocr=True,
+        recommended_text_source="ocr",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["source"] == "pdf_mixed"
+    assert [page["source"] for page in content["pages"]] == [
+        "pdf_text_layer",
+        "paddleocr",
+        "paddleocr",
+    ]
+    assert renderer.calls == [2, 3]
+    assert len(adapter.calls) == 2
+
+
+def test_ocr_required_page_without_runtime_returns_503(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.unavailable = True
+    upload, audit = _upload_and_audit(
+        client, "broken.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    _set_audit_page_fields(
+        document_data_dir,
+        upload["id"],
+        audit["id"],
+        0,
+        text_quality_status="BROKEN_TEXT_LAYER",
+        needs_ocr=True,
+        recommended_text_source="ocr",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 503
+    # The broken text layer is never silently used as a result: no text_result artifact is written.
+    artifact_directory = document_data_dir / str(upload["id"]) / "artifacts"
+    assert [path.stem for path in artifact_directory.glob("*.json")] == [str(audit["id"])]
+
+
+def test_legacy_audit_without_quality_fields_uses_text_layer(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    upload, audit = _upload_and_audit(
+        client, "legacy.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    path = _artifact_path(document_data_dir, upload["id"], audit["id"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for key in (
+        "text_quality_status",
+        "text_quality_score",
+        "text_quality_reasons",
+        "recommended_text_source",
+        "needs_ocr",
+    ):
+        payload["content"]["pages"][0].pop(key, None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    # Audits predating the quality gate carry no needs_ocr, so routing falls back to has_text_layer.
+    assert content["source"] == "pdf_text_layer"
+    assert adapter.calls == []
     assert renderer.calls == []
 
 

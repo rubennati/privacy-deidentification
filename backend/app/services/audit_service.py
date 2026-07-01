@@ -18,6 +18,7 @@ from app.services.artifact_service import get_latest_audit_artifact, save_audit_
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.docx_extraction import extract_docx_text
 from app.services.original_artifact_service import get_verified_original
+from app.services.text_quality import BROKEN_TEXT_LAYER, assess_text_quality
 
 _PDF_MIME_TYPE = "application/pdf"
 _DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -86,14 +87,27 @@ def _analyze_pdf(
         page_text = page.extract_text() or ""
         char_count = len(page_text)
         total_chars += char_count
+        # Assess character/token plausibility so a formally-present but broken/encoded text layer
+        # is not silently accepted. Only aggregate metrics are stored — never the page text.
+        quality = assess_text_quality(page_text)
         pages.append(
             AuditPageResult(
                 page_number=page_number,
                 text_char_count=char_count,
                 has_text_layer=bool(page_text.strip()),
+                text_quality_status=quality.status,
+                text_quality_score=quality.score,
+                text_quality_reasons=quality.reasons,
+                recommended_text_source=quality.recommended_text_source,
+                needs_ocr=quality.needs_ocr,
             )
         )
     has_text_layer = any(page.has_text_layer for page in pages)
+    flags = ["pdf_has_text_layer" if has_text_layer else "pdf_no_text_layer"]
+    if any(page.needs_ocr for page in pages):
+        flags.append("pdf_pages_need_ocr")
+    if any(page.text_quality_status == BROKEN_TEXT_LAYER for page in pages):
+        flags.append("pdf_broken_text_layer")
     return AuditContent(
         document_id=document_id,
         input_artifact_id=original.id,
@@ -103,7 +117,7 @@ def _analyze_pdf(
         has_text_layer=has_text_layer,
         text_char_count=total_chars,
         pages=pages,
-        flags=["pdf_has_text_layer" if has_text_layer else "pdf_no_text_layer"],
+        flags=flags,
         tool_versions={"pypdf": version("pypdf")},
     )
 

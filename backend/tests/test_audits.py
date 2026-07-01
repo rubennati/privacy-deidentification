@@ -121,9 +121,16 @@ def test_audits_pdf_with_text_layer(
     assert content["page_count"] == 1
     assert content["has_text_layer"] is True
     assert content["text_char_count"] == len("Audit text")
-    assert content["pages"] == [
-        {"page_number": 1, "text_char_count": len("Audit text"), "has_text_layer": True}
-    ]
+    page = content["pages"][0]
+    assert page["page_number"] == 1
+    assert page["text_char_count"] == len("Audit text")
+    assert page["has_text_layer"] is True
+    # "Audit text" is plausible but too short to be confident, so it stays on the text layer.
+    assert page["needs_ocr"] is False
+    assert page["recommended_text_source"] == "text_layer"
+    assert page["text_quality_status"] in {"GOOD_TEXT_LAYER", "LOW_CONFIDENCE_TEXT_LAYER"}
+    assert isinstance(page["text_quality_score"], int)
+    assert isinstance(page["text_quality_reasons"], list)
     assert content["flags"] == ["pdf_has_text_layer"]
     assert content["tool_versions"]["pypdf"]
     artifact_path = _artifact_directory(document_data_dir, upload["id"]) / f"{artifact['id']}.json"
@@ -140,8 +147,13 @@ def test_audits_pdf_without_text_layer(client: TestClient) -> None:
     assert content["page_count"] == 1
     assert content["has_text_layer"] is False
     assert content["text_char_count"] == 0
-    assert content["pages"][0]["has_text_layer"] is False
-    assert content["flags"] == ["pdf_no_text_layer"]
+    page = content["pages"][0]
+    assert page["has_text_layer"] is False
+    assert page["text_quality_status"] == "EMPTY_TEXT_LAYER"
+    assert page["needs_ocr"] is True
+    assert page["recommended_text_source"] == "ocr"
+    # An empty page still routes to OCR, so the additive summary flag is present.
+    assert content["flags"] == ["pdf_no_text_layer", "pdf_pages_need_ocr"]
 
 
 def test_audits_mixed_pdf_text_layers_per_page(client: TestClient) -> None:
@@ -162,11 +174,52 @@ def test_audits_mixed_pdf_text_layers_per_page(client: TestClient) -> None:
     assert content["text_char_count"] == sum(
         page["text_char_count"] for page in content["pages"]
     )
-    assert content["pages"] == [
-        {"page_number": 1, "text_char_count": len(page_text), "has_text_layer": True},
-        {"page_number": 2, "text_char_count": 0, "has_text_layer": False},
-        {"page_number": 3, "text_char_count": 0, "has_text_layer": False},
+    pages = content["pages"]
+    assert [page["has_text_layer"] for page in pages] == [True, False, False]
+    assert [page["text_char_count"] for page in pages] == [len(page_text), 0, 0]
+    # The text page keeps its layer; the two empty pages are routed to OCR.
+    assert [page["needs_ocr"] for page in pages] == [False, True, True]
+    assert [page["text_quality_status"] for page in pages] == [
+        "LOW_CONFIDENCE_TEXT_LAYER",
+        "EMPTY_TEXT_LAYER",
+        "EMPTY_TEXT_LAYER",
     ]
+    assert "pdf_pages_need_ocr" in content["flags"]
+
+
+def test_audit_good_page_does_not_need_ocr(client: TestClient) -> None:
+    good_text = "The quick brown fox jumps over the lazy dog near the calm winding river today"
+    upload = _upload(client, "good.pdf", _pdf_bytes(text=good_text), "application/pdf")
+
+    response = client.post(f"/api/documents/{upload['id']}/audit")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    page = content["pages"][0]
+    assert page["text_quality_status"] == "GOOD_TEXT_LAYER"
+    assert page["needs_ocr"] is False
+    assert page["recommended_text_source"] == "text_layer"
+    assert page["text_quality_score"] >= 80
+    assert content["flags"] == ["pdf_has_text_layer"]
+
+
+def test_audit_broken_text_layer_page_needs_ocr(client: TestClient) -> None:
+    # Many characters, no letters, interior symbols: the broken/encoded text-layer signature.
+    garbage = "1#2 3%4 5@6 7|8 9^0 2&3 4*5 6~7 8<9 0>1 2?3 4=5 6#7 8%9 0@1 2|3 4^5 6&7 8<1 0>2"
+    upload = _upload(client, "broken.pdf", _pdf_bytes(text=garbage), "application/pdf")
+
+    response = client.post(f"/api/documents/{upload['id']}/audit")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    page = content["pages"][0]
+    # The page formally has a text layer, but its content is unusable and must be OCR'd.
+    assert page["has_text_layer"] is True
+    assert page["text_quality_status"] == "BROKEN_TEXT_LAYER"
+    assert page["needs_ocr"] is True
+    assert page["recommended_text_source"] == "ocr"
+    assert "pdf_broken_text_layer" in content["flags"]
+    assert "pdf_pages_need_ocr" in content["flags"]
 
 
 @pytest.mark.parametrize(
