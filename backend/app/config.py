@@ -9,32 +9,21 @@ from typing import Annotated
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-_DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MiB
-_SUPPORTED_PII_ENTITY_TYPES = (
-    "PERSON",
-    "EMAIL_ADDRESS",
-    "PHONE_NUMBER",
-    "IBAN_CODE",
-    "CREDIT_CARD",
-    "IP_ADDRESS",
-    "URL",
-    "LOCATION",
-    "ORGANIZATION",
-    "DATE_TIME",
+from app.services.pii_profiles import (
+    PII_PROFILES,
+    STRUCTURED_TYPES,
+    SUPPORTED_PII_ENTITY_TYPES,
+    PiiProfileName,
+    get_pii_profile,
 )
+
+_DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MiB
 # Default to the high-precision, pattern-based recognizers only. The spaCy NER types
 # (PERSON/ORGANIZATION/LOCATION) dominate the small German model's false positives at a fixed
-# ~0.85 score that the score threshold cannot discriminate, so they are opt-in via
-# PII_ENTITY_TYPES rather than default. DATE_TIME is likewise opt-in: it is noisy on the target
-# document corpus. All types remain supported.
-_DEFAULT_PII_ENTITY_TYPES = (
-    "EMAIL_ADDRESS",
-    "PHONE_NUMBER",
-    "IBAN_CODE",
-    "CREDIT_CARD",
-    "IP_ADDRESS",
-    "URL",
-)
+# ~0.85 score that the score threshold cannot discriminate, so they are opt-in via broader
+# profiles or PII_ENTITY_TYPES rather than default. DATE_TIME is likewise opt-in: it is noisy on
+# the target document corpus. All types remain supported.
+_DEFAULT_PII_ENTITY_TYPES = STRUCTURED_TYPES
 
 
 class Settings(BaseSettings):
@@ -83,6 +72,10 @@ class Settings(BaseSettings):
     pii_score_threshold: float = Field(
         default=0.5, ge=0, le=1, alias="PII_SCORE_THRESHOLD"
     )
+    pii_profile: PiiProfileName = Field(
+        default="structured-only",
+        alias="PII_PROFILE",
+    )
     pii_entity_types: Annotated[tuple[str, ...], NoDecode] = Field(
         default=_DEFAULT_PII_ENTITY_TYPES,
         alias="PII_ENTITY_TYPES",
@@ -111,6 +104,11 @@ class Settings(BaseSettings):
     def _normalize_pii_language(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
 
+    @field_validator("pii_profile", mode="before")
+    @classmethod
+    def _normalize_pii_profile(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
     @field_validator("pii_entity_types", mode="before")
     @classmethod
     def _parse_pii_entity_types(cls, value: object) -> object:
@@ -123,8 +121,10 @@ class Settings(BaseSettings):
         normalized = [str(item).strip().upper() for item in items if str(item).strip()]
         unique = tuple(dict.fromkeys(normalized))
         if not unique:
-            raise ValueError("PII_ENTITY_TYPES must contain at least one entity type")
-        unsupported = set(unique).difference(_SUPPORTED_PII_ENTITY_TYPES)
+            # Compose passes an empty value when no backwards-compatible override is set.
+            # The selected named profile is applied by the model validator below.
+            return ()
+        unsupported = set(unique).difference(SUPPORTED_PII_ENTITY_TYPES)
         if unsupported:
             raise ValueError("PII_ENTITY_TYPES contains unsupported entity types")
         return unique
@@ -144,6 +144,13 @@ class Settings(BaseSettings):
         return None if value == "" else value
 
     @model_validator(mode="after")
+    def _apply_pii_profile(self) -> Settings:
+        """Derive the allowlist from the profile unless a non-empty override was supplied."""
+        if "pii_entity_types" not in self.model_fields_set or not self.pii_entity_types:
+            self.pii_entity_types = get_pii_profile(self.pii_profile).entity_types
+        return self
+
+    @model_validator(mode="after")
     def _storage_directories_are_separate(self) -> Settings:
         """Reject equal or nested roots so originals and application data cannot mix."""
         upload_root = self.upload_storage_dir.resolve()
@@ -157,6 +164,17 @@ class Settings(BaseSettings):
                 "UPLOAD_STORAGE_DIR and DOCUMENT_DATA_DIR must be separate directories"
             )
         return self
+
+    @property
+    def effective_pii_profile(self) -> str:
+        """Return the selected profile name, or ``custom`` for an allowlist override."""
+        selected_types = get_pii_profile(self.pii_profile).entity_types
+        return self.pii_profile if self.pii_entity_types == selected_types else "custom"
+
+    @property
+    def supported_pii_profiles(self) -> tuple[str, ...]:
+        """Expose the closed profile set without leaking a mutable registry."""
+        return tuple(PII_PROFILES)
 
 
 @lru_cache(maxsize=1)

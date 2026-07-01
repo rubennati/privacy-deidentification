@@ -21,7 +21,7 @@ tool must run **locally** — nothing sends document bytes, text, or PII to an e
 | **pdf2image / Poppler** | Core — render PDF pages to raster for OCR | stays | Feed scanned pages to OCR | native Poppler dependency; temp files (kept on tmpfs) | native lib | local ✓ | OCR L2 |
 | **PaddleOCR + PaddlePaddle** | Core — CPU OCR (PP-OCRv5 mobile, Latin recognizer) | stays as an OCR engine option | Read text off images/scans | heavy image (~GB), CPU MKL-DNN quirk, ARM build caveat | large (OCR image only) | local ✓ | OCR L2 |
 | **Pillow** | Core — image open/validation | stays | Image handling | — | small | local ✓ | OCR L2 |
-| **Presidio (analyzer)** | Core — PII detection framework | stays; host custom recognizers | Structured + NER PII detection | small-model NER over-tags (see PII L5) | moderate (PII image only) | local ✓ | PII L1 |
+| **Presidio (analyzer)** | Core — PII detection + shipped AT/DE/domain PatternRecognizers | stays; host validation rules | Structured + domain + NER PII detection | small-model NER over-tags (see PII L5) | moderate (PII image only) | local ✓ | PII L1–L3 |
 | **spaCy (+ de_core_news_sm)** | Core — NER backend for Presidio | stays; POS/stopword info for validation | German NER + linguistic features | small model imprecise; fixed-score NER | moderate | local ✓ | PII L1 (validation input at L5) |
 | **`text_quality.py` (in-house)** | Core — per-page quality/routing heuristic | stays | Detect broken/encoded text layers | heuristic thresholds (unit-tested) | none | local ✓ | OCR L3 |
 | **PyMuPDF (fitz)** | — | Later — block/line geometry for layout + (much later) redaction | Reading order, layout blocks, redaction primitives | AGPL licensing to review; adds a dep | moderate | local ✓ | OCR L5–L6 |
@@ -36,8 +36,9 @@ tool must run **locally** — nothing sends document bytes, text, or PII to an e
 
 `pypdf`, `python-docx`, `pdf2image`/Poppler, `PaddleOCR`/`PaddlePaddle`, `Pillow`, `Presidio` +
 `spaCy`, and the in-house `text_quality.py` routing heuristic. These deliver OCR L1–L3 and PII L1
-today and remain the backbone through the near-term roadmap. New PII capability (L2/L3) is added as
-**Presidio custom recognizers + validation rules**, not new heavy dependencies.
+today and remain the backbone through the near-term roadmap. PII L2/L3 is implemented as lazy
+**Presidio PatternRecognizers** with format-strong or immediate-label context; L5 validation rules
+remain separate future post-processing, not part of the recognizer pack.
 
 ## What is a benchmark spike (evaluate before adopting)
 

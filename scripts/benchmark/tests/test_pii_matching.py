@@ -41,6 +41,9 @@ def test_canonicalize_maps_known_aliases() -> None:
     assert canonicalize("PERSON_NAME") == "PERSON"
     assert canonicalize("ORG") == "ORGANIZATION"
     assert canonicalize("DATE") == "DATE_TIME"
+    assert canonicalize("STEUERNUMMER") == "TAX_ID_AT"
+    assert canonicalize("KFZ_KENNZEICHEN") == "LICENSE_PLATE_AT"
+    assert canonicalize("GUTACHTENNUMMER") == "ASSESSMENT_NUMBER"
 
 
 def test_canonicalize_keeps_birth_date_distinct_from_date_time() -> None:
@@ -56,6 +59,8 @@ def test_type_group_buckets_structured_ner_domain_and_other() -> None:
     assert type_group("EMAIL_ADDRESS") == "structured_types"
     assert type_group("PERSON") == "ner_types"
     assert type_group("UID_AT") == "domain_sensitive_types"
+    assert type_group("ASSESSMENT_NUMBER") == "domain_sensitive_types"
+    assert type_group("USER_ID") == "domain_sensitive_types"
     assert type_group("ADDRESS") == "other_types"
 
 

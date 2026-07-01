@@ -10,6 +10,11 @@ from threading import Lock
 from typing import Protocol, cast
 
 from app.errors import ApiError
+from app.services.pii_recognizers import (
+    PresidioPatternApi,
+    RecognizerRegistry,
+    register_insurance_at_de_recognizers,
+)
 
 
 @dataclass(frozen=True)
@@ -148,6 +153,11 @@ class PresidioAnalyzerAdapter:
                 registry = presidio.RecognizerRegistry(supported_languages=[self._language])
                 registry.load_predefined_recognizers(
                     languages=[self._language], nlp_engine=nlp_engine
+                )
+                register_insurance_at_de_recognizers(
+                    cast(RecognizerRegistry, registry),
+                    cast(PresidioPatternApi, presidio),
+                    self._language,
                 )
                 engine = presidio.AnalyzerEngine(
                     registry=registry,

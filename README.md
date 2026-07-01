@@ -301,13 +301,29 @@ The optional `pii` dependency extra pins Presidio, spaCy, and the German
 never download a model. Missing packages, an unavailable model, or a language/model mismatch
 returns `503`; normal tests replace the adapter and load no model.
 
-By default, PII detection uses only high-precision, pattern-based recognizers —
-`EMAIL_ADDRESS, PHONE_NUMBER, IBAN_CODE, CREDIT_CARD, IP_ADDRESS, URL`. The spaCy NER types
-`PERSON`, `ORGANIZATION`, and `LOCATION` are supported but **opt-in**, because the small German
-model over-tags them at a fixed score that the score threshold cannot filter; `DATE_TIME` is
-likewise opt-in. Enable any of them explicitly via `PII_ENTITY_TYPES`, e.g.
-`PII_ENTITY_TYPES=EMAIL_ADDRESS,PHONE_NUMBER,IBAN_CODE,CREDIT_CARD,IP_ADDRESS,URL,PERSON,ORGANIZATION,LOCATION,DATE_TIME`.
-The score threshold stays `0.5`. The `presidio-analyzer` logger is capped at WARNING so its
+PII coverage is selected with `PII_PROFILE`:
+
+| Profile | Coverage |
+| --- | --- |
+| `structured-only` | EMAIL, PHONE, IBAN, CREDIT_CARD, IP, URL — precision-first default |
+| `insurance-at-de` | structured + AT/DE and insurance/legal/business identifiers |
+| `broad-review` | insurance-at-de + PERSON, ORGANIZATION, LOCATION |
+| `review-heavy` | broad-review + DATE_TIME |
+
+The `insurance-at-de` pack adds `UID_AT`, `FN_AT`, `SVNR_AT`, `TAX_ID_AT`, `BIC`,
+`LICENSE_PLATE_AT`, `PASSPORT_NUMBER`, `ID_CARD_NUMBER`, `POLICY_NUMBER`, `CLAIM_NUMBER`,
+`CONTRACT_NUMBER`, `CASE_NUMBER`, `FILE_REFERENCE`, `REPORT_NUMBER`, `ASSESSMENT_NUMBER`,
+`INVOICE_NUMBER`, `OFFER_NUMBER`, `CUSTOMER_NUMBER`, `PROJECT_ID`, `TRANSACTION_ID`, and `USER_ID`.
+The last group includes sensitive document metadata, not only classical PII. Generic domain values
+require an adjacent label; strong, type-specific formats can match directly. Presidio's existing
+types are reused for AT/DE phone, IBAN, credit card, and URL improvements.
+
+`structured-only` remains the default. The spaCy NER types remain **opt-in** because the small
+German model over-tags them at a fixed score that the score threshold cannot filter. Select a
+profile, for example `PII_PROFILE=insurance-at-de`. `PII_ENTITY_TYPES` remains a backwards-
+compatible explicit allowlist override and is recorded as profile `custom` if it differs from the
+selected profile. The score threshold stays `0.5`. Candidate validation/false-positive suppression
+is deliberately not part of this pack. The `presidio-analyzer` logger is capped at WARNING so its
 initialization messages do not flood logs, while genuine warnings still surface.
 
 The runtime can be smoke-tested separately from the standard quality gates:

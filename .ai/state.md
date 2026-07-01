@@ -46,9 +46,15 @@
   `document-data/{document_id}/artifacts/{artifact_id}.json`; delete removes the original and only
   that document's validated data directory. Old co-located dev data is never migrated or deleted
   automatically and must be re-uploaded or moved manually.
-- PII defaults to high-precision structured recognizers only (EMAIL_ADDRESS, PHONE_NUMBER,
+- PII defaults to the high-precision `structured-only` profile (EMAIL_ADDRESS, PHONE_NUMBER,
   IBAN_CODE, CREDIT_CARD, IP_ADDRESS, URL); PERSON/ORGANIZATION/LOCATION and DATE_TIME stay
-  supported but opt-in via `PII_ENTITY_TYPES`. The `presidio-analyzer` logger is capped at WARNING.
+  supported but opt-in via broader profiles or `PII_ENTITY_TYPES`. The `presidio-analyzer` logger
+  is capped at WARNING.
+- Engine-4 adds a lazy Presidio `insurance-at-de` pattern/context pack for AT/DE regional and
+  insurance/legal/business identifiers, plus named `structured-only` (default), `insurance-at-de`,
+  `broad-review`, and `review-heavy` profiles. `PII_ENTITY_TYPES` remains a `custom` override;
+  artifacts record the effective profile. Candidate validation is not included. See
+  [ADR-0012](../docs/adr/0012-insurance-at-de-pii-recognizers.md).
 - Presidio/spaCy are isolated behind a lazy adapter and optional `pii` image extra; the pinned
   German model is installed at image build time and never downloaded during a request.
 - The document detail UI invokes each workstation manually, surfaces missing/stale/current
@@ -69,7 +75,7 @@
   PII/sensitive-data, and review/feedback sub-engines as 0–10 level ladders, plus the artifact
   model, quality metrics, tool strategy, target architecture (DB + optional local-AI questions),
   and an Engine-0…9 roadmap. Docs-only, no behaviour/dependency change. Current standing: OCR/Text
-  **L3 done / L4 partial**, PII **L1 done / L4 foundation**, review **L1**, benchmark **L2**. See
+  **L3 done / L4 partial**, PII **L3 done / L4 partial**, review **L1**, benchmark **L2**. See
   [ADR-0011](../docs/adr/0011-engine-capability-model.md).
 
 ## Approach (tool-first / adapter-only)
@@ -85,10 +91,10 @@ logic and secure integration. See [`AGENTS.md`](../AGENTS.md).
 Driven by the engine roadmap ([`docs/engine/roadmap.md`](../docs/engine/roadmap.md)); benchmark
 signals prioritise closing PII detection gaps before review/redaction:
 
-1. Engine-4 — PII L2–L3 `insurance-at-de` recognizer pack (AT/DE + insurance/legal identifiers).
-2. Engine-5 — PII L5 candidate validation (subtractive false-positive suppression for NER).
-3. Engine-6 — Review/feedback model: persist human confirm/reject/add over immutable PII labels.
-4. Engine-2 — OCR L4–L5 hardening (OCR confidence + `quality_report` + human-readable text).
+1. Engine-5 — PII L5 candidate validation (subtractive false-positive suppression for NER).
+2. Engine-6 — Review/feedback model: persist human confirm/reject/add over immutable PII labels.
+3. Engine-2 — OCR L4–L5 hardening (OCR confidence + `quality_report` + human-readable text).
+4. Add address/contact-line coverage and per-profile benchmark reporting.
 5. Add CI/CD gates (lint/typecheck/test/SAST/SCA) and a benchmark regression gate.
 
 ## Active constraints

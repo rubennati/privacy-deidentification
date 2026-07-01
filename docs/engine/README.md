@@ -72,7 +72,7 @@ see [`quality-metrics.md`](quality-metrics.md)).
 | Area | Current level | Basis | Next level | Next PR |
 | --- | --- | --- | --- | --- |
 | OCR / Text engine | **L3 reached, L4 partial** | Per-page text-layer quality gate + page-level OCR routing shipped; quality *verdicts* + routing metrics exist, but no CER/WER/confidence/runtime metrics | L4 → L5 | Engine-2 |
-| PII / sensitive-data engine | **L1 reached, L4 foundation partial** | Structured recognizers run (EMAIL/PHONE/IBAN/CREDIT_CARD/IP/URL) with a configurable allowlist; **no** AT/DE or insurance/legal packs, **no** candidate validation | L2–L3 | Engine-4 |
+| PII / sensitive-data engine | **L3 reached, L4 partial** | AT/DE + insurance/legal recognizers and named coverage profiles run; address and candidate validation remain open | L5 | Engine-5 |
 | Review / feedback engine | **L1 reached** | Detail page lists candidates and overlays lineage-safe highlights; no persisted human decisions | L2 | Engine-6 |
 | Benchmark / regression | **L2 (reproducible metrics)** | `make benchmark-private` produces routing + PII P/R/F1 from existing artifacts; single snapshot, no trend/CI gate | L3 (trend + CI hook) | Engine-1 (done) → later |
 | Storage / core | **Sufficient for MVP** | Separated upload/document-data roots, immutable artifacts, validated deletes | — | — |
