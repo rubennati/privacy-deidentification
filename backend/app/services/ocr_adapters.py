@@ -35,8 +35,15 @@ class OcrUnavailableError(ApiError):
 class PaddleOcrAdapter:
     """CPU-only PaddleOCR adapter; imports and model initialization are lazy."""
 
-    def __init__(self, model_dir: Path | None) -> None:
+    def __init__(
+        self,
+        model_dir: Path | None,
+        detection_model_name: str | None = None,
+        recognition_model_name: str | None = None,
+    ) -> None:
         self._model_dir = model_dir
+        self._detection_model_name = detection_model_name
+        self._recognition_model_name = recognition_model_name
         self._engine: _PaddleEngine | None = None
         self._lock = Lock()
 
@@ -60,17 +67,29 @@ class PaddleOcrAdapter:
             if self._engine is not None:
                 return self._engine
             detection_model_dir, recognition_model_dir = self._local_model_directories()
+            # PaddleOCR 3.x infers the model name as its default when only a directory is given, so
+            # a non-default local model (e.g. the Latin recognizer) is rejected with a name
+            # mismatch unless the matching name is passed explicitly alongside the directory.
+            engine_kwargs: dict[str, object] = {
+                "device": "cpu",
+                # PaddlePaddle 3.x enables MKL-DNN (oneDNN) for CPU inference by default, but the
+                # oneDNN + PIR path raises "ConvertPirAttribute2RuntimeAttribute not support" on
+                # the PP-OCRv5 models. Disable it so CPU inference runs (a bit slower, but stable).
+                "enable_mkldnn": False,
+                "text_detection_model_dir": str(detection_model_dir),
+                "text_recognition_model_dir": str(recognition_model_dir),
+                "use_doc_orientation_classify": False,
+                "use_doc_unwarping": False,
+                "use_textline_orientation": False,
+            }
+            if self._detection_model_name is not None:
+                engine_kwargs["text_detection_model_name"] = self._detection_model_name
+            if self._recognition_model_name is not None:
+                engine_kwargs["text_recognition_model_name"] = self._recognition_model_name
             try:
                 module = import_module("paddleocr")
                 paddle_ocr = module.PaddleOCR
-                engine = paddle_ocr(
-                    device="cpu",
-                    text_detection_model_dir=str(detection_model_dir),
-                    text_recognition_model_dir=str(recognition_model_dir),
-                    use_doc_orientation_classify=False,
-                    use_doc_unwarping=False,
-                    use_textline_orientation=False,
-                )
+                engine = paddle_ocr(**engine_kwargs)
             except Exception as exc:
                 raise OcrUnavailableError from exc
             self._engine = cast(_PaddleEngine, engine)
@@ -87,9 +106,17 @@ class PaddleOcrAdapter:
 
 
 @lru_cache
-def get_ocr_adapter(model_dir: str | None = None) -> OcrAdapter:
-    """Provide one lazy adapter per configured local model root."""
-    return PaddleOcrAdapter(Path(model_dir) if model_dir is not None else None)
+def get_ocr_adapter(
+    model_dir: str | None = None,
+    detection_model_name: str | None = None,
+    recognition_model_name: str | None = None,
+) -> OcrAdapter:
+    """Provide one lazy adapter per configured local model root and model names."""
+    return PaddleOcrAdapter(
+        Path(model_dir) if model_dir is not None else None,
+        detection_model_name,
+        recognition_model_name,
+    )
 
 
 def _extract_recognized_texts(results: object) -> list[str]:

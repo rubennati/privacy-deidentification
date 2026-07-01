@@ -14,9 +14,13 @@ router = APIRouter(prefix="/documents", tags=["ocr"])
 
 
 def provide_ocr_adapter(settings: Settings = Depends(get_settings)) -> OcrAdapter:
-    """Bind the runtime's explicitly configured local model directory to the adapter."""
+    """Bind the runtime's explicitly configured local model directory and names to the adapter."""
     model_dir = str(settings.ocr_model_dir) if settings.ocr_model_dir is not None else None
-    return get_ocr_adapter(model_dir)
+    return get_ocr_adapter(
+        model_dir,
+        settings.ocr_detection_model_name,
+        settings.ocr_recognition_model_name,
+    )
 
 
 @router.post(

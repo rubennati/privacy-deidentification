@@ -29,11 +29,19 @@ RUN extras=""; \
 # --- Runtime stage: minimal, non-root -----------------------------------------------------
 FROM python:3.12-slim AS runtime
 
-# Poppler provides pdftoppm/pdftocairo for pdf2image. Create an unprivileged user to run the
-# service and pre-create the upload directory owned by that user so an initially empty mounted
-# volume inherits writable ownership.
+# Match the build stage so the OCR system libraries are installed for OCR/full images only.
+ARG INSTALL_OCR=false
+
+# Poppler provides pdftoppm/pdftocairo for pdf2image. When the optional OCR runtime is built in,
+# PaddleOCR/OpenCV need libGL + glib and PaddlePaddle's core needs libgomp (OpenMP) at import
+# time; install these only for OCR builds so the default slim image stays minimal. Create an
+# unprivileged user to run the service and pre-create the upload directory owned by that user so
+# an initially empty mounted volume inherits writable ownership.
 RUN apt-get update \
     && apt-get install --no-install-recommends --yes poppler-utils \
+    && if [ "$INSTALL_OCR" = "true" ]; then \
+        apt-get install --no-install-recommends --yes libgl1 libglib2.0-0 libgomp1; \
+    fi \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --no-create-home app \

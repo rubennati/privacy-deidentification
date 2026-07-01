@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     )
     upload_dir: Path = Field(default=Path("/data/uploads"), alias="UPLOAD_DIR")
     ocr_model_dir: Path | None = Field(default=None, alias="OCR_MODEL_DIR")
+    # Names of the locally provisioned PaddleOCR models. They must match the models placed under
+    # OCR_MODEL_DIR/text_detection and OCR_MODEL_DIR/text_recognition (see
+    # scripts/fetch-ocr-models.sh). The Latin recognizer covers German/Latin-script documents
+    # including umlauts and ß. An empty value falls back to PaddleOCR's own default name.
+    ocr_detection_model_name: str | None = Field(
+        default="PP-OCRv5_mobile_det", alias="OCR_DETECTION_MODEL_NAME"
+    )
+    ocr_recognition_model_name: str | None = Field(
+        default="latin_PP-OCRv5_mobile_rec", alias="OCR_RECOGNITION_MODEL_NAME"
+    )
     pii_language: str = Field(default="de", min_length=1, alias="PII_LANGUAGE")
     pii_spacy_model: str = Field(
         default="de_core_news_sm", min_length=1, alias="PII_SPACY_MODEL"
@@ -116,6 +126,14 @@ class Settings(BaseSettings):
     @classmethod
     def _empty_model_dir_is_unconfigured(cls, value: object) -> object:
         """Treat Compose's empty optional environment value as no configured models."""
+        return None if value == "" else value
+
+    @field_validator(
+        "ocr_detection_model_name", "ocr_recognition_model_name", mode="before"
+    )
+    @classmethod
+    def _empty_model_name_falls_back_to_default(cls, value: object) -> object:
+        """An empty env value means 'let PaddleOCR pick its default name' (None)."""
         return None if value == "" else value
 
 

@@ -43,7 +43,7 @@ No local Python or Node.js installation is required for normal development comma
 
 ```bash
 cp .env.example .env        # optional; defaults are built in
-docker compose up -d --build
+make up                     # slim stack — no OCR/PII runtime
 ```
 
 Open:
@@ -55,8 +55,24 @@ http://localhost:8080
 Stop the stack:
 
 ```bash
-docker compose down
+make down
 ```
+
+### Runtime profiles
+
+The optional OCR and PII runtimes are heavy, so the default image is slim. The profile is chosen
+by the make target (not by `.env`), so `make up` is always slim:
+
+| Target | OCR runtime | PII runtime | Notes |
+| --- | --- | --- | --- |
+| `make up` | – | – | default, slim/CI |
+| `make up-pii` | – | ✓ | Presidio/spaCy |
+| `make up-ocr` | ✓ | – | needs `make ocr-models` first |
+| `make up-full` | ✓ | ✓ | needs `make ocr-models` first |
+
+`make build`, `build-pii`, `build-ocr`, `build-full` build the matching images without starting
+them. Text PDFs and DOCX (including tables) are extracted **without** OCR; only image documents
+and scanned PDF pages need the OCR runtime plus provisioned models.
 
 ## API
 
@@ -113,50 +129,72 @@ PDF text layers and DOCX text are extracted without PaddleOCR. DOCX extraction i
 shared helper walks the document body in order and captures paragraphs, table cells (rows
 newline-separated, cells tab-separated), and defined section headers/footers, so table content is
 no longer dropped. Audit and OCR/Text use the same helper and therefore report the same DOCX
-character count. Image documents and PDF pages without a text layer require the optional
-PaddleOCR/PaddlePaddle runtime:
+character count. Image documents and PDF pages without a text layer require the optional PaddleOCR/PaddlePaddle
+runtime **plus** locally provisioned models. The regular image deliberately omits those heavy
+packages and returns `503` only when a request actually needs PaddleOCR. Imports and model
+initialization are lazy, so startup and all quality gates remain model-free. Poppler is installed
+for the encapsulated `pdf2image` PDF-page renderer; rendered pages use the container's `/tmp`
+tmpfs and are never written to the persistent upload volume.
+
+#### 1. Provision the models (once)
 
 ```bash
-INSTALL_OCR=true docker compose build backend
+make ocr-models
 ```
 
-The regular image deliberately omits those heavy packages and returns `503` only when a request
-actually needs PaddleOCR. Imports and model initialization are lazy, so startup and all quality
-gates remain model-free. Poppler is installed in the backend runtime for the encapsulated
-`pdf2image` PDF-page renderer. Rendered pages use the container's `/tmp` tmpfs and are never
-written to the persistent upload volume.
-
-Installing the optional packages is not sufficient to enable OCR. Approved model files must be
-prepared separately, made available inside the container, and selected with `OCR_MODEL_DIR`.
-The directory must contain both model directories:
+This idempotent script downloads the default models from the official Hugging Face
+`PaddlePaddle/*` repositories into `./volumes/ocr-models`, in the layout the adapter expects:
 
 ```text
-/models/ocr/
-├── text_detection/
-└── text_recognition/
+volumes/ocr-models/
+├── text_detection/     # PP-OCRv5_mobile_det
+└── text_recognition/   # latin_PP-OCRv5_mobile_rec
 ```
 
-The adapter passes both local paths to PaddleOCR and returns `503` before importing PaddleOCR if
-the configuration or directories are missing. It never intentionally falls back to downloading
-models. A deployment can bake those directories into a dedicated OCR runtime image or mount them
-read-only through a Compose override. PaddlePaddle's published platform wheels determine which
-CPU architectures can build the optional image; on ARM hosts an amd64 container/emulation may be
-required.
+**Model choice.** The default is the CPU-friendly **mobile** PP-OCRv5 pair (~13 MB total):
+`PP-OCRv5_mobile_det` for detection and `latin_PP-OCRv5_mobile_rec` for recognition. The Latin
+recognizer covers German and other Latin-script European languages, including umlauts and `ß`,
+which the default (Chinese/English) recognizer does not. The heavier `*_server_*` variants offer
+higher accuracy at a much larger CPU/memory cost and are a documented future option, not the
+default. Override the models via `OCR_DET_MODEL` / `OCR_REC_MODEL` for the script and the matching
+`OCR_DETECTION_MODEL_NAME` / `OCR_RECOGNITION_MODEL_NAME` for the backend. The models are never
+committed (`.gitignore: /volumes/*`) and never downloaded at request time.
 
-With compatible, locally provisioned models under `./models/ocr`, the optional runtime can be
-built and smoke-tested without a test-suite model download:
+#### 2. Build and run the OCR runtime
 
 ```bash
-INSTALL_OCR=true docker compose build backend
-
-docker compose run --rm --no-deps \
-  -e OCR_MODEL_DIR=/models/ocr \
-  -v "$PWD/models/ocr:/models/ocr:ro" \
-  backend python -c "from pathlib import Path; from PIL import Image, ImageDraw, ImageFont; from app.services.ocr_adapters import PaddleOcrAdapter; p=Path('/tmp/ocr-smoke.png'); image=Image.new('RGB', (320, 80), 'white'); font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 32); ImageDraw.Draw(image).text((10, 20), 'OCR smoke', fill='black', font=font); image.save(p); text=PaddleOcrAdapter(Path('/models/ocr')).extract_text(p); print(text); assert text.strip(), 'OCR returned no text'"
+make up-ocr        # or: make up-full  (OCR + PII)
 ```
 
-This smoke test is deliberately separate from `make test`: it requires platform-compatible
-PaddlePaddle wheels, sufficient RAM, and explicitly provisioned model files.
+Compose mounts the models read-only at `/models/ocr` and sets `OCR_MODEL_DIR=/models/ocr`. The
+adapter passes both directories **and** the model names to PaddleOCR (PaddleOCR 3.x rejects a
+non-default local model without its name) and returns `503` before importing PaddleOCR if the
+directories are missing. It never falls back to downloading models.
+
+#### 3. Smoke-test the runtime
+
+```bash
+make ocr-smoke     # builds the OCR image, renders a synthetic image, asserts text is recognized
+make pii-smoke     # equivalent for the PII runtime
+```
+
+The smoke tests are deliberately separate from `make test`: they need the heavy runtime, and
+`ocr-smoke` also needs the provisioned models. They fail with a clear message when models or
+packages are missing.
+
+#### Notes and caveats
+
+- **CPU inference.** MKL-DNN (oneDNN) is disabled in the adapter: PaddlePaddle 3.x enables it by
+  default for CPU, but its oneDNN path crashes on the PP-OCRv5 models
+  (`ConvertPirAttribute2RuntimeAttribute not support`). Disabling it trades a little speed for a
+  stable CPU path.
+- **Speed.** OCR is synchronous by design (no queue). CPU OCR of a multi-page scan can take a few
+  minutes; the nginx `/api/` proxy timeout is raised to 600 s so browser requests do not 504.
+- **Apple Silicon / ARM.** PaddlePaddle's published wheels determine which CPU architectures can
+  build the OCR image. It builds and runs natively on `linux/amd64`; on ARM hosts (Apple Silicon)
+  an `amd64` build/emulation may be required and has not been verified here.
+- **buildx warning.** `docker compose build` may print a legacy-builder warning; it is benign.
+  Set `DOCKER_BUILDKIT=1` to silence it.
 
 ### Optional PII runtime
 

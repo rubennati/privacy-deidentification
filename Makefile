@@ -10,23 +10,63 @@ BACKEND_RUN := docker run --rm -v "$(CURDIR)/backend":/app -v deid-backend-venv:
 FRONTEND_RUN := docker run --rm -v "$(CURDIR)/frontend":/app -v deid-frontend-modules:/app/node_modules \
 	-w /app node:22-alpine sh -lc
 
-.PHONY: help up down build rebuild logs ps lint typecheck test lock clean
+# Runtime profiles select the optional heavy extras via build args. The profile is chosen by the
+# target, not by .env, so `make up` is always slim regardless of local .env values. OCR/PII images
+# get more memory headroom for PaddlePaddle/spaCy.
+SLIM  := INSTALL_OCR=false INSTALL_PII=false
+PII   := INSTALL_OCR=false INSTALL_PII=true  BACKEND_MEMORY_LIMIT=1g
+OCR   := INSTALL_OCR=true  INSTALL_PII=false BACKEND_MEMORY_LIMIT=2g
+FULL  := INSTALL_OCR=true  INSTALL_PII=true  BACKEND_MEMORY_LIMIT=2g
+
+.PHONY: help up up-pii up-ocr up-full down build build-pii build-ocr build-full rebuild \
+	ocr-models ocr-smoke pii-smoke logs ps lint typecheck test lock clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
-		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-up: ## Build and start the stack (http://localhost:8080)
-	$(COMPOSE) up -d --build
+up: ## Build and start the slim stack — no OCR/PII runtime (http://localhost:8080)
+	$(SLIM) $(COMPOSE) up -d --build
+
+up-pii: ## Start with the PII runtime (Presidio/spaCy)
+	$(PII) $(COMPOSE) up -d --build
+
+up-ocr: ## Start with the OCR runtime (needs `make ocr-models` first)
+	$(OCR) $(COMPOSE) up -d --build
+
+up-full: ## Start with both OCR and PII runtimes (needs `make ocr-models` first)
+	$(FULL) $(COMPOSE) up -d --build
 
 down: ## Stop the stack
 	$(COMPOSE) down
 
-build: ## Build both images
-	$(COMPOSE) build
+build: ## Build both images (slim)
+	$(SLIM) $(COMPOSE) build
 
-rebuild: ## Rebuild images without cache
-	$(COMPOSE) build --no-cache
+build-pii: ## Build the backend with the PII runtime
+	$(PII) $(COMPOSE) build
+
+build-ocr: ## Build the backend with the OCR runtime
+	$(OCR) $(COMPOSE) build
+
+build-full: ## Build the backend with both OCR and PII runtimes
+	$(FULL) $(COMPOSE) build
+
+rebuild: ## Rebuild slim images without cache
+	$(SLIM) $(COMPOSE) build --no-cache
+
+ocr-models: ## Download PaddleOCR models into volumes/ocr-models (idempotent)
+	./scripts/fetch-ocr-models.sh
+
+ocr-smoke: ## Smoke-test the real OCR runtime (builds OCR image; needs provisioned models)
+	$(OCR) $(COMPOSE) build backend
+	$(OCR) $(COMPOSE) run --rm --no-deps -v "$(CURDIR)/scripts":/opt/scripts:ro \
+		backend python /opt/scripts/ocr_smoke.py
+
+pii-smoke: ## Smoke-test the real PII runtime (builds PII image)
+	$(PII) $(COMPOSE) build backend
+	$(PII) $(COMPOSE) run --rm --no-deps -v "$(CURDIR)/scripts":/opt/scripts:ro \
+		backend python /opt/scripts/pii_smoke.py
 
 logs: ## Tail service logs
 	$(COMPOSE) logs -f
