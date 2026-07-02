@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.services.pii_profiles import PiiProfileName
 
 
 class OriginalArtifact(BaseModel):
@@ -264,6 +266,15 @@ class PiiValidationSummary(BaseModel):
     score_down_by_reason: dict[str, int] = Field(default_factory=dict)
 
 
+class PiiEngineSettings(BaseModel):
+    """Effective non-sensitive settings used for one immutable PII run."""
+
+    pii_profile: str
+    candidate_validation_enabled: bool
+    score_threshold: float = Field(ge=0, le=1)
+    source: Literal["server-default", "dev-ui-override"]
+
+
 class PiiContent(BaseModel):
     """Versioned detection-only output produced by the PII workstation."""
 
@@ -284,6 +295,13 @@ class PiiContent(BaseModel):
         description=(
             "Engine-5 candidate-validation summary. None on artifacts written before candidate "
             "validation existed."
+        ),
+    )
+    engine_settings: PiiEngineSettings | None = Field(
+        default=None,
+        description=(
+            "Effective, non-sensitive engine settings for this PII run. None on artifacts "
+            "written before dev-mode run metadata existed."
         ),
     )
 
@@ -314,7 +332,21 @@ class PiiContent(BaseModel):
             counts[entity.entity_type] = counts.get(entity.entity_type, 0) + 1
         if self.entity_counts != dict(sorted(counts.items())):
             raise ValueError("entity counts do not match entities")
+        self._validate_engine_settings()
         return self
+
+    def _validate_engine_settings(self) -> None:
+        if self.engine_settings is None:
+            return
+        if self.engine_settings.pii_profile != self.profile:
+            raise ValueError("engine settings profile does not match pii profile")
+        if self.engine_settings.score_threshold != self.score_threshold:
+            raise ValueError("engine settings threshold does not match score threshold")
+        if (
+            self.validation is not None
+            and self.engine_settings.candidate_validation_enabled != self.validation.enabled
+        ):
+            raise ValueError("engine settings validation flag does not match validation")
 
 
 class PiiArtifact(BaseModel):
@@ -353,11 +385,42 @@ class UploadAccepted(BaseModel):
     original_artifact: OriginalArtifact = Field(description="Stored original artifact.")
 
 
+class PiiConfigResponse(BaseModel):
+    """Read-only frontend view of the safe PII defaults and the selectable profile set."""
+
+    default_profile: str
+    available_profiles: list[str]
+    candidate_validation_enabled: bool
+    score_threshold: float = Field(ge=0, le=1)
+
+
 class ConfigResponse(BaseModel):
-    """Public upload constraints, so the frontend can mirror the backend's source of truth."""
+    """Public app configuration, so the frontend can mirror backend-owned defaults safely."""
 
     max_upload_bytes: int = Field(description="Maximum accepted upload size in bytes.", ge=0)
     allowed_extensions: list[str] = Field(description="Allowed file extensions (lowercase).")
+    dev_engine_settings_enabled: bool = Field(
+        description="Whether per-run dev-only engine setting overrides are enabled."
+    )
+    pii: PiiConfigResponse = Field(
+        description="Effective backend defaults and available named PII profiles."
+    )
+
+
+class PiiRunRequest(BaseModel):
+    """Optional per-run dev overrides for the PII station."""
+
+    pii_profile: PiiProfileName | None = None
+
+    @field_validator("pii_profile", mode="before")
+    @classmethod
+    def _normalize_pii_profile(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @property
+    def has_overrides(self) -> bool:
+        """True when the request asked to override at least one backend default."""
+        return self.pii_profile is not None
 
 
 class DocumentSummary(BaseModel):

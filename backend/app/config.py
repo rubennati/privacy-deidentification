@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     pii_candidate_validation_enabled: bool = Field(
         default=True, alias="PII_CANDIDATE_VALIDATION_ENABLED"
     )
+    enable_dev_engine_settings: bool = Field(
+        default=False, alias="ENABLE_DEV_ENGINE_SETTINGS"
+    )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @field_validator("allowed_extensions", mode="before")

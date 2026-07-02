@@ -67,6 +67,13 @@
   German model is installed at image build time and never downloaded during a request.
 - The document detail UI invokes each workstation manually, surfaces missing/stale/current
   lineage, and overlays only PII results matching the displayed text artifact.
+- `GET /api/config` now also exposes safe, read-only PII defaults plus the
+  `ENABLE_DEV_ENGINE_SETTINGS` gate. The gate defaults to off; when enabled, the document detail
+  UI may override the named PII profile for one local PII run only. `.env`/backend defaults remain
+  authoritative and are never written from the UI.
+- New `pii_result` artifacts record effective non-sensitive engine settings under
+  `content.engine_settings` (`pii_profile`, candidate validation, score threshold, source) so
+  dev-mode runs remain traceable without storing extra text or raw PII.
 - PII highlighting validates Python Unicode-codepoint offsets in a pure tested helper; overlapping
   entities are resolved deterministically while the entity list retains every detection.
 - `GET /api/config` exposes the effective limits so the frontend mirrors the backend.
