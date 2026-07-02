@@ -14,6 +14,21 @@ Before starting work, always read:
 - Record architectural decisions as ADRs under `docs/adr/` and link them in `.ai/decisions.md`.
 - Never commit secrets. Configuration comes from environment variables.
 
+## Engine maturity levels (0–19)
+
+The central engines are planned on a **0–19 maturity scale** (see
+[`docs/engine/`](docs/engine/README.md#maturity-scale) and
+[ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md)):
+
+- Use the 0–19 scale for OCR/Text, PII/Sensitive-Data, Review/Human-Feedback, Benchmark/Regression,
+  and Redaction planning. Level numbers are cumulative within an engine and not comparable across
+  engines.
+- New engine PRs should state **which level they advance**, and PR summaries should mention the
+  affected engine level where relevant.
+- Do **not** mix the older 0–10/0–14 numbering without a migration note; each engine document has a
+  *Legacy scale mapping* table to translate old citations.
+- Feature and documentation PRs target `dev`, not `main` (see [Approval](#approval)).
+
 ## Product principle: tool-first / adapter-only
 
 The de-identification capability is delivered by **integrating proven open-source tools

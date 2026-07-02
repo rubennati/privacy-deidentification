@@ -1,5 +1,10 @@
 # Target Architecture
 
+> **Level scale (0–19).** Per-engine capability levels now use the **0–19 maturity scale**
+> ([engine README](README.md#maturity-scale)). Some `OCR Lx` / `PII Lx` / `Review Lx` citations
+> below still use the legacy **0–10** numbering — translate with the *Legacy scale mapping* table at
+> the bottom of the relevant engine document. Full renumbering here is a tracked follow-up.
+
 Where the engine is heading structurally. This is a target picture; nothing here is implemented by
 the PR that introduces it. It complements the existing stack decision
 ([ADR-0001](../adr/0001-stack-and-architecture.md)) and storage separation

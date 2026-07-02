@@ -1,5 +1,11 @@
 # Engine Artifacts
 
+> **Level scale (0–19).** Per-engine capability levels now use the **0–19 maturity scale**
+> ([engine README](README.md#maturity-scale)). The `OCR Lx` / `PII Lx` / `Review Lx` citations
+> in the artifact catalogue below still use the legacy **0–10** numbering — translate with the
+> *Legacy scale mapping* table at the bottom of the relevant engine document. Full renumbering here
+> is a tracked follow-up.
+
 The engine is a chain of stations that each append an **immutable JSON artifact** referencing its
 input. This document defines every artifact — existing and planned — and its privacy rules. It is
 the contract between the sub-engines and the source of truth for "what may contain raw text or PII".

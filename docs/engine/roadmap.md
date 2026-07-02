@@ -1,5 +1,11 @@
 # Engine Roadmap
 
+> **Level scale (0–19).** Per-engine capability levels now use the **0–19 maturity scale**
+> ([engine README](README.md#maturity-scale)). The `Engine-N` PR ids below keep their numbers,
+> but the `OCR Lx` / `PII Lx` / `Review Lx` level citations in their titles/scope still use the
+> legacy **0–10** numbering — translate with the *Legacy scale mapping* table at the bottom of the
+> relevant engine document. Full renumbering here is a tracked follow-up.
+
 The order in which engine capability is built, reframed around the engine (not infrastructure). Each
 item lists goal, scope, non-scope, affected files, whether it adds a dependency, tests, benchmark
 verification, risk, and acceptance criteria.

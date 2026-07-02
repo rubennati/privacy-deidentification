@@ -116,12 +116,30 @@
   field or PII-shaped string would otherwise be written. See
   [ADR-0010](../docs/adr/0010-private-benchmark-runner.md) and
   [`scripts/benchmark/README.md`](../scripts/benchmark/README.md).
-- An engine capability model under [`docs/engine/`](../docs/engine/README.md) defines the OCR/Text,
-  PII/sensitive-data, and review/feedback sub-engines as 0–10 level ladders, plus the artifact
-  model, quality metrics, tool strategy, target architecture (DB + optional local-AI questions),
-  and an Engine-0…9 roadmap. Docs-only, no behaviour/dependency change. Current standing: OCR/Text
-  **L3 done / L4 partial**, PII **L5 done**, review **L1**, benchmark **L2**. See
-  [ADR-0011](../docs/adr/0011-engine-capability-model.md).
+- An engine capability model under [`docs/engine/`](../docs/engine/README.md) defines the central
+  engines on a **0–19 maturity scale** (standard going forward; superseding the earlier 0–10/0–14
+  ladders — [ADR-0016](../docs/adr/0016-engine-maturity-levels-0-19.md)): OCR/Text,
+  PII/Sensitive-Data, Review/Human-Feedback, Benchmark/Regression, and Redaction, each with a name,
+  description, testable acceptance criteria, and boundary to the next level, plus the artifact model,
+  quality metrics, `engine-settings.md`, tool strategy, target architecture (DB + optional local-AI
+  questions), and the Engine-0…9 roadmap. Every engine doc has a legacy 0–10 → 0–19 mapping table;
+  cross-cutting docs keep legacy citations under a migration-note banner (renumbering tracked).
+  Docs-only, no behaviour/dependency change. **Current standing (0–19):**
+  - OCR/Text: **L5 done** (text extraction, lineage, OCR runtime, text-layer quality gate, per-page
+    routing); L6 OCR confidence / L7 `quality_report` next.
+  - PII/Sensitive-Data: **L9 done, L10 partial** — structured + AT/DE + domain recognizers, profiles,
+    benchmark, candidate validation (own pipeline stage), context hardening, address/contact-line,
+    reproducible `engine_settings`; **dev-only** human feedback capture landed (L10); entity grouping
+    (L11) / overlap resolution (L12) / binding review (L13) open.
+  - Review/Human-Feedback: **L2 in production**; L3–L5 delivered **dev-only** behind
+    `ENABLE_DEV_ENGINE_SETTINGS` (clickable offsets + legend, dev engine-settings override, per-entity
+    feedback capture); L6 grouping / L8 `review_result` overlay next.
+  - Benchmark/Regression: **L8 done** (matching, routing correctness, PII P/R/F1, privacy guard,
+    determinism, validation counts); L9 per-profile-in-one-run next.
+  - Redaction/De-Identification: **L0** by design (detection-only); blocked on PII L17–L18, Review
+    L8–L9, OCR L10/L15.
+  See [ADR-0011](../docs/adr/0011-engine-capability-model.md) and
+  [ADR-0016](../docs/adr/0016-engine-maturity-levels-0-19.md).
 
 ## Approach (tool-first / adapter-only)
 
