@@ -54,8 +54,10 @@
     `coverage`/`flags`. Offsets are matched against the immutable canonical text, so canonical/page
     text stays byte-stable; pages without safe geometry degrade to `partial`/`unsupported` and DOCX
     has none. It carries no raw line text; the internal `resolve_span_geometry` helper resolves a
-    canonical span to intersecting boxes. This is review/redaction-prep geometry only — **not**
-    redaction-ready pixel-perfect coverage (that remains L15) and **not** the PII input.
+    canonical span to intersecting boxes. This provides line-level source anchoring and
+    traceability for review/debug, and a foundation for future placeholder mapping toward AI-ready
+    pseudonymized document generation — it does **not** perform pseudonymization, placeholder
+    mapping, document export, or pixel-perfect visual redaction, and is **not** the PII input.
 - **PII/Sensitive-Data: L9 done; L10 partial.** Dev-only human-feedback capture exists; grouping
   (L11), overlap resolution (L12), and binding review (L13) remain open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only.** Grouping (L6) and a lineage-bound
@@ -115,17 +117,17 @@ The checkpoint leaves OCR/Text at L10, PII L10 partial, and Redaction L0; the ne
 
 1. Interleave PII **L11 — entity grouping + occurrences** without changing detection.
 2. Advance PII **L12 — overlap resolution** once grouping is in place.
-3. Advance OCR/Text **L11 — table / form reconstruction** (and word-level geometry) without redaction
-   work.
+3. Advance OCR/Text **L11 — table / form reconstruction** (and word-level geometry) without a
+   pseudonymization/placeholder-mapping/export layer.
 
 **Latest checkpoint (OCR L10):** OCR/Text advanced from L9 to L10 with an additive `text_geometry`
 line-box mapping and an internal `resolve_span_geometry` canonical-span→box lookup, and remains
 sufficiently ahead of the binding PII/review frontier; no benchmark/feedback signal changed priority.
 The additive geometry introduces no routing, canonical/page-text, active-PII-input, dependency,
 quality-report, or benchmark-privacy drift, and legacy artifacts stay valid. Line geometry stops at
-the L10 review/redaction-prep boundary; word-level geometry, a full `text_lineage_map`, table/form
-reconstruction, and redaction-ready (L15) coverage remain open. The next three steps are PII L11,
-PII L12, then OCR L11.
+the L10 source-anchoring/traceability boundary; word-level geometry, a full `text_lineage_map`,
+table/form reconstruction, and placeholder mapping/pixel-perfect coverage remain open. The next
+three steps are PII L11, PII L12, then OCR L11.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

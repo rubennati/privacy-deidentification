@@ -22,8 +22,9 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 persists additive readable/layout views, versioned ordered/typed `layout_blocks` with coarse
 normalized page bounds, and additive `text_geometry` that maps canonical line spans to page-local
 line boxes (`pdf_points` for text-layer, `image_pixels` for OCR). Canonical text, routing, active PII
-input, and `quality_report` remain unchanged; L10 geometry is review/redaction-preparation only and
-is not redaction-ready (that remains L15).
+input, and `quality_report` remain unchanged; L10 geometry provides source anchoring and
+traceability for review/debug and future placeholder mapping — it does not perform
+pseudonymization, placeholder mapping, document export, or pixel-perfect visual redaction.
 
 ---
 
@@ -214,8 +215,10 @@ is not redaction-ready (that remains L15).
   coordinates on text-layer and OCR pages; mixed PDFs combine per-page geometry with partial coverage.
 - **Boundary to L11:** L10 gives *where text is* (line level); L11 reconstructs *structured regions*
   (tables/forms) from it.
-- **Boundary to L15:** L10 line geometry is for review/debug and redaction *preparation*; it is **not**
-  redaction-ready pixel-perfect coverage. Redaction-ready text+geometry mapping remains L15.
+- **Product framing:** L10 provides line-level source anchoring for review/debug and traceability,
+  and a foundation for future placeholder mapping toward AI-ready pseudonymized document generation.
+  It does not perform pseudonymization, placeholder mapping, document export, or pixel-perfect
+  visual redaction.
 
 ## Level 11 — Table / form reconstruction  ⛔ *open*
 
@@ -367,7 +370,8 @@ fallback was expected — i.e. more conservative, not wrong.
 
 1. Reconstruct tables and structured regions (rows/cells, key/value pairs) from the L10 line geometry
    as a structured representation kept separate from canonical text. Word-level geometry and
-   redaction-ready (L15) coverage also remain open; L10 delivers line-level review geometry only.
+   placeholder-mapping/pixel-perfect coverage also remain open; L10 delivers line-level source
+   anchoring only.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.

@@ -5,9 +5,11 @@ span to one or more page-local line boxes. Offsets are derived by matching page-
 against the immutable canonical page text, never by regenerating or altering that text. Boxes come
 from positions already reported by pypdf (PDF text layer) or PaddleOCR polygons (OCR/image pages).
 
-This is review/debug and future redaction-preparation geometry. It is **not** redaction-ready
-pixel-perfect coverage (that remains L15). When precise line boxes are not safely derivable the
-page degrades to a ``partial``/``unsupported`` status with a coverage flag rather than guessing.
+This is line-level source-anchoring geometry for review/debug and traceability, and a foundation for
+future placeholder mapping in AI-ready pseudonymized document generation. It does **not** perform
+pseudonymization, placeholder mapping, document export, or pixel-perfect visual redaction. When
+precise line boxes are not safely derivable the page degrades to a ``partial``/``unsupported``
+status with a coverage flag rather than guessing.
 """
 
 from __future__ import annotations

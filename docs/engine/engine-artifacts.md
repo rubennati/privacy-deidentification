@@ -32,7 +32,7 @@ input, or report may be committed.
 | `layout_text_result` | ✅ OCR L9 (field on `text_result`) | readable layout plain-text for PDF text layers; Review UI alternative | yes | additive optional field on `text_result` |
 | `layout_blocks` | ✅ OCR L9 (field on `text_result`) | ordered typed review blocks with coarse normalized page bounds and extraction source | yes | additive optional versioned field on `text_result` |
 | `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
-| `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping canonical line spans to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; review/redaction-prep only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
+| `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping canonical line spans to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; source-anchoring/traceability only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
 | `structured_document_result` | 🔜 OCR L11 | tables, sections, key-value regions | yes | immutable artifact |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | `review_result` | 🔜 Review L8 | lineage-bound human decision overlay on `pii_result` | yes | immutable artifact |
@@ -75,8 +75,10 @@ Four distinct text layers, structured layout blocks, and a lineage map, fixed by
   for text-layer, `image_pixels` for OCR). Offsets are matched against the immutable canonical text,
   never regenerated. Each page reports `status` (`complete`/`partial`/`unsupported`) and the geometry
   reports `coverage`/`flags`; pages without safe geometry degrade rather than guess, and DOCX has
-  none. It carries no raw line text and makes **no** redaction-ready pixel-perfect claim — that
-  remains L15. The internal `resolve_span_geometry` helper resolves a canonical span to intersecting
+  none. It carries no raw line text and provides line-level source anchoring and traceability — a
+  foundation for future placeholder mapping toward AI-ready pseudonymized document generation. It
+  does not perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
+  redaction. The internal `resolve_span_geometry` helper resolves a canonical span to intersecting
   line boxes. This is a line-level slice, not the full `text_lineage_map` below.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while

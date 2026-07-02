@@ -151,8 +151,10 @@ class TextLineGeometry(BaseModel):
 
     Offsets are half-open. ``canonical_start``/``canonical_end`` index ``TextContent.text``;
     ``page_start``/``page_end`` index the matching ``TextContent.pages[].text``. ``bounds`` are
-    page-local in the owning :class:`TextGeometryPage`'s ``coordinate_unit``. This is review/debug
-    and redaction-preparation geometry only — it is not redaction-ready pixel-perfect coverage and
+    page-local in the owning :class:`TextGeometryPage`'s ``coordinate_unit``. This is line-level
+    source-anchoring geometry for review/debug and traceability, and a foundation for future
+    placeholder mapping in AI-ready pseudonymized document generation. It does not perform
+    pseudonymization, placeholder mapping, document export, or pixel-perfect visual redaction, and
     carries no raw line text.
     """
 
@@ -287,9 +289,11 @@ class TextContent(BaseModel):
     layout_blocks_version: Literal["1"] | None = None
     layout_blocks: list[LayoutBlock] = Field(default_factory=list)
     # OCR L10 additive span geometry. It maps canonical line spans to page-local line boxes for
-    # review/debug and future redaction preparation; it is NOT redaction-ready pixel-perfect
-    # geometry (that remains L15) and never changes ``text``/``pages``/PII input. Both fields are
-    # optional/defaulted so pre-L10 artifacts remain valid.
+    # source anchoring, review/debug, and traceability — a foundation for future placeholder mapping
+    # in AI-ready pseudonymized document generation. It does NOT perform pseudonymization,
+    # placeholder mapping, document export, or pixel-perfect visual redaction, and never changes
+    # ``text``/``pages``/PII input. Both fields are optional/defaulted so pre-L10 artifacts remain
+    # valid.
     text_geometry_version: Literal["1"] | None = None
     text_geometry: TextGeometry | None = None
 
