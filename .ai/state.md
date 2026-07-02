@@ -63,6 +63,12 @@ The binding OCR/PII sequence, cadence, and next-12-PR list live in
 confidence (L6) + `quality_report` (L7) before further deep PII work**, so the core text engine stays
 2–3 levels ahead of the PII/review frontier.
 
+The OCR L8/L9 text-layer work (canonical `best_text_result` vs new `readable_text` vs
+`layout_text_result`) is contract-first: the output model and invariants are fixed in
+[`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md) **before**
+any implementation. `best_text_result` stays canonical/offset-stable; the readable and layout layers
+are additive and never a PII input.
+
 1. Fix feedback integrity as a focused bugfix (finish dev-only PII L10 / Review L5 operational use).
 2. Advance OCR/Text to **L6 — OCR confidence**.
 3. Advance OCR/Text to **L7 — `quality_report`**.

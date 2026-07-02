@@ -39,10 +39,20 @@ only when a later station requires it.
 
 ## Canonical and readable text
 
-- **`best_text_result`** is the canonical, correctness-first text represented today by
-  `text_result`. PII offsets always reference this text.
-- **`layout_text_result`** starts at OCR L8 as a separate human-readable rendering. OCR L9 adds real
-  block order and layout structure. Reflow must never mutate canonical text or shift PII offsets.
+Three distinct text layers, fixed by the
+[OCR/Layout text contract](ocr-layout-text-contract.md):
+
+- **`best_text_result`** is the **canonical**, correctness-first text represented today by
+  `text_result`. PII offsets always reference this text. It is **not** redefined to mean readable
+  text.
+- **`readable_text`** (new, optional, additive) is a **human-readable** normalisation of the same
+  content (whitespace/paragraph/hyphenation) starting at OCR L8. No PII-offset guarantee; never a PII
+  input.
+- **`layout_text_result`** (new, optional, additive) is a **layout-preserving** plain-text
+  reconstruction (pages, blocks, columns, tables) starting at OCR L9. No PII-offset guarantee.
+
+`readable_text` and `layout_text_result` are additive and never mutate canonical text or shift PII
+offsets; older artifacts without them stay valid.
 
 ## Dev feedback side-channel
 

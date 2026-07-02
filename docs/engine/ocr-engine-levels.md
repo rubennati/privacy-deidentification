@@ -135,7 +135,9 @@ artifact are not yet built.
   breaks, de-hyphenation — distinct from the raw canonical string.
 - **Engine must:** post-process the canonical text into a readable rendering (paragraph joins,
   hyphenation repair, whitespace normalisation) **without** mutating `best_text_result`; keep both.
-- **Artifacts:** unchanged `best_text_result` **plus** a first `layout_text_result` (readable).
+- **Artifacts:** unchanged `best_text_result` **plus** a first `readable_text` (human-readable
+  rendering). The layout-preserving `layout_text_result` follows at L9. Field names and invariants are
+  fixed by the [OCR/Layout text contract](ocr-layout-text-contract.md).
 - **Acceptance:** a readable rendering exists alongside a byte-stable canonical text; PII offsets
   still reference the canonical text.
 - **Boundary to L9:** L8 reflows text heuristically; L9 orders text by real block/line geometry.
