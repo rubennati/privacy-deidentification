@@ -2,9 +2,9 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **OCR/Text quality foundation**.
-- Current objective: advance OCR/Text L7 with a lineage-bound, metrics-only `quality_report` after
-  completing engine-reported confidence capture at L6.
+- Current phase: **OCR/Text readable-output foundation**.
+- Current objective: advance cumulative OCR/Text L8 with a separate human-readable rendering while
+  preserving the canonical text and all offset-bearing consumers.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -15,8 +15,9 @@
   lineage-safe manual inspection. It does not redact, anonymize, or pseudonymize documents.
 - Originals, metadata, and immutable derived artifacts use separate validated storage boundaries.
 - OCR/Text routes each PDF page between a usable text layer and the adapter-bound PaddleOCR runtime;
-  OCR pages store additive engine-reported page/line confidence metrics on `text_result`; DOCX
-  extraction includes paragraphs, tables, headers, and footers.
+  OCR pages store additive engine-reported page/line confidence metrics on `text_result`, and every
+  successful OCR/Text run appends a metrics-only `quality_report` linked to the exact
+  original/audit/text artifacts. DOCX extraction includes paragraphs, tables, headers, and footers.
 - PII uses Presidio/spaCy behind an adapter, named profiles, AT/DE and domain recognizers, candidate
   validation, and reproducible engine settings.
 - The local private benchmark measures routing and PII quality from existing artifacts. Its
@@ -24,11 +25,12 @@
 
 ## Engine maturity snapshot (0–19)
 
-- **OCR/Text: L6 done.** PaddleOCR `rec_scores` feed an additive page mean and metric-only line
-  entries on OCR-produced `text_result.pages[]`; missing scores are tolerated, text-layer/DOCX
-  behavior is unchanged, the benchmark aggregates confidence without copying raw text, and
-  `audit_result` remains immutable. L7 `quality_report` is next. Two additive, out-of-order OCR L9
-  slices exist on top, both leaving `text_result.text`
+- **OCR/Text: L7 done.** Each successful PDF/image/DOCX OCR/Text run appends an immutable,
+  metrics-only `quality_report` containing source mix, audit-quality counts, confidence, coverage,
+  and exact original/audit/text lineage. Reruns preserve old artifacts; the benchmark prefers a
+  lineage-matching report and falls back for legacy data. Canonical text, routing, and PII input are
+  unchanged. L8 readable text is next. Two additive, out-of-order OCR L9 slices exist on top, both
+  leaving `text_result.text`
   byte-stable with PII still running only on canonical text:
   - `layout_text_result` — optional field on `text_result`; pypdf layout mode, PDF text-layer pages;
     OCR/DOCX/image → `null`. Display-only; the Review UI can optionally show it as unhighlighted
@@ -41,7 +43,8 @@
   (L11), overlap resolution (L12), and binding review (L13) remain open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only.** Grouping (L6) and a lineage-bound
   `review_result` overlay (L8) remain open.
-- **Benchmark/Regression: L8 done.** L9 per-profile reporting in one run is next.
+- **Benchmark/Regression: L8 done; out-of-order L10 OCR confidence/coverage slice delivered.** L9
+  per-profile reporting in one run is next.
 - **Redaction/De-Identification: L0 by design.** It remains blocked on mature OCR, PII, and review
   foundations.
 
@@ -74,8 +77,9 @@ See [`docs/engine/`](../docs/engine/README.md),
 
 The binding OCR/PII sequence, cadence, and next-12-PR list live in
 [`docs/engine/ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md)
-([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority: OCR/Text
-`quality_report` (L7) before further deep PII work**, now that confidence capture (L6) is complete.
+([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority: cumulative
+OCR/Text readable text (L8)**, now that confidence capture (L6) and `quality_report` (L7) are
+complete.
 
 The OCR L8/L9 text-layer work is contract-first: the output model and invariants are fixed in
 [`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Four layers
@@ -89,17 +93,17 @@ runs exclusively on canonical text today, regardless of `pii_input_text`'s v1 co
 layout/PII-input layers are additive and never a standalone PII input.
 
 Feedback integrity hardening completes the planned trust-boundary bugfix without advancing an engine
-level. The checkpoint leaves OCR/Text at L6, PII L10 partial, and Redaction L0; the next plan is:
+level. The checkpoint leaves OCR/Text at L7, PII L10 partial, and Redaction L0; the next plan is:
 
-1. Advance OCR/Text to **L7 — `quality_report`**, combining audit routing/quality metrics with the
-   exact text artifact's OCR confidence without raw text.
-2. Advance OCR/Text to **L8 — human-readable text**, preserving canonical text and offsets.
-3. Then interleave PII **L11 grouping** / **L12 overlap** per the plan's cadence.
+1. Advance OCR/Text to **L8 — human-readable text**, preserving canonical text and offsets.
+2. Interleave PII **L11 — entity grouping + occurrences** without changing detection.
+3. Complete OCR/Text **L9 — layout-aware text** beyond the already-delivered additive v1 slices.
 
-**Latest checkpoint (OCR L6):** OCR/Text advanced from L5 to L6 and remains sufficiently ahead of
-the binding PII/review frontier; no benchmark/feedback signal changed priority; no routing,
-canonical-text, PII-input, dependency, or artifact-lineage drift was introduced. The next planned
-PR remains OCR L7 `quality_report`.
+**Latest checkpoint (OCR L7):** OCR/Text advanced from L6 to L7 and remains sufficiently ahead of
+the binding PII/review frontier; no benchmark/feedback signal changed priority. The new artifact has
+exact lineage and introduces no routing, canonical-text, PII-input, dependency, or configuration
+drift. This is the third planned foundation PR checkpoint; re-reading the implementation plan and
+roadmap confirms the next three steps as OCR L8, PII L11, then completion of OCR L9.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

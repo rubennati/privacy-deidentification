@@ -13,12 +13,12 @@ Legend: ✅ covered today · ⏳ partially covered · ⛔ not yet measured.
 | CER / WER | character/word error against a reference transcript | ⛔ — planned for synthetic ground truth at OCR L12 |
 | Character-count deviation | extracted vs expected character count | ⏳ — final count reported; no expected baseline |
 | Word-count deviation | extracted vs expected word count | ⏳ — final count reported; no expected baseline |
-| Page coverage | share of pages that produced usable text | ⏳ — derivable, not yet a first-class metric |
-| OCR confidence | engine confidence per OCR page/line | ⛔ — OCR L6 |
+| Page coverage | pages with/without final text | ✅ — persisted in `quality_report` and benchmarked |
+| OCR confidence | engine confidence per OCR page/line | ✅ — L6 metrics; L7 document summary |
 | Source per page | text layer vs OCR | ✅ |
 | Routing correctness | actual routing vs expected category | ✅ |
 | Page-status distribution | GOOD/LOW_CONFIDENCE/BROKEN/EMPTY counts | ✅ |
-| Document quality summary | source mix, coverage, low-confidence counts | ⛔ — `quality_report` at OCR L7 |
+| Document quality summary | source mix, coverage, low-confidence counts | ✅ — immutable OCR L7 `quality_report` |
 | Readability | paragraphs, line breaks, de-hyphenation | ⛔ — OCR L8 |
 | Layout order | blocks, columns, headings | ⛔ — OCR L9 |
 | Table/form reconstruction | structured region quality | ⛔ — OCR L11 |
@@ -62,16 +62,14 @@ benchmark ground truth or a binding review-correction metric.
 ## Current benchmark coverage
 
 `make benchmark-private` covers artifact matching, OCR routing and page-status distribution, source
-mix, final character/word counts, PII TP/FP/FN and P/R/F1 per document/type/group/global,
+mix, OCR confidence/coverage, final character/word counts, PII TP/FP/FN and P/R/F1 per document/type/group/global,
 unsupported types, candidate-validation aggregates, and the privacy guard.
 
 The next metric steps are:
 
 1. Benchmark L9: compare all configured PII profiles in one invocation.
-2. OCR L6 and L7: produce confidence and `quality_report` data.
-3. Benchmark L10: expose OCR confidence and coverage columns.
-4. Benchmark L13–L15: history, thresholds, and CI enforcement.
-5. Review L14 / Benchmark L16: promote curated binding review decisions into private ground truth.
+2. Benchmark L13–L15: history, thresholds, and CI enforcement.
+3. Review L14 / Benchmark L16: promote curated binding review decisions into private ground truth.
 
 ## Aggregate private benchmark snapshot
 

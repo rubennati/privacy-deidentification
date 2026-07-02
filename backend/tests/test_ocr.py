@@ -18,6 +18,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
 from app.main import app
+from app.services.artifact_service import get_latest_quality_report_artifact
 from app.services.ocr_adapters import OcrExtractionResult, OcrLineMetric, OcrUnavailableError
 from app.services.pdf_renderer import get_pdf_renderer
 
@@ -158,6 +159,17 @@ def _artifact_path(
     return document_data_dir / str(document_id) / "artifacts" / f"{artifact_id}.json"
 
 
+def _artifact_payloads_by_type(
+    document_data_dir: Path, document_id: object, artifact_type: str
+) -> list[dict[str, object]]:
+    directory = document_data_dir / str(document_id) / "artifacts"
+    payloads = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in directory.glob("*.json")
+    ]
+    return [payload for payload in payloads if payload.get("artifact_type") == artifact_type]
+
+
 def _set_audit_page_fields(
     document_data_dir: Path,
     document_id: object,
@@ -177,6 +189,7 @@ _GOOD_TEXT = "The quick brown fox jumps over the lazy dog near the calm winding 
 
 def test_pdf_text_layer_creates_text_artifact_without_ocr(
     client: TestClient,
+    settings: Settings,
     document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
@@ -184,6 +197,8 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     upload, audit = _upload_and_audit(
         client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
     )
+    audit_path = _artifact_path(document_data_dir, upload["id"], audit["id"])
+    audit_bytes = audit_path.read_bytes()
 
     response = client.post(f"/api/documents/{upload['id']}/ocr")
 
@@ -213,6 +228,31 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     assert adapter.calls == []
     assert renderer.calls == []
     assert _artifact_path(document_data_dir, upload["id"], artifact["id"]).is_file()
+    quality_report = get_latest_quality_report_artifact(settings, str(upload["id"]))
+    assert quality_report is not None
+    assert quality_report.artifact_type == "quality_report"
+    assert quality_report.station == "ocr_quality"
+    assert quality_report.media_type == "application/json"
+    assert quality_report.input_artifact_id == artifact["input_artifact_id"]
+    assert quality_report.input_audit_artifact_id == audit["id"]
+    assert quality_report.input_text_artifact_id == artifact["id"]
+    summary = quality_report.content
+    assert summary.quality_report_version == "1"
+    assert summary.page_count == 1
+    assert summary.text_layer_pages == 1
+    assert summary.ocr_pages == 0
+    assert summary.mixed_source is False
+    assert summary.text_source == "pdf_text_layer"
+    assert summary.pages_needing_ocr == 0
+    assert summary.ocr_pages_with_confidence == 0
+    assert summary.ocr_lines_with_confidence == 0
+    assert summary.ocr_page_confidence_mean is None
+    assert summary.final_char_count == len("Digital text")
+    assert summary.final_word_count == 2
+    assert summary.pages_without_text == 0
+    assert "text" not in summary.model_dump()
+    assert "Digital text" not in quality_report.model_dump_json()
+    assert audit_path.read_bytes() == audit_bytes
 
 
 def test_mixed_pdf_routes_each_page_and_preserves_order(
@@ -252,6 +292,7 @@ def test_mixed_pdf_routes_each_page_and_preserves_order(
 
 def test_docx_extracts_paragraphs_without_ocr(
     client: TestClient,
+    settings: Settings,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     adapter, renderer = ocr_fakes
@@ -271,6 +312,13 @@ def test_docx_extracts_paragraphs_without_ocr(
     assert content["pages"] == []
     assert adapter.calls == []
     assert renderer.calls == []
+    quality_report = get_latest_quality_report_artifact(settings, str(upload["id"]))
+    assert quality_report is not None
+    assert quality_report.content.text_source == "docx_text"
+    assert quality_report.content.page_count == 0
+    assert quality_report.content.text_layer_pages == 0
+    assert quality_report.content.ocr_pages == 0
+    assert quality_report.content.final_word_count == 2
 
 
 def test_docx_extracts_table_cells_in_document_order(
@@ -305,6 +353,7 @@ def test_docx_extracts_table_cells_in_document_order(
 )
 def test_image_uses_ocr_once(
     client: TestClient,
+    settings: Settings,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
     extension: str,
     mime_type: str,
@@ -331,6 +380,16 @@ def test_image_uses_ocr_once(
     ]
     assert len(adapter.calls) == 1
     assert renderer.calls == []
+    quality_report = get_latest_quality_report_artifact(settings, str(upload["id"]))
+    assert quality_report is not None
+    assert quality_report.content.page_count == 1
+    assert quality_report.content.text_layer_pages == 0
+    assert quality_report.content.ocr_pages == 1
+    assert quality_report.content.ocr_pages_with_confidence == 1
+    assert quality_report.content.ocr_lines_with_confidence == 1
+    assert quality_report.content.ocr_page_confidence_mean == 0.91
+    assert quality_report.content.flags == ["ocr_used"]
+    assert "Image text" not in quality_report.model_dump_json()
 
 
 def test_good_text_pdf_does_not_initialize_ocr(
@@ -415,11 +474,17 @@ def test_empty_text_layer_page_routes_to_ocr(
 
 def test_mixed_quality_pdf_routes_each_page(
     client: TestClient,
+    settings: Settings,
     document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
     adapter, renderer = ocr_fakes
     adapter.outputs = ["Broken page OCR", "Scanned page OCR"]
+    adapter.confidences = [0.8, 0.6]
+    adapter.line_confidences = [
+        (OcrLineMetric(1, 0.8, len("Broken page OCR")),),
+        (OcrLineMetric(1, 0.6, len("Scanned page OCR")),),
+    ]
     upload, audit = _upload_and_audit(
         client, "mixed.pdf", _pdf_pages_bytes(_GOOD_TEXT, _GOOD_TEXT, None), "application/pdf"
     )
@@ -447,6 +512,24 @@ def test_mixed_quality_pdf_routes_each_page(
     ]
     assert renderer.calls == [2, 3]
     assert len(adapter.calls) == 2
+    quality_report = get_latest_quality_report_artifact(settings, str(upload["id"]))
+    assert quality_report is not None
+    summary = quality_report.content
+    assert summary.page_count == 3
+    assert summary.text_layer_pages == 1
+    assert summary.ocr_pages == 2
+    assert summary.mixed_source is True
+    assert summary.text_source == "pdf_mixed"
+    assert summary.good_text_layer_pages == 1
+    assert summary.broken_text_layer_pages == 1
+    assert summary.empty_text_layer_pages == 1
+    assert summary.pages_needing_ocr == 2
+    assert summary.ocr_pages_with_confidence == 2
+    assert summary.ocr_lines_with_confidence == 2
+    assert summary.ocr_page_confidence_mean == pytest.approx(0.7)
+    assert summary.ocr_page_confidence_min == 0.6
+    assert summary.ocr_page_confidence_max == 0.8
+    assert summary.flags == ["pdf_mixed", "ocr_used"]
 
 
 def test_ocr_required_page_without_runtime_returns_503(
@@ -566,6 +649,48 @@ def test_get_returns_latest_text_artifact(
     assert second.status_code == 201
     assert response.status_code == 200
     assert response.json()["id"] == second.json()["id"]
+
+
+def test_rerun_creates_new_immutable_quality_report(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Stable text"), "application/pdf"
+    )
+
+    first_text = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert first_text.status_code == 201
+    first_reports = _artifact_payloads_by_type(
+        document_data_dir, upload["id"], "quality_report"
+    )
+    assert len(first_reports) == 1
+    first_report = first_reports[0]
+    first_report_path = _artifact_path(
+        document_data_dir, upload["id"], first_report["id"]
+    )
+    first_report_bytes = first_report_path.read_bytes()
+    first_text_path = _artifact_path(
+        document_data_dir, upload["id"], first_text.json()["id"]
+    )
+    first_text_bytes = first_text_path.read_bytes()
+
+    second_text = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert second_text.status_code == 201
+    reports = _artifact_payloads_by_type(document_data_dir, upload["id"], "quality_report")
+    assert len(reports) == 2
+    assert first_report_path.read_bytes() == first_report_bytes
+    assert first_text_path.read_bytes() == first_text_bytes
+    assert {report["input_text_artifact_id"] for report in reports} == {
+        first_text.json()["id"],
+        second_text.json()["id"],
+    }
+    latest = get_latest_quality_report_artifact(settings, str(upload["id"]))
+    assert latest is not None
+    assert latest.input_text_artifact_id == second_text.json()["id"]
 
 
 def test_hash_mismatch_prevents_text_artifact(
@@ -1096,7 +1221,7 @@ def test_legacy_text_artifact_without_pii_input_text_field_remains_valid(
     assert response.json()["content"]["pii_input_text"] is None
 
 
-def test_delete_removes_audit_and_text_artifacts(
+def test_delete_removes_audit_text_and_quality_artifacts(
     client: TestClient,
     document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
@@ -1106,7 +1231,7 @@ def test_delete_removes_audit_and_text_artifacts(
     )
     assert client.post(f"/api/documents/{upload['id']}/ocr").status_code == 201
     artifact_directory = document_data_dir / str(upload["id"]) / "artifacts"
-    assert len(list(artifact_directory.glob("*.json"))) == 2
+    assert len(list(artifact_directory.glob("*.json"))) == 3
 
     response = client.delete(f"/api/documents/{upload['id']}")
 

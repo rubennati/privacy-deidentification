@@ -41,13 +41,13 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 
 | Engine | Current level | Next |
 | --- | --- | --- |
-| OCR / Text | **L6 done** | L7 `quality_report` → L8 readable text |
+| OCR / Text | **L7 done** | L8 readable text → complete L9 layout-aware text |
 | PII / Sensitive-Data | **L9 done; L10 partial** (dev-only feedback capture) | L11 grouping → L12 overlap |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only** | L6 grouping → L8 `review_result` |
-| Benchmark / Regression | **L8 done** | L9 per-profile metrics |
+| Benchmark / Regression | **L8 done; L10 slice out of order** | L9 per-profile metrics |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 
-OCR/Text (L6) is currently ahead of the *binding* PII/review frontier (PII L10 partial,
+OCR/Text (L7) is currently ahead of the *binding* PII/review frontier (PII L10 partial,
 Review L2 prod). The 2–3-levels-ahead rule is comfortably satisfied today; the risk is PII deep work
 (grouping/overlap/review) outrunning the OCR text-quality/geometry it will eventually need.
 
@@ -60,8 +60,9 @@ labelled goals in the request.
 1. **OCR L6 — OCR confidence foundation — delivered.** Capture engine-reported confidence per OCR
    page (and per line where available), additively on `text_result`, as metrics only. Immutable
    `audit_result` artifacts remain unchanged.
-2. **OCR L7 — `quality_report`.** A metrics-only per-document summary (source mix, coverage,
-   low-confidence counts, confidence summary) with explicit lineage; no page text.
+2. **OCR L7 — `quality_report` — delivered.** A metrics-only per-document summary (source mix,
+   coverage, low-confidence counts, confidence summary) with exact original/audit/text lineage; no
+   page text.
 3. **OCR L8 — human-readable text / `best_text_result` split.** Introduce a readable rendering while
    keeping today's `text_result` as the canonical `best_text_result`. PII offsets keep referencing
    only the canonical text.
@@ -183,7 +184,7 @@ hardening + OCR L6/L7 here).
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | OCR/PII implementation plan + checkpoint loop | Planning | none | This doc + cadence + checkpoint loop | code, recognizers, API/UI, benchmark, DB, redaction | plan doc merged; links valid; agents can follow it |
 | 2 | OCR confidence foundation (delivered) | OCR/Text | **OCR L6** | capture per-page (and per-line where available) OCR confidence, additively | routing changes, `quality_report`, geometry, tables, new OCR tool | OCR pages carry confidence when reported; canonical text + routing unchanged; benchmark reads the metric without raw text |
-| 3 | OCR `quality_report` | OCR/Text | **OCR L7** | metrics-only per-document quality summary with lineage | page text, layout, geometry, redaction | each OCR/Text run has an immutable `quality_report` with no page text or raw PII |
+| 3 | OCR `quality_report` (delivered) | OCR/Text | **OCR L7** | metrics-only per-document quality summary with lineage | page text, layout, geometry, redaction | each OCR/Text run has an immutable `quality_report` with no page text or raw PII |
 | 4 | OCR `best_text_result` v1 | OCR/Text | **OCR L8** | readable rendering seed; canonical `best_text_result` unchanged | layout order, geometry, tables, AI rewriting | a readable rendering exists beside a byte-stable canonical text; PII offsets still reference canonical text |
 | 5 | PII entity grouping + occurrences | PII | **PII L11** | group repeated same-type occurrences with clickable offsets | detection changes, overlap resolution, review persistence | repeated mentions render as one group with correct per-occurrence offsets; no detection dropped/invented |
 | 6 | OCR `layout_text_result` v1 | OCR/Text | **OCR L9** | layout-aware reading order + typed blocks; page boundaries/headers/footers | tables (L11), geometry export, redaction | multi-column/header-footer pages produce sensible reading order; canonical text remains the PII input |

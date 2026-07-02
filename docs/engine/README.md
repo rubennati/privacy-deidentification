@@ -101,10 +101,10 @@ benchmark run (12-document corpus; aggregate figures only, see
 
 | Area | Current level (0–19) | Basis | Next level |
 | --- | --- | --- | --- |
-| OCR / Text engine | **L5 done** | text extraction, lineage, OCR runtime, text-layer quality gate, per-page routing shipped; no OCR confidence or `quality_report` yet | L6 confidence → L7 `quality_report` |
+| OCR / Text engine | **L7 done** | text extraction, lineage, OCR runtime, quality routing, OCR confidence, and lineage-bound metrics-only `quality_report` shipped | L8 readable text → complete L9 layout-aware text |
 | PII / sensitive-data engine | **L9 done, L10 partial** | structured + AT/DE + domain recognizers, profiles, benchmark, candidate validation, context hardening, address/contact-line, reproducible `engine_settings`; **dev-only** feedback capture landed | L10 feedback hardening → L11 grouping → L12 overlap |
 | Review / human-feedback engine | **L2 done; L3–L5 dev-only** | read-only review + lineage-safe highlights (prod); clickable offsets, legend, dev engine-settings override, per-entity dev feedback capture (behind `ENABLE_DEV_ENGINE_SETTINGS`) | L6 grouping → L8 `review_result` overlay |
-| Benchmark / regression | **L8 done** | matching, routing correctness, PII P/R/F1, privacy guard, determinism, validation counts | L9 per-profile in one run → L10 OCR confidence columns |
+| Benchmark / regression | **L8 done; L10 slice delivered out of order** | matching, routing correctness, PII P/R/F1, privacy guard, determinism, validation counts, safe OCR confidence/coverage columns | L9 per-profile in one run |
 | Redaction / de-identification | **L0 by design** | detection-only; blocked on PII L17–L18, Review L8–L9, OCR L10/L15 | L1 requirements/threat model, deliberately last |
 | Storage / core | **Sufficient for MVP** | separated roots, immutable artifacts, validated deletes | — |
 | Database | **Not implemented; architecture open** | everything file-based today | decide only when a binding review workflow requires it |
