@@ -62,6 +62,36 @@ export interface LayoutBlock {
   confidence?: number | null;
 }
 
+export interface TextLineGeometry {
+  line_index: number;
+  canonical_start: number;
+  canonical_end: number;
+  page_start: number;
+  page_end: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  source: "pdf_text_layer" | "paddleocr" | "fallback";
+  confidence?: number | null;
+}
+
+export interface TextGeometryPage {
+  page_number: number;
+  page_width: number;
+  page_height: number;
+  coordinate_unit: "pdf_points" | "image_pixels";
+  source: "pdf_text_layer" | "paddleocr" | "fallback";
+  status: "complete" | "partial" | "unsupported";
+  lines: TextLineGeometry[];
+}
+
+export interface TextGeometry {
+  pages: TextGeometryPage[];
+  coverage: number;
+  flags: string[];
+}
+
 export interface TextArtifact {
   id: string;
   document_id: string;
@@ -92,6 +122,10 @@ export interface TextArtifact {
     // Additive OCR L9 review blocks with coarse normalized bounds and no offset guarantees.
     layout_blocks_version?: "1" | null;
     layout_blocks?: LayoutBlock[];
+    // Additive OCR L10 span geometry: canonical line spans mapped to page-local line boxes for
+    // review/debug. Not redaction-ready (that remains L15). Legacy artifacts omit it.
+    text_geometry_version?: "1" | null;
+    text_geometry?: TextGeometry | null;
   };
 }
 

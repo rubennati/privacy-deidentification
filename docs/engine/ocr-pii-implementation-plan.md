@@ -41,13 +41,13 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 
 | Engine | Current level | Next |
 | --- | --- | --- |
-| OCR / Text | **L9 done** | PII L11 grouping → OCR L10 geometry foundation |
+| OCR / Text | **L10 done** | PII L11 grouping → OCR L11 table/form reconstruction |
 | PII / Sensitive-Data | **L9 done; L10 partial** (dev-only feedback capture) | L11 grouping → L12 overlap |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only** | L6 grouping → L8 `review_result` |
 | Benchmark / Regression | **L8 done; L10 slice out of order** | L9 per-profile metrics |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 
-OCR/Text (L9) is currently ahead of the *binding* PII/review frontier (PII L10 partial,
+OCR/Text (L10) is currently ahead of the *binding* PII/review frontier (PII L10 partial,
 Review L2 prod). The 2–3-levels-ahead rule is comfortably satisfied today; the risk is PII deep work
 (grouping/overlap/review) outrunning the OCR text-quality/geometry it will eventually need.
 
@@ -69,9 +69,14 @@ labelled goals in the request.
 4. **OCR L9 — layout-aware blocks — delivered.** Preserve `layout_text_result` and add deterministic
    ordered/typed review blocks with coarse normalized page bounds from existing pypdf positions or
    transient PaddleOCR polygons — still not the PII input and not L10 geometry.
-5. **OCR L10 — bounding boxes / span geometry (+ per-block source lineage).** Per-line/word
-   coordinates and a canonical-offset → page-box lookup. *(Per-page source lineage already exists at
-   OCR L2; this adds per-block/geometry-level lineage — it is not new lineage from scratch.)*
+5. **OCR L10 — bounding boxes / span geometry — delivered.** Additive `text_geometry` maps canonical
+   line spans to page-local line boxes (`pdf_points`/`image_pixels`) with per-page status and overall
+   coverage, plus an internal `resolve_span_geometry` canonical-offset → page-box lookup. Offsets are
+   matched against the immutable canonical text, so canonical/page text stays byte-stable and PII
+   still runs on canonical text only. This provides line-level source anchoring and traceability, and
+   a foundation for future placeholder mapping toward AI-ready pseudonymized document generation.
+   Word-level geometry and a full `text_lineage_map` remain open. *(Per-page source lineage already
+   exists at OCR L2; this adds line-geometry-level mapping — it is not new lineage from scratch.)*
 6. **OCR L11 — table / form reconstruction.** Rows/cells and label/value pairs as structure, kept
    separate from canonical text.
 7. **OCR L13 — document understanding.** Document-type / section / zone semantics to inform PII,
@@ -191,9 +196,9 @@ hardening + OCR L6/L7 here).
 | 6 | OCR layout-aware blocks (delivered) | OCR/Text | **OCR L9** | layout-aware reading order + typed blocks; coarse normalized bounds; page boundaries/headers/footers | precise line/word geometry (L10), tables (L11), lineage map, redaction | multi-column/header-footer pages produce deterministic review blocks; canonical text remains the PII input |
 | 7 | PII overlap / entity resolution | PII | **PII L12** | deterministic engine-level precedence (ADDRESS>LOCATION, EMAIL>URL-fragment, structured>NER) | new detection, NER retuning, AI | overlapping candidates resolve deterministically without dropping distinct entities; decisions are auditable |
 | 8 | PII validation transparency report | PII | none (surfaces L6 data) | readable view of stored validation counts/reason codes | new detection, benchmark-logic change, DB | a transparency view reflects `pii_result` validation summary; no raw candidate text; no new metrics computed |
-| 9 | OCR source-lineage per page/block | OCR/Text | **OCR L10** | extend per-page lineage (already L2) into a tested geometry/offset mapping; the L9 extraction-source label is not that map | tables, redaction | precise geometry maps to canonical coordinates; per-page lineage and canonical text remain unchanged |
+| 9 | OCR span geometry (delivered) | OCR/Text | **OCR L10** | additive `text_geometry` mapping canonical line spans to page-local line boxes + `resolve_span_geometry` lookup | word-level geometry, tables, lineage map, pseudonymization/placeholder mapping/export | line geometry maps to canonical coordinates; per-page lineage and canonical text remain unchanged |
 | 10 | Review result artifact | Review / PII | **Review L8 (→ PII L13)** | immutable, lineage-bound `review_result` overlay | confirm/reject UI actions (next), rules, DB migration | a `review_result` persists bound to `pii_result`+`text_result` and re-renders; `pii_result` immutable; re-extraction marks it stale |
-| 11 | OCR bounding boxes foundation | OCR/Text | **OCR L10** | per-line/word coordinates + canonical-offset→box lookup | tables, multi-engine selection, redaction | a canonical offset range resolves to correct page box(es) on representative docs |
+| 11 | OCR word-level geometry (next) | OCR/Text | **OCR L10→L11** | extend line geometry with word-level boxes and richer coverage | tables, multi-engine selection, pseudonymization/placeholder mapping/export | a canonical offset range resolves to correct word box(es) on representative docs |
 | 12 | Feedback-to-regression workflow | PII / Review | **PII L15 / Review L14** | promote reviewed corrections into private benchmark ground truth | exporting PII outside `volumes/`, benchmark scoring changes | corrections become private benchmark data without leaving `volumes/`; ground truth improves |
 
 Sequencing notes: PR 4 (`best_text_result` split) precedes PR 6 (`layout_text_result`); PR 6

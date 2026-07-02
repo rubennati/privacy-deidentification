@@ -146,6 +146,84 @@ class LayoutBlock(BaseModel):
         return self
 
 
+class TextLineGeometry(BaseModel):
+    """One additive OCR L10 line box mapping a canonical text span to a page-local region.
+
+    Offsets are half-open. ``canonical_start``/``canonical_end`` index ``TextContent.text``;
+    ``page_start``/``page_end`` index the matching ``TextContent.pages[].text``. ``bounds`` are
+    page-local in the owning :class:`TextGeometryPage`'s ``coordinate_unit``. This is line-level
+    source-anchoring geometry for review/debug and traceability, and a foundation for future
+    placeholder mapping in AI-ready pseudonymized document generation. It does not perform
+    pseudonymization, placeholder mapping, document export, or pixel-perfect visual redaction, and
+    carries no raw line text.
+    """
+
+    line_index: int = Field(ge=1)
+    canonical_start: int = Field(ge=0)
+    canonical_end: int = Field(ge=0)
+    page_start: int = Field(ge=0)
+    page_end: int = Field(ge=0)
+    x0: float = Field(ge=0.0)
+    y0: float = Field(ge=0.0)
+    x1: float = Field(ge=0.0)
+    y1: float = Field(ge=0.0)
+    source: Literal["pdf_text_layer", "paddleocr", "fallback"]
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _validate_line_geometry(self) -> TextLineGeometry:
+        if self.x1 < self.x0 or self.y1 < self.y0:
+            raise ValueError("line box bounds must have x1 >= x0 and y1 >= y0")
+        if self.canonical_end < self.canonical_start:
+            raise ValueError("canonical offsets must have canonical_end >= canonical_start")
+        if self.page_end < self.page_start:
+            raise ValueError("page offsets must have page_end >= page_start")
+        if self.confidence is not None and self.source != "paddleocr":
+            raise ValueError("only PaddleOCR line geometry may carry confidence")
+        return self
+
+
+class TextGeometryPage(BaseModel):
+    """Page-local line geometry for one page, plus its coordinate frame and coverage status."""
+
+    page_number: int = Field(ge=1)
+    page_width: float = Field(gt=0.0)
+    page_height: float = Field(gt=0.0)
+    coordinate_unit: Literal["pdf_points", "image_pixels"]
+    source: Literal["pdf_text_layer", "paddleocr", "fallback"]
+    status: Literal["complete", "partial", "unsupported"]
+    lines: list[TextLineGeometry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_page_geometry(self) -> TextGeometryPage:
+        if self.status == "unsupported" and self.lines:
+            raise ValueError("unsupported geometry pages must not carry line boxes")
+        if self.status != "unsupported" and not self.lines:
+            raise ValueError("complete/partial geometry pages must carry at least one line box")
+        indexes = [line.line_index for line in self.lines]
+        if indexes != list(range(1, len(indexes) + 1)):
+            raise ValueError("line indexes must be contiguous and start at 1 per page")
+        for line in self.lines:
+            if line.x1 > self.page_width or line.y1 > self.page_height:
+                raise ValueError("line box bounds must be page-local")
+        return self
+
+
+class TextGeometry(BaseModel):
+    """Versioned OCR L10 span geometry: an ordered set of per-page line boxes plus coverage."""
+
+    pages: list[TextGeometryPage] = Field(default_factory=list)
+    coverage: float = Field(ge=0.0, le=1.0)
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_geometry(self) -> TextGeometry:
+        page_numbers = [page.page_number for page in self.pages]
+        if page_numbers != sorted(page_numbers) or len(page_numbers) != len(set(page_numbers)):
+            raise ValueError("geometry pages must have unique page numbers in sorted order")
+        return self
+
+
 class TextPageResult(BaseModel):
     """Ordered text extracted from one PDF or image page."""
 
@@ -210,6 +288,32 @@ class TextContent(BaseModel):
     # optional/defaulted so pre-L9 artifacts remain valid.
     layout_blocks_version: Literal["1"] | None = None
     layout_blocks: list[LayoutBlock] = Field(default_factory=list)
+    # OCR L10 additive span geometry. It maps canonical line spans to page-local line boxes for
+    # source anchoring, review/debug, and traceability — a foundation for future placeholder mapping
+    # in AI-ready pseudonymized document generation. It does NOT perform pseudonymization,
+    # placeholder mapping, document export, or pixel-perfect visual redaction, and never changes
+    # ``text``/``pages``/PII input. Both fields are optional/defaulted so pre-L10 artifacts remain
+    # valid.
+    text_geometry_version: Literal["1"] | None = None
+    text_geometry: TextGeometry | None = None
+
+    @model_validator(mode="after")
+    def _validate_text_geometry(self) -> TextContent:
+        if (self.text_geometry is not None) != (self.text_geometry_version == "1"):
+            raise ValueError("text geometry and version must be present together")
+        if self.text_geometry is None:
+            return self
+        pages_by_number = {page.page_number: page for page in self.pages}
+        for geometry_page in self.text_geometry.pages:
+            page = pages_by_number.get(geometry_page.page_number)
+            if page is None:
+                raise ValueError("geometry references a page with no canonical text")
+            for line in geometry_page.lines:
+                if line.canonical_end > self.text_char_count:
+                    raise ValueError("canonical geometry offsets exceed canonical text length")
+                if line.page_end > page.text_char_count:
+                    raise ValueError("page geometry offsets exceed page text length")
+        return self
 
     @model_validator(mode="after")
     def _validate_layout_blocks(self) -> TextContent:

@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L9** | L8 foundation plus layout text views and additive ordered/typed layout blocks with coarse normalized bounds | PII L11 grouping, then OCR L10 geometry |
+| OCR / Text | **L10** | L9 foundation plus additive `text_geometry` mapping canonical line spans to page-local line boxes (source anchoring/traceability only) | PII L11 grouping, then OCR L11 table/form reconstruction |
 | PII / Sensitive-Data | **L9; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture | L11 entity grouping, then L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only** | read-only review and lineage-safe highlights; gated review aids, run settings, and per-entity feedback capture | L6 grouped occurrences; L8 `review_result` later |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -17,9 +17,13 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L9: upload, canonical text extraction, lineage, OCR runtime, quality routing/fallback,
-  additive OCR confidence, an immutable metrics-only `quality_report` for every successful run, and
-  additive readable/layout views plus deterministic typed layout blocks for PDF and OCR content.
+- OCR L0–L10: upload, canonical text extraction, lineage, OCR runtime, quality routing/fallback,
+  additive OCR confidence, an immutable metrics-only `quality_report` for every successful run,
+  additive readable/layout views plus deterministic typed layout blocks for PDF and OCR content, and
+  additive `text_geometry` line boxes mapping canonical spans to page-local geometry (source
+  anchoring and traceability for review/debug, and a foundation for future placeholder mapping
+  toward AI-ready pseudonymized document generation — it does not perform pseudonymization,
+  placeholder mapping, document export, or pixel-perfect visual redaction).
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -94,8 +98,22 @@ canonical text.
 page-local order, conservative types, extraction source, optional OCR confidence, and coarse
 normalized page bounds. PDF positions and transient PaddleOCR polygons are used without adding a
 dependency. Canonical/page text, readable text, quality reporting, and active PII input are
-unchanged. Precise line/word geometry and canonical-offset lookup remain L10; structured tables and
-forms remain L11.
+unchanged. Structured tables and forms remain L11.
+
+### OCR L10 — span geometry — delivered
+
+Additive `text_geometry` (`text_geometry_version = "1"`) maps canonical line spans to page-local
+line boxes: each `TextLineGeometry` links `canonical_start`/`canonical_end` (into `text_result.text`)
+and `page_start`/`page_end` (into `pages[].text`) to `x0/y0/x1/y1` bounds in the page's
+`coordinate_unit` (`pdf_points` for text-layer, `image_pixels` for OCR). Offsets are matched against
+the immutable canonical text — never regenerated — so canonical/page text and char counts stay
+byte-stable and PII still runs on canonical text. Pages without safely derivable geometry degrade to
+`partial`/`unsupported` with a coverage flag rather than guessing; DOCX has no geometry. The internal
+`resolve_span_geometry` helper resolves a canonical span to intersecting line boxes and never returns
+raw text. This provides line-level source anchoring and traceability for review/debug, and a
+foundation for future placeholder mapping toward AI-ready pseudonymized document generation — it does
+not perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
+redaction. Word-level geometry and table/form reconstruction remain L11+.
 
 ### PII L11 — entity grouping
 

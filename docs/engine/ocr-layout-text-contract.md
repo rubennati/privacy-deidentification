@@ -98,8 +98,28 @@ never shift a canonical PII offset, and no layer becomes an island.
 - **Contents:** page number, page-local order, type, text, extraction source, optional natural OCR
   confidence, and coarse normalized 0..1 page bounds.
 - **Boundary:** bounds are block regions used for ordering/typing only. They are not canonical
-  offsets, reusable line/word geometry, a canonical-offset→box lookup, a `text_lineage_map`, or
-  redaction-ready geometry. Those remain L10/L15 work.
+  offsets, reusable line/word geometry, a canonical-offset→box lookup, or a `text_lineage_map`.
+  Line-level canonical-span geometry (source anchoring/traceability) is the separate L10 field below.
+
+### L10 span geometry
+
+- **Fields:** optional `text_geometry_version = "1"` plus `text_geometry` on `text_result`.
+- **Purpose:** provide the first canonical-offset-bearing geometry — resolve a canonical line span to
+  one or more page-local line boxes — for source anchoring, review/debug, and traceability, and as a
+  foundation for future placeholder mapping toward AI-ready pseudonymized document generation.
+- **Contents:** per page, a `coordinate_unit` (`pdf_points` for text-layer, `image_pixels` for OCR),
+  `page_width`/`page_height`, extraction `source`, a `status` (`complete`/`partial`/`unsupported`),
+  and `lines[]`. Each line maps `canonical_start`/`canonical_end` (into `text`) and
+  `page_start`/`page_end` (into `pages[].text`) to page-local `x0/y0/x1/y1` bounds, with optional OCR
+  confidence. The geometry also carries overall `coverage` and `flags`. It stores **no** raw line
+  text.
+- **Derivation:** offsets are obtained by matching page-local text segments against the immutable
+  canonical page text — the canonical text is never regenerated or altered. Pages without safely
+  derivable geometry degrade to `partial`/`unsupported` rather than guessing; DOCX has no geometry.
+- **Boundary:** line-level source anchoring only. It does not perform pseudonymization, placeholder
+  mapping, document export, or pixel-perfect visual redaction; word-level geometry and a general
+  `text_lineage_map` remain L11+ work. The internal `resolve_span_geometry` helper is the
+  canonical-span→box lookup; it never returns raw text.
 
 ## Invariants
 
@@ -119,7 +139,7 @@ These hold for any future implementation:
   `layout_text_result` happens **through** the lineage map, never by re-detecting on the layout text.
 - **PII-input text and layout text must be married via lineage/mapping** — neither is a standalone
   island; both trace to the same source blocks/lines/words as canonical.
-- **`pii_input_text`, `readable_text`, `layout_text_result`, `layout_blocks`, and
+- **`pii_input_text`, `readable_text`, `layout_text_result`, `layout_blocks`, `text_geometry`, and
   `text_lineage_map` are additive** — new optional fields/artifacts.
 - **No existing artifacts are rewritten** — a re-run creates a new artifact; nothing is mutated.
 - **Legacy artifacts remain valid** — older artifacts without the new fields still validate.
@@ -198,8 +218,9 @@ Anchored to the existing 0–19 ladder in [`ocr-engine-levels.md`](ocr-engine-le
 - **OCR L8:** human-readable text output — canonical vs readable split first realised
   (`best_text_result` stays canonical; `readable_text` is the readable rendering).
 - **OCR L9:** `layout_text_result` plus ordered, typed `layout_blocks` with coarse normalized bounds.
-- **OCR L10+:** bounding boxes / per-block source lineage — the structural basis for
-  `text_lineage_map` and any real `pii_input_text` divergence.
+- **OCR L10:** `text_geometry` line boxes mapping canonical line spans to page-local bounds, with a
+  `resolve_span_geometry` canonical-span→box lookup — line-level source anchoring and traceability,
+  and the structural basis for `text_lineage_map` and any real `pii_input_text` divergence.
 - **OCR L11+:** table / form reconstruction.
 - **Higher levels:** document understanding / redaction-ready geometry (the lineage map's long-term
   payoff for bounding boxes and redaction).
@@ -247,10 +268,19 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   canonical view to a display-only monospaced layout view, falling back to canonical text when the
   field is absent. PII highlights and offset links remain bound to canonical text only; layout text
   is never highlighted. `pii_input_text` has no UI in v1 (internal/experimental).
-- **Not in L9:** `text_lineage_map`, precise/reusable line or word geometry, canonical-offset lookup,
-  a general table detector, a structured
-  `pii_input_blocks` schema, semantic role labelling (contractor vs.
-  customer) for `pii_input_text` blocks, and active PII use of `pii_input_text`.
+- **Delivered (L10):** `text_geometry_version = "1"` and additive `text_geometry`. Per page it maps
+  canonical line spans to page-local line boxes (`pdf_points` for text-layer via pypdf positions,
+  `image_pixels` for OCR via PaddleOCR polygons) with `status`/`coverage`/`flags`; offsets are matched
+  against the immutable canonical text, so canonical/page text stays byte-stable and PII still uses
+  canonical text only. Pages without safe geometry degrade to `partial`/`unsupported`; DOCX has none.
+  Geometry stores no raw line text and the internal `resolve_span_geometry` lookup returns none. No
+  new dependency was added and benchmark loaders ignore it. This delivers line-level source
+  anchoring and traceability, and a foundation for future placeholder mapping toward AI-ready
+  pseudonymized document generation.
+- **Not in L10:** `text_lineage_map`, word-level geometry, a PII-input switch, a general table
+  detector, a structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
+  customer) for `pii_input_text` blocks, active PII use of `pii_input_text`, pseudonymization,
+  placeholder mapping, document export, and pixel-perfect visual redaction.
 
 ## Future implementation direction
 

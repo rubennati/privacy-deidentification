@@ -32,6 +32,7 @@ input, or report may be committed.
 | `layout_text_result` | ✅ OCR L9 (field on `text_result`) | readable layout plain-text for PDF text layers; Review UI alternative | yes | additive optional field on `text_result` |
 | `layout_blocks` | ✅ OCR L9 (field on `text_result`) | ordered typed review blocks with coarse normalized page bounds and extraction source | yes | additive optional versioned field on `text_result` |
 | `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
+| `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping canonical line spans to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; source-anchoring/traceability only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
 | `structured_document_result` | 🔜 OCR L11 | tables, sections, key-value regions | yes | immutable artifact |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | `review_result` | 🔜 Review L8 | lineage-bound human decision overlay on `pii_result` | yes | immutable artifact |
@@ -67,6 +68,18 @@ Four distinct text layers, structured layout blocks, and a lineage map, fixed by
   use transient PaddleOCR polygons when valid and otherwise degrade to a marked fallback block.
   These are review/ordering regions only: no canonical offsets, persisted line/word boxes,
   canonical-offset lookup, lineage-map claim, or redaction-ready geometry.
+- **`text_geometry`** (new, optional, additive; `text_geometry_version = "1"`) is the first
+  canonical-offset-bearing geometry: per page it stores line boxes that map a canonical span
+  (`canonical_start`/`canonical_end` into `text`) and page span (`page_start`/`page_end` into
+  `pages[].text`) to page-local `x0/y0/x1/y1` bounds in the page's `coordinate_unit` (`pdf_points`
+  for text-layer, `image_pixels` for OCR). Offsets are matched against the immutable canonical text,
+  never regenerated. Each page reports `status` (`complete`/`partial`/`unsupported`) and the geometry
+  reports `coverage`/`flags`; pages without safe geometry degrade rather than guess, and DOCX has
+  none. It carries no raw line text and provides line-level source anchoring and traceability — a
+  foundation for future placeholder mapping toward AI-ready pseudonymized document generation. It
+  does not perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
+  redaction. The internal `resolve_span_geometry` helper resolves a canonical span to intersecting
+  line boxes. This is a line-level slice, not the full `text_lineage_map` below.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
   its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.
@@ -119,7 +132,10 @@ is suitable only for controlled local or aggregate analysis.
 - **Metrics-only artifacts** (`audit_result`, `quality_report`) contain counts, statuses, reasons,
   coverage, and confidence; they contain no page text or raw entity values.
 - **Text artifacts** contain extracted text and therefore may contain PII. They remain under the
-  local document-data root and are never logged or committed.
+  local document-data root and are never logged or committed. The additive `text_geometry` on a text
+  artifact stores only offsets and page-local bounds (no raw line text), but it lives inside the same
+  sensitive text artifact and follows the same handling; geometry offsets and bounds must never be
+  logged.
 - **PII and review artifacts** contain spans and may contain raw entity values. They remain local and
   are never written to application logs.
 - **Private benchmark reports** remain under `volumes/` and pass through `privacy_guard.py` before
