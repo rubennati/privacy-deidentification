@@ -444,9 +444,9 @@ PiiFeedbackIssueType = Literal[
 class PiiFeedbackEntityRef(BaseModel):
     """The minimal, non-sensitive fingerprint of the entity a reviewer commented on.
 
-    Offsets + type + recognizer are enough to correlate feedback with a re-run later. Raw entity
-    text is never accepted or stored here; ``text_hash`` is an optional, opaque digest a caller
-    may supply, capped in length and never expanded back into text server-side.
+    Offsets + type + recognizer identify an entity in the referenced PII artifact. Raw entity text
+    is never accepted or stored here; ``text_hash`` is optional and must be a lowercase SHA-256
+    digest so it cannot be used as a free-text field.
     """
 
     type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
@@ -454,7 +454,7 @@ class PiiFeedbackEntityRef(BaseModel):
     end: int = Field(ge=0)
     score: float = Field(ge=0, le=1)
     recognizer: str = Field(max_length=200)
-    text_hash: str | None = Field(default=None, max_length=128)
+    text_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def _validate_span(self) -> PiiFeedbackEntityRef:
@@ -464,7 +464,11 @@ class PiiFeedbackEntityRef(BaseModel):
 
 
 class PiiFeedbackDetail(BaseModel):
-    """The reviewer's verdict on one entity. ``comment`` is optional, dev-only free text."""
+    """The reviewer's verdict on one entity.
+
+    ``comment`` is an optional short review note. Reviewers must not paste document text, OCR text,
+    or raw PII into it.
+    """
 
     verdict: PiiFeedbackVerdict
     issue_type: PiiFeedbackIssueType
@@ -496,7 +500,7 @@ class PiiFeedbackRequest(BaseModel):
 
 
 class PiiFeedbackRecord(BaseModel):
-    """One append-only feedback line as persisted to disk (privacy-safe by construction)."""
+    """One append-only feedback line persisted without raw entity or document text."""
 
     schema_version: Literal["1"] = "1"
     app_version: str

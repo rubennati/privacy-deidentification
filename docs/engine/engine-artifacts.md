@@ -68,12 +68,15 @@ unconnected source-of-truth texts** — every layer maps back to canonical (and 
 `volumes/document-data/<document_id>/feedback/pii_feedback.jsonl` is an append-only, dev-only log,
 not an engine artifact and not a binding review result. It is available only behind
 `ENABLE_DEV_ENGINE_SETTINGS` and records identifiers, offsets, type, recognizer, score, verdict,
-issue type, optional comment, and copied engine settings.
+issue type, optional comment, and copied engine settings. Feedback is accepted only when its type,
+offsets, and recognizer match an entity in the referenced `pii_result`; the score is copied from the
+artifact.
 
 The structured entity fingerprint intentionally excludes document text, OCR full text, and raw
-entity values. Free-text comments and caller-supplied opaque fields can nevertheless contain
-sensitive input, so the file must be treated as sensitive local data. It remains under `volumes/`,
-is never committed, and is suitable only for controlled local or aggregate analysis.
+entity values. Optional `text_hash` values are restricted to lowercase SHA-256 digests. Comments
+are short reviewer notes and must not contain copied document text, OCR text, or raw PII. The file
+must still be treated as sensitive local data; it remains under `volumes/`, is never committed, and
+is suitable only for controlled local or aggregate analysis.
 
 ## Privacy rules
 

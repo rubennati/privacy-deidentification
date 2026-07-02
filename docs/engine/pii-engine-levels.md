@@ -211,10 +211,11 @@ stage that runs after detection**. This stage is a first-class part of the engin
   errors can be analysed — **analysis input only, not a learning system.**
 - **Delivered (dev-only, behind `ENABLE_DEV_ENGINE_SETTINGS`):** a per-entity "correct"/issue verdict
   with optional comment, appended to `document-data/{id}/feedback/pii_feedback.jsonl`; on load, the
-  latest verdict per entity key (type+start+end+recognizer) is restored and the card locks. The
-  structured fingerprint excludes document/OCR/entity text, but optional comments or opaque fields
-  can contain sensitive input; the file therefore remains inside the protected document-data
-  boundary. It never mutates `pii_result` and applies no rules. See
+  latest verdict per entity key (type+start+end+recognizer) is restored and the card locks. Writes
+  are accepted only for entities present in the referenced `pii_result`; the artifact supplies the
+  stored score. The structured fingerprint excludes document/OCR/entity text, `text_hash` is limited
+  to a SHA-256 digest, and comments must not contain copied document text or raw PII. The file remains
+  inside the protected document-data boundary. It never mutates `pii_result` and applies no rules. See
   [`review-feedback-levels.md`](review-feedback-levels.md#level-5--per-entity-dev-feedback-capture---partial--dev-only-current-frontier).
 - **Why partial:** production stays gated off; this is the analysis side-channel, not the binding
   L13 review overlay.

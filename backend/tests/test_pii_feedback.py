@@ -150,6 +150,20 @@ def test_feedback_rejected_when_gate_disabled(
     assert not _feedback_file(document_data_dir, document_id).exists()
 
 
+def test_feedback_gate_is_checked_before_document_or_artifact_access(
+    client: TestClient, document_data_dir: Path
+) -> None:
+    document_id = "0" * 32
+
+    response = client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=_positive_payload("f" * 32),
+    )
+
+    assert response.status_code == 403
+    assert not (document_data_dir / document_id).exists()
+
+
 def test_feedback_recorded_when_gate_enabled(
     gate_on_client: TestClient, gate_on_settings: Settings, document_data_dir: Path
 ) -> None:
@@ -177,6 +191,107 @@ def test_feedback_recorded_when_gate_enabled(
     assert entry["schema_version"] == "1"
     assert entry["feedback"] == {"verdict": "positive", "issue_type": "correct", "comment": None}
     assert entry["entity"]["type"] == "LOCATION"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("type", "PERSON"),
+        ("start", 1),
+        ("end", 3),
+        ("recognizer", "ManipulatedRecognizer"),
+    ],
+)
+def test_manipulated_entity_reference_is_rejected_without_storage(
+    gate_on_client: TestClient,
+    gate_on_settings: Settings,
+    document_data_dir: Path,
+    field: str,
+    value: object,
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    payload = _positive_payload(artifact.id)
+    entity = payload["entity"]
+    assert isinstance(entity, dict)
+    entity[field] = value
+
+    response = gate_on_client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Feedback entity reference does not match any entity in the referenced PII artifact."
+    )
+    assert not _feedback_file(document_data_dir, document_id).exists()
+
+
+def test_feedback_uses_artifact_score_instead_of_client_score(
+    gate_on_client: TestClient, gate_on_settings: Settings, document_data_dir: Path
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    payload = _positive_payload(artifact.id)
+    entity = payload["entity"]
+    assert isinstance(entity, dict)
+    entity["score"] = 0.1
+
+    response = gate_on_client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=payload,
+    )
+
+    assert response.status_code == 201
+    entry = json.loads(
+        _feedback_file(document_data_dir, document_id).read_text("utf-8").splitlines()[0]
+    )
+    assert entry["entity"]["score"] == 0.9
+
+
+def test_raw_text_like_text_hash_is_rejected(
+    gate_on_client: TestClient,
+    gate_on_settings: Settings,
+    document_data_dir: Path,
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    payload = _positive_payload(artifact.id)
+    entity = payload["entity"]
+    assert isinstance(entity, dict)
+    entity["text_hash"] = "Wien"
+
+    response = gate_on_client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert not _feedback_file(document_data_dir, document_id).exists()
+
+
+def test_sha256_text_hash_is_accepted(
+    gate_on_client: TestClient, gate_on_settings: Settings, document_data_dir: Path
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    payload = _positive_payload(artifact.id)
+    entity = payload["entity"]
+    assert isinstance(entity, dict)
+    digest = "a" * 64
+    entity["text_hash"] = digest
+
+    response = gate_on_client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=payload,
+    )
+
+    assert response.status_code == 201
+    entry = json.loads(
+        _feedback_file(document_data_dir, document_id).read_text("utf-8").splitlines()[0]
+    )
+    assert entry["entity"]["text_hash"] == digest
 
 
 def test_feedback_appends_without_overwriting(
@@ -232,7 +347,7 @@ def test_feedback_entry_contains_engine_settings(
     assert entry["engine_settings"]["score_threshold"] == 0.5
 
 
-def test_legacy_artifact_without_engine_settings_still_records(
+def test_legacy_artifact_without_optional_metadata_still_records(
     gate_on_client: TestClient, gate_on_settings: Settings, document_data_dir: Path
 ) -> None:
     document_id = _upload_document(gate_on_client)
@@ -299,6 +414,7 @@ def test_no_document_or_entity_text_is_stored(
 
     raw = _feedback_file(document_data_dir, document_id).read_text("utf-8")
     assert _DOC_TEXT_MARKER not in raw
+    assert '"Wien"' not in raw
     entry = json.loads(raw.splitlines()[0])
     # The persisted entity fingerprint carries offsets/type/recognizer only — never raw text.
     assert "text" not in entry["entity"]
@@ -379,33 +495,40 @@ def test_summary_collapses_history_to_latest_status_per_entity(
             "feedback": {"verdict": "issue", "issue_type": "wrong_type", "comment": "x"},
         },
     )
-    # A distinct entity key stays separate.
-    gate_on_client.post(
-        url,
-        json={
-            "artifact_id": artifact.id,
-            "entity": {
-                "type": "PERSON",
-                "start": 10,
-                "end": 20,
-                "score": 0.7,
-                "recognizer": "SpacyRecognizer",
-            },
-            "feedback": {"verdict": "positive", "issue_type": "correct"},
-        },
-    )
-
     response = gate_on_client.get(url, params={"artifact_id": artifact.id})
     assert response.status_code == 200
     items = {
         (i["type"], i["start"], i["end"], i["recognizer"]): i
         for i in response.json()["items"]
     }
-    assert len(items) == 2
+    assert len(items) == 1
     location = items[("LOCATION", 0, 4, "FakeRecognizer")]
     assert location["verdict"] == "issue"
     assert location["issue_type"] == "wrong_type"
-    assert items[("PERSON", 10, 20, "SpacyRecognizer")]["verdict"] == "positive"
+
+
+def test_summary_ignores_legacy_feedback_for_non_artifact_entity(
+    gate_on_client: TestClient,
+    gate_on_settings: Settings,
+    document_data_dir: Path,
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    url = f"/api/documents/{document_id}/pii/feedback"
+    assert gate_on_client.post(url, json=_positive_payload(artifact.id)).status_code == 201
+
+    feedback_file = _feedback_file(document_data_dir, document_id)
+    invalid_entry = json.loads(feedback_file.read_text("utf-8").splitlines()[0])
+    invalid_entry["entity"]["start"] = 10
+    invalid_entry["entity"]["end"] = 14
+    with feedback_file.open("a", encoding="utf-8") as feedback_log:
+        feedback_log.write(json.dumps(invalid_entry) + "\n")
+
+    response = gate_on_client.get(url, params={"artifact_id": artifact.id})
+
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+    assert response.json()["items"][0]["start"] == 0
 
 
 def test_summary_returns_no_comment_or_raw_text(

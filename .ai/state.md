@@ -40,10 +40,12 @@ See [`docs/engine/`](../docs/engine/README.md),
 
 - When `ENABLE_DEV_ENGINE_SETTINGS=true`, per-entity feedback is appended locally to
   `volumes/document-data/<document_id>/feedback/pii_feedback.jsonl`.
+- New writes must match an entity in the referenced `pii_result` by type, offsets, and recognizer;
+  summaries ignore historical lines that do not match that artifact.
 - This is a gated analysis side-channel, not a learning system and not the binding review artifact.
-- The structured fingerprint excludes raw document/entity text. Optional comments and future opaque
-  fields can still contain sensitive input, so the file belongs inside the protected document-data
-  boundary and must not be described as privacy-safe by construction.
+- The structured fingerprint excludes raw document/entity text and optional `text_hash` is limited
+  to a SHA-256 digest. Comments are short reviewer notes and must not contain copied document text,
+  OCR text, or raw PII; the file still belongs inside the protected document-data boundary.
 
 ## Governance checkpoint
 
@@ -72,10 +74,12 @@ source-of-truth texts**: every layer maps back to canonical/source; `pii_input_t
 canonical only with a tested mapping. The readable/layout/PII-input layers are additive and never a
 standalone PII input.
 
-1. Fix feedback integrity as a focused bugfix (finish dev-only PII L10 / Review L5 operational use).
-2. Advance OCR/Text to **L6 — OCR confidence**.
-3. Advance OCR/Text to **L7 — `quality_report`**.
-4. Then interleave PII **L11 grouping** / **L12 overlap** per the plan's cadence.
+Feedback integrity hardening completes the planned trust-boundary bugfix without advancing an engine
+level. The checkpoint still leaves OCR/Text at L5, PII L10 partial, and Redaction L0; the next plan is:
+
+1. Advance OCR/Text to **L6 — OCR confidence**.
+2. Advance OCR/Text to **L7 — `quality_report`**.
+3. Then interleave PII **L11 grouping** / **L12 overlap** per the plan's cadence.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

@@ -54,6 +54,7 @@ describe("PiiEntityCard header controls", () => {
     expect(html.slice(0, headerEnd)).toContain("90 %");
     expect(html.slice(0, headerEnd)).toContain("Passt");
     expect(html).toContain("Feedback speichern");
+    expect(html).toContain("Do not paste document text or raw PII into comments.");
   });
 
   it("renders a clickable offset link", () => {
