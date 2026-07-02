@@ -47,10 +47,12 @@ handling, export logic and secure integration. See [`AGENTS.md`](AGENTS.md).
 
 The core of the project is the engine: local OCR/Text, local PII/sensitive-data, review/feedback,
 and optional (later) local AI assist. [`docs/engine/`](docs/engine/README.md) defines what each
-sub-engine should do level 0→10, the artifacts and metrics, the tool strategy, the target
-architecture (including the database and optional-local-AI questions), and the reframed roadmap.
-See [ADR-0011](docs/adr/0011-engine-capability-model.md). Current standing (summary): OCR/Text at
-Level 3 (Level 4 partial), PII at Level 1 (Level 4 foundation), review at Level 1.
+central engine should do on a **0–19 maturity scale**, the artifacts and metrics, the runtime
+settings, the tool strategy, the target architecture (including the database and optional-local-AI
+questions), and the roadmap. See [ADR-0011](docs/adr/0011-engine-capability-model.md) and
+[ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md). Current standing (summary): OCR/Text
+**L5**, PII **L9** (L10 dev-only feedback capture partial), Review **L2** (dev-only through L5),
+Benchmark **L8**, Redaction **L0**.
 
 ## Architecture
 

@@ -1,5 +1,10 @@
 # Quality Metrics
 
+> **Level scale (0–19).** Per-engine capability levels now use the **0–19 maturity scale**
+> ([engine README](README.md#maturity-scale)). Some level citations below may still use the
+> legacy **0–10** numbering — translate with the *Legacy scale mapping* table at the bottom of the
+> relevant engine document. Full renumbering here is a tracked follow-up.
+
 How engine quality is measured. Each metric lists what it means and whether it is **covered today**
 by `make benchmark-private` (the private local benchmark runner, `scripts/benchmark/`) or still
 **missing**. Numbers only ever leave the machine as aggregates — `privacy_guard.py` blocks any

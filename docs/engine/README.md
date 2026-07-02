@@ -33,9 +33,12 @@ right, and making both human-reviewable, comes first.
 
 | Document | Question it answers |
 | --- | --- |
-| [`ocr-engine-levels.md`](ocr-engine-levels.md) | What should the OCR/Text engine do at level 0…10? |
-| [`pii-engine-levels.md`](pii-engine-levels.md) | What should the PII/sensitive-data engine do at level 0…10? |
-| [`review-feedback-levels.md`](review-feedback-levels.md) | What should the review/human-in-the-loop engine do at level 0…10? |
+| [`ocr-engine-levels.md`](ocr-engine-levels.md) | What should the OCR/Text engine do at level 0…19? |
+| [`pii-engine-levels.md`](pii-engine-levels.md) | What should the PII/sensitive-data engine do at level 0…19? |
+| [`review-feedback-levels.md`](review-feedback-levels.md) | What should the review/human-in-the-loop engine do at level 0…19? |
+| [`benchmark-engine-levels.md`](benchmark-engine-levels.md) | What should the benchmark/regression engine do at level 0…19? |
+| [`redaction-engine-levels.md`](redaction-engine-levels.md) | What should the redaction/de-identification engine do at level 0…19? |
+| [`engine-settings.md`](engine-settings.md) | How do runtime settings map to engine maturity, artifacts, and dev/prod sourcing? |
 | [`engine-artifacts.md`](engine-artifacts.md) | Which artifacts flow between the engines, and their privacy rules? |
 | [`quality-metrics.md`](quality-metrics.md) | Which metrics measure quality, and which are measured today? |
 | [`tool-strategy.md`](tool-strategy.md) | Which tools are core, which are spikes, which are deferred? |
@@ -43,7 +46,8 @@ right, and making both human-reviewable, comes first.
 | [`roadmap.md`](roadmap.md) | Which PRs come next, in which order, with scope and acceptance criteria. |
 
 The architecture decision behind this model is
-[ADR-0011](../adr/0011-engine-capability-model.md).
+[ADR-0011](../adr/0011-engine-capability-model.md); the migration to the 0–19 maturity scale is
+[ADR-0016](../adr/0016-engine-maturity-levels-0-19.md).
 
 ## Guiding principles (carried over, not invented here)
 
@@ -58,24 +62,46 @@ The architecture decision behind this model is
 - **Never silently trust broken input.** A broken/encoded PDF text layer is routed to OCR, not
   used blindly; a missing OCR runtime fails loudly (`503`) instead of returning garbage.
 
-## Levels at a glance
+## Maturity scale
 
-Each engine has its own 0–10 ladder (details in the linked documents). Level numbers are **not**
-comparable across engines — OCR L5 and PII L5 are unrelated milestones.
+Every central engine is planned on a **0–19 maturity scale**. The previous 0–10 (and informal 0–14)
+ladders were too coarse to plan finer PR steps against, so OCR/Text, PII/Sensitive-Data,
+Review/Human-Feedback, Benchmark/Regression, and Redaction are each defined and assessed on 0–19.
 
-## Current level snapshot
+- Level numbers are **cumulative** within an engine (each level assumes the ones below it) and
+  **not** comparable across engines — OCR L9 and PII L9 are unrelated milestones.
+- Each level states a name, description, testable acceptance criteria, and a clear boundary to the
+  next level, so a PR can declare exactly which level it advances.
+- Every per-engine document ends with a **legacy 0–10 → 0–19 mapping table** so older citations can
+  be translated.
 
-Assessed against the local `main` at the time of writing (through PR #7, the private benchmark
-runner) and against one local private benchmark run (12-document corpus; aggregate figures only,
-see [`quality-metrics.md`](quality-metrics.md)).
+New engine PRs should state which level they advance and must not mix the old 0–10/0–14 numbering
+without a migration note. The decision is recorded in
+[ADR-0016](../adr/0016-engine-maturity-levels-0-19.md) (which extends
+[ADR-0011](../adr/0011-engine-capability-model.md)).
 
-| Area | Current level | Basis | Next level | Next PR |
-| --- | --- | --- | --- | --- |
-| OCR / Text engine | **L3 reached, L4 partial** | Per-page text-layer quality gate + page-level OCR routing shipped; quality *verdicts* + routing metrics exist, but no CER/WER/confidence/runtime metrics | L4 → L5 | Engine-2 |
-| PII / sensitive-data engine | **L3 reached, L4 partial** | AT/DE + insurance/legal recognizers and named coverage profiles run; address and candidate validation remain open | L5 | Engine-5 |
-| Review / feedback engine | **L1 reached** | Detail page lists candidates and overlays lineage-safe highlights; no persisted human decisions | L2 | Engine-6 |
-| Benchmark / regression | **L2 (reproducible metrics)** | `make benchmark-private` produces routing + PII P/R/F1 from existing artifacts; single snapshot, no trend/CI gate | L3 (trend + CI hook) | Engine-1 (done) → later |
-| Storage / core | **Sufficient for MVP** | Separated upload/document-data roots, immutable artifacts, validated deletes | — | — |
-| Database | **Not implemented; architecture open** | Everything file-based today | Decide SQLite-first index | Engine-7 (spike) |
+> **Scale note for cross-cutting docs.** [`engine-artifacts.md`](engine-artifacts.md),
+> [`quality-metrics.md`](quality-metrics.md), [`tool-strategy.md`](tool-strategy.md),
+> [`target-architecture.md`](target-architecture.md), and [`roadmap.md`](roadmap.md) — plus the
+> roadmap's `Engine-N` PR ids — may still cite the legacy per-engine 0–10 level numbers. Translate
+> them with the mapping table at the bottom of the relevant engine document. Full renumbering of
+> those cross-cutting citations is a tracked follow-up.
 
-See [`roadmap.md`](roadmap.md) for the full per-area justification and the ordered PR plan.
+## Current level snapshot (0–19)
+
+Assessed against the local `dev` branch at the time of writing and against one local private
+benchmark run (12-document corpus; aggregate figures only, see
+[`quality-metrics.md`](quality-metrics.md)). Legacy 0–10 equivalents are given in parentheses.
+
+| Area | Current level (0–19) | Basis | Next level |
+| --- | --- | --- | --- |
+| OCR / Text engine | **L5 done** *(legacy L3/L4-partial)* | text extraction, lineage, OCR runtime, text-layer quality gate, per-page routing shipped; no OCR confidence or `quality_report` yet | L6 confidence → L7 `quality_report` (Engine-2) |
+| PII / sensitive-data engine | **L9 done, L10 partial** *(legacy L5-done + address/dev-settings)* | structured + AT/DE + domain recognizers, profiles, benchmark, candidate validation, context hardening, address/contact-line, reproducible `engine_settings`; **dev-only** feedback capture landed | L10 human feedback (beyond dev) → L11 grouping → L12 overlap (Engine-6) |
+| Review / human-feedback engine | **L2 done; L3–L5 dev-only** *(legacy L1)* | read-only review + lineage-safe highlights (prod); clickable offsets, legend, dev engine-settings override, per-entity dev feedback capture (behind `ENABLE_DEV_ENGINE_SETTINGS`) | L6 grouping → L8 `review_result` overlay (Engine-6) |
+| Benchmark / regression | **L8 done** *(legacy L2)* | matching, routing correctness, PII P/R/F1, privacy guard, determinism, validation counts | L9 per-profile in one run → L10 OCR confidence columns |
+| Redaction / de-identification | **L0** *(by design)* | detection-only; blocked on PII L17–L18, Review L8–L9, OCR L10/L15 | L1 requirements/threat model (Engine-9, deliberately last) |
+| Storage / core | **Sufficient for MVP** | separated roots, immutable artifacts, validated deletes | — |
+| Database | **Not implemented; architecture open** | everything file-based today | decide SQLite-first index (Engine-7 spike) |
+
+See [`roadmap.md`](roadmap.md) for the full per-area justification and the ordered PR plan, and each
+engine's own document for the full 0–19 ladder.
