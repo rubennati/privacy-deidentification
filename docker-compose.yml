@@ -53,8 +53,11 @@ services:
     deploy:
       resources:
         limits:
-          # Slim default is small; the OCR/PII runtimes need more headroom (PaddlePaddle/spaCy).
-          # The full/ocr/pii make targets raise BACKEND_MEMORY_LIMIT accordingly.
+          # Slim default is intentionally small. The OCR/PII runtimes (PaddlePaddle/spaCy) need much
+          # more headroom: running the OCR-enabled image under this 512M default OOM-kills the
+          # backend while PaddleOCR loads/runs, which nginx then surfaces as a 502 Bad Gateway.
+          # `make up-ocr`/`make up-full` raise BACKEND_MEMORY_LIMIT to 2g; when running
+          # `docker compose` directly with INSTALL_OCR=true, set BACKEND_MEMORY_LIMIT=2g yourself.
           cpus: "${BACKEND_CPU_LIMIT:-1.0}"
           memory: ${BACKEND_MEMORY_LIMIT:-512M}
     restart: unless-stopped
