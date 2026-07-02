@@ -46,5 +46,9 @@ maps them into a new `address_contact_types` group.
   contain a `PHONE_NUMBER`); engine-level overlap resolution remains Engine-6 work.
 - The conservative shapes deliberately miss exotic street names without a labelled line and
   contact lines without a recognisable label — recall on these labels is bounded by design.
+- `ADDRESS` accepts a known residual false-positive risk: street-shaped lines outside the
+  ground-truth candidate set (e.g. the same address repeated in footers) also match — 10 FPs /
+  precision 0.64 on the current corpus. Accepted for this PR; de-duplication belongs to
+  engine-level entity/overlap resolution (Engine-6).
 - Remaining unsupported labels (`BIRTH_DATE`, `BIRTH_PLACE`, `FAMILY_NAME`, `GIVEN_NAME`) are out
   of scope here.
