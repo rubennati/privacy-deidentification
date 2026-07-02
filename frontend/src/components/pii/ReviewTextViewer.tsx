@@ -28,6 +28,7 @@ export function ReviewTextViewer({
 
   return (
     <section className="min-w-0" aria-labelledby="text-viewer-heading">
+      {/* Toolbar: title + display-mode toggle, kept compact directly above the paper page. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="text-viewer-heading" className="font-semibold text-ink">
           Extrahierter Text
@@ -72,20 +73,26 @@ export function ReviewTextViewer({
         </p>
       )}
 
-      <div className="mt-3 max-h-[70vh] overflow-auto rounded-xl border border-card-border bg-dropzone p-4 sm:p-5">
-        {activeMode === "layout" ? (
-          layoutText ? (
-            <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-ink">
-              {layoutText}
-            </pre>
+      {/* Workspace: a subtle desk-like surface. The scroll lives here (unchanged from before) so
+          jump-to-entity keeps scrolling the highlighted mark into view. */}
+      <div className="mt-3 max-h-[70vh] overflow-auto rounded-xl bg-dropzone p-4 sm:p-6">
+        {/* Paper: a centered A4-width sheet so the review reads like a document page, not a raw
+            debug panel. It never spans the full workspace width. */}
+        <div className="mx-auto max-w-[210mm] rounded-sm border border-card-border bg-card px-6 py-8 shadow-[0_1px_2px_rgba(17,24,39,0.06),0_12px_32px_rgba(17,24,39,0.08)] sm:px-10 sm:py-12">
+          {activeMode === "layout" ? (
+            layoutText ? (
+              <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-ink">
+                {layoutText}
+              </pre>
+            ) : (
+              <p className="text-sm text-muted">Der Layout-Text ist leer.</p>
+            )
+          ) : canonicalText ? (
+            <PiiTextViewer text={canonicalText} entities={entities} showEntityMeta={showEntityMeta} />
           ) : (
-            <p className="text-sm text-muted">Der Layout-Text ist leer.</p>
-          )
-        ) : canonicalText ? (
-          <PiiTextViewer text={canonicalText} entities={entities} showEntityMeta={showEntityMeta} />
-        ) : (
-          <p className="text-sm text-muted">Der extrahierte Text ist leer.</p>
-        )}
+            <p className="text-sm text-muted">Der extrahierte Text ist leer.</p>
+          )}
+        </div>
       </div>
     </section>
   );
