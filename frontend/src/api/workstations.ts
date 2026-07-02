@@ -230,14 +230,34 @@ async function requestArtifact<T>(
 }
 
 async function throwApiError(response: Response): Promise<never> {
-  let detail = "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut.";
-  let correlationId: string | null = null;
+  const { detail, correlationId } = await readErrorBody(response);
+  throw new WorkstationApiError(detail, response.status, correlationId);
+}
+
+const GENERIC_ERROR_DETAIL = "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut.";
+
+/**
+ * Reads the backend's JSON error envelope (`{detail, correlation_id}`) when the response actually
+ * carries JSON. A non-JSON body — e.g. an nginx HTML `502`/`504` produced when the backend is
+ * unreachable or was killed mid-request — is never surfaced: we return a safe generic message and
+ * let the caller map the preserved HTTP status to a station-specific message. This guarantees raw
+ * HTML/error text is never shown to the user (see toStationError for the 502/503/504 mapping).
+ */
+async function readErrorBody(
+  response: Response,
+): Promise<{ detail: string; correlationId: string | null }> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return { detail: GENERIC_ERROR_DETAIL, correlationId: null };
+  }
   try {
     const data = (await response.json()) as ApiError;
-    detail = data.detail ?? detail;
-    correlationId = data.correlation_id ?? null;
+    const detail =
+      typeof data.detail === "string" && data.detail !== "" ? data.detail : GENERIC_ERROR_DETAIL;
+    const correlationId = typeof data.correlation_id === "string" ? data.correlation_id : null;
+    return { detail, correlationId };
   } catch {
-    // Keep the safe fallback; response bodies must not be assumed to be JSON.
+    // A JSON content-type with an unparseable body still must not leak; keep the safe fallback.
+    return { detail: GENERIC_ERROR_DETAIL, correlationId: null };
   }
-  throw new WorkstationApiError(detail, response.status, correlationId);
 }

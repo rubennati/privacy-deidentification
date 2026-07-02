@@ -39,14 +39,13 @@ import {
   runDocumentAnalysis,
   type AnalysisStep,
 } from "../lib/documentAnalysis";
+import { toStationError, type StationName } from "../lib/stationErrors";
 import { formatBytes, formatTimestamp } from "../lib/format";
 
 interface UiError {
   message: string;
   correlationId: string | null;
 }
-
-type StationName = "audit" | "ocr" | "pii";
 
 // A new run never deletes existing artifacts — it appends a new immutable one — so
 // "erneut erstellen" (create again) is the correct verb, not "Reset".
@@ -501,29 +500,4 @@ function toDocumentError(error: unknown): UiError {
     };
   }
   return { message: "Dokument konnte nicht geladen werden.", correlationId: null };
-}
-
-function toStationError(error: unknown, station: StationName): UiError {
-  if (!(error instanceof WorkstationApiError)) {
-    return { message: "Ein unerwarteter Fehler ist aufgetreten.", correlationId: null };
-  }
-  const message =
-    error.status === 0
-      ? "Keine Verbindung zum Server."
-      : error.status === 409
-        ? station === "ocr"
-          ? "Zuerst ein gültiges Audit erstellen."
-          : station === "pii"
-            ? "Zuerst OCR/Text erzeugen."
-            : "Das Original-Artifact ist nicht verwendbar."
-        : error.status === 403
-          ? "Dev Engine Settings sind auf diesem Server deaktiviert."
-        : error.status === 422
-          ? station === "pii"
-            ? "Der Text konnte nicht verarbeitet werden."
-            : "Das Dokument konnte nicht verarbeitet werden."
-          : error.status === 503
-            ? "Die benötigte Runtime oder das Modell ist nicht verfügbar."
-            : error.message;
-  return { message, correlationId: error.correlationId };
 }

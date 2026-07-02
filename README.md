@@ -323,6 +323,13 @@ packages are missing.
   stable CPU path.
 - **Speed.** OCR is synchronous by design (no queue). CPU OCR of a multi-page scan can take a few
   minutes; the nginx `/api/` proxy timeout is raised to 600 s so browser requests do not 504.
+- **Memory (502 during OCR).** PaddleOCR runs in-process in the backend and needs headroom to load
+  models and run inference. `make up-ocr`/`make up-full` set `BACKEND_MEMORY_LIMIT=2g` for this.
+  Running the OCR-enabled image under the slim 512M default (e.g. plain `docker compose up` or
+  `make bf` with `INSTALL_OCR=true` in `.env`) OOM-kills the backend mid-OCR, which the browser
+  sees as an nginx **502 Bad Gateway**. Fix: use `make up-ocr`/`make up-full`, or set
+  `BACKEND_MEMORY_LIMIT=2g`. The user-view analysis then shows an OCR-specific error instead of a
+  generic one.
 - **Apple Silicon / ARM.** PaddlePaddle's published wheels determine which CPU architectures can
   build the OCR image. It builds and runs natively on `linux/amd64`; on ARM hosts (Apple Silicon)
   an `amd64` build/emulation may be required and has not been verified here.
