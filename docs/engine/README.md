@@ -101,7 +101,7 @@ benchmark run (12-document corpus; aggregate figures only, see
 
 | Area | Current level (0–19) | Basis | Next level |
 | --- | --- | --- | --- |
-| OCR / Text engine | **L7 done** | text extraction, lineage, OCR runtime, quality routing, OCR confidence, and lineage-bound metrics-only `quality_report` shipped | L8 readable text → complete L9 layout-aware text |
+| OCR / Text engine | **L8 done** | text extraction, lineage, OCR runtime, quality routing, OCR confidence, lineage-bound metrics-only `quality_report`, and additive `readable_text` shipped | complete L9 layout-aware text → PII L11 grouping |
 | PII / sensitive-data engine | **L9 done, L10 partial** | structured + AT/DE + domain recognizers, profiles, benchmark, candidate validation, context hardening, address/contact-line, reproducible `engine_settings`; **dev-only** feedback capture landed | L10 feedback hardening → L11 grouping → L12 overlap |
 | Review / human-feedback engine | **L2 done; L3–L5 dev-only** | read-only review + lineage-safe highlights (prod); clickable offsets, legend, dev engine-settings override, per-entity dev feedback capture (behind `ENABLE_DEV_ENGINE_SETTINGS`) | L6 grouping → L8 `review_result` overlay |
 | Benchmark / regression | **L8 done; L10 slice delivered out of order** | matching, routing correctness, PII P/R/F1, privacy guard, determinism, validation counts, safe OCR confidence/coverage columns | L9 per-profile in one run |

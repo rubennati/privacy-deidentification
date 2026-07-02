@@ -163,6 +163,10 @@ class TextContent(BaseModel):
     pages: list[TextPageResult] = Field(default_factory=list)
     tool_versions: dict[str, str] = Field(default_factory=dict)
     flags: list[str] = Field(default_factory=list)
+    # Additive, optional OCR L8 readable rendering. It normalizes whitespace, paragraph joins, and
+    # simple line-break hyphenation for humans, but it is never the canonical text, never the PII
+    # input, and carries no offset/lineage guarantee. Legacy artifacts may omit it.
+    readable_text: str | None = Field(default=None)
     # Additive, optional human-readable layout reconstruction (OCR L9). It never feeds PII and is
     # not the canonical text: ``text`` above stays the offset-stable source of truth. ``None`` when
     # no layout was reconstructed (e.g. DOCX, image, or all-OCR documents), so legacy artifacts

@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L7** | embedded text, immutable lineage, local OCR runtime, quality routing, OCR confidence, lineage-bound metrics-only `quality_report` | L8 readable text, then complete L9 layout-aware text |
+| OCR / Text | **L8** | embedded text, immutable lineage, local OCR runtime, quality routing, OCR confidence, lineage-bound metrics-only `quality_report`, additive `readable_text` | complete L9 layout-aware text, then PII L11 grouping |
 | PII / Sensitive-Data | **L9; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture | L11 entity grouping, then L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only** | read-only review and lineage-safe highlights; gated review aids, run settings, and per-entity feedback capture | L6 grouped occurrences; L8 `review_result` later |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -17,8 +17,9 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L7: upload, canonical text extraction, lineage, OCR runtime, quality routing/fallback,
-  additive OCR confidence, and an immutable metrics-only `quality_report` for every successful run.
+- OCR L0–L8: upload, canonical text extraction, lineage, OCR runtime, quality routing/fallback,
+  additive OCR confidence, an immutable metrics-only `quality_report` for every successful run, and
+  a separate additive `readable_text` rendering.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -81,11 +82,17 @@ documents.
 
 ## Later engine work
 
-### OCR L8 — human-readable text
+### OCR L8 — human-readable text — delivered
 
-Create a separate readable `layout_text_result` seed while keeping the current `text_result` as the
-canonical `best_text_result`. PII offsets continue to reference only canonical text. Layout order,
-geometry, and tables remain OCR L9–L11.
+`readable_text` now exists as an additive, deterministic human-readable rendering on `text_result`
+while canonical `best_text_result` stays byte-stable. PII offsets continue to reference only
+canonical text.
+
+### OCR L9 — complete layout-aware text
+
+Extend beyond the delivered additive slices (`layout_text_result` for PDF text layers and internal
+`pii_input_text` v1) toward fuller layout-aware reading order and block structure. Geometry,
+tables, and lineage remain later levels.
 
 ### PII L11 — entity grouping
 

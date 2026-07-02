@@ -188,6 +188,7 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
             "content": {
                 "source": "paddleocr",
                 "text": "raw recognized value",
+                "readable_text": "raw recognized value",
                 "text_char_count": 20,
                 "pages": [
                     {
@@ -219,12 +220,13 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
     assert page.ocr_line_confidences == (OcrLineConfidenceSummary(1, 0.85, 20),)
     assert "text" not in page.__dataclass_fields__
     assert "text" not in OcrLineConfidenceSummary.__dataclass_fields__
+    assert "readable_text" not in corpus[0].text.__dataclass_fields__
     quality_report = corpus[0].quality_report
     assert quality_report is not None
     assert quality_report.input_text_artifact_id == "t1"
     assert quality_report.ocr_page_confidence_mean == 0.85
     assert quality_report.final_word_count == 3
-    forbidden_fields = {"text", "page_text", "ocr_text", "entity_text"}
+    forbidden_fields = {"text", "readable_text", "page_text", "ocr_text", "entity_text"}
     assert forbidden_fields.isdisjoint(QualityReportSummary.__dataclass_fields__)
 
 

@@ -69,6 +69,9 @@ export interface TextArtifact {
     pages: TextPageResult[];
     tool_versions: Record<string, string>;
     flags: string[];
+    // Optional OCR L8 readable rendering. Legacy artifacts omit it; canonical `text` stays the
+    // only offset-bearing text and the active PII input.
+    readable_text?: string | null;
     // Optional display-only reconstruction. Legacy artifacts omit it; PII offsets stay on `text`.
     layout_text_result?: string | null;
   };

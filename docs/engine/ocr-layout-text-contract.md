@@ -6,9 +6,9 @@ tied together by a single **lineage map**, so that a detection-optimised interna
 human-readable/layout-preserving renderings can evolve without ever endangering the offset stability
 that PII and Review depend on, and without creating a second, unconnected source of truth.
 
-This is a **planning / contract document**: it defines names, invariants, and representation rules.
-It changes no code, no API, no schema, and no dependency. Implementation happens later, in its own
-PR, and must satisfy the invariants below.
+This is the **contract document** for the OCR/Text multi-layer output model. It defines names,
+invariants, and representation rules that implementation must satisfy; parts of the contract are
+now delivered incrementally, while later geometry/lineage work remains open.
 
 ## Purpose
 
@@ -201,6 +201,11 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
 
 ## Implementation status (v1)
 
+- **Delivered:** `readable_text` as an **additive optional field on the existing `text_result`**
+  (Option A; no separate artifact in v1). Produced for any non-empty canonical text with a small,
+  deterministic normalization pass: line-ending cleanup, trailing-space removal, conservative
+  paragraph joining, simple line-break de-hyphenation, and visible page boundaries between
+  canonical pages. It never feeds PII and carries no offset guarantee.
 - **Delivered:** `layout_text_result` as an **additive optional field on the existing `text_result`**
   (Option A — simpler and lower-risk than a separate artifact). Produced for **PDF text-layer pages**
   via pypdf's `extract_text(extraction_mode="layout")` (no new dependency). OCR pages are marked "not
@@ -225,8 +230,8 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   canonical view to a display-only monospaced layout view, falling back to canonical text when the
   field is absent. PII highlights and offset links remain bound to canonical text only; layout text
   is never highlighted. `pii_input_text` has no UI in v1 (internal/experimental).
-- **Not in v1:** `readable_text`, `text_lineage_map`, block/line geometry, a general table
-  detector, a structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
+- **Not in v1:** `text_lineage_map`, block/line geometry, a general table detector, a structured
+  `pii_input_blocks` schema, semantic role labelling (contractor vs.
   customer) for `pii_input_text` blocks, and active PII use of `pii_input_text`.
 
 ## Future implementation direction

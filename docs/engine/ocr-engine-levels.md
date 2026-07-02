@@ -4,21 +4,23 @@ The OCR/Text engine turns an uploaded document into the **best possible machine-
 preserving structure as far as reasonably possible, so the PII engine and human reviewers work on
 trustworthy input. It is the first sub-engine in the [north star](README.md#north-star).
 
-Two output notions run through the levels and are defined in [`engine-artifacts.md`](engine-artifacts.md):
+Three output notions run through the levels and are defined in [`engine-artifacts.md`](engine-artifacts.md):
 
 - **`best_text_result`** — the *canonical* text used by PII and review. Correctness first;
   reading order and layout are secondary.
-- **`layout_text_result`** — a *human-readable* rendering that preserves paragraphs, tables, and
-  reading order. A superset concern that appears from L8 onward.
+- **`readable_text`** — a *human-readable* normalization that keeps the same content while making
+  prose easier to read.
+- **`layout_text_result`** — a layout-preserving rendering concerned with visual structure and
+  reading order.
 
 Level numbers are cumulative: each level assumes the ones below it. They are **not** comparable to
 the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 maturity scale**
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L7 reached (L0–L7 done); L8 is next.** Each successful OCR/Text run now
-persists a separate, metrics-only `quality_report` linked to the exact original, audit, and text
-artifacts; canonical text and routing remain unchanged.
+**Current standing:** **L8 reached (L0–L8 done); L9 is next.** Each successful OCR/Text run now
+persists a separate additive `readable_text` beside the canonical text; `quality_report`, routing,
+and PII input remain unchanged.
 
 ---
 
@@ -136,7 +138,7 @@ artifacts; canonical text and routing remain unchanged.
 - **Boundary to L8:** L0–L7 concern the *canonical* text and its quality; L8 introduces a separate
   *human-readable* rendering.
 
-## Level 8 — Human-readable text output  ⛔ *open*
+## Level 8 — Human-readable text output  ✅ *done*
 
 - **Description:** produce text a human can actually *read* — stable paragraphs, sensible line
   breaks, de-hyphenation — distinct from the raw canonical string.
@@ -147,6 +149,11 @@ artifacts; canonical text and routing remain unchanged.
   fixed by the [OCR/Layout text contract](ocr-layout-text-contract.md).
 - **Acceptance:** a readable rendering exists alongside a byte-stable canonical text; PII offsets
   still reference the canonical text.
+- **Delivered:** `readable_text` is an additive optional field on `text_result`. It deterministically
+  normalizes line endings, trims trailing whitespace, joins paragraph lines conservatively, repairs
+  simple line-break hyphenation, and inserts visible page markers between canonical pages. Empty
+  text degrades to `null`; DOCX/image/OCR/mixed-PDF runs participate without changing canonical text
+  or page text.
 - **Boundary to L9:** L8 reflows text heuristically; L9 orders text by real block/line geometry.
 
 ## Level 9 — Layout-aware text  ⏳ *v1 (PDF text layer)*
@@ -158,8 +165,10 @@ artifacts; canonical text and routing remain unchanged.
 - **Artifacts:** `layout_text_result` with ordered, typed blocks and coordinates.
 - **Acceptance:** multi-column and header/footer pages produce human-sensible reading order; the
   canonical text remains the PII input.
-- **Status:** two additive v1 slices are delivered, both out-of-order ahead of cumulative L8
-  work, and both leave `text_result.text` byte-stable with PII still running on canonical text:
+- **Status:** two additive v1 slices are delivered out of order on top of cumulative L8, and all
+  of them leave `text_result.text` byte-stable with PII still running on canonical text:
+  - `readable_text` — an optional field on `text_result`, produced for any non-empty canonical text
+    with conservative normalization and visible page boundaries between canonical pages.
   - `layout_text_result` — an optional field on `text_result`, pypdf `extraction_mode="layout"`,
     PDF text-layer pages only; OCR/DOCX/image → `null`.
   - `pii_input_text` — a second optional field on `text_result`: an internal, experimental,
@@ -168,7 +177,7 @@ artifacts; canonical text and routing remain unchanged.
     data (`visitor_operand_before`, no new dependency). **Not** the active PII input — see
     [`ocr-layout-text-contract.md`](ocr-layout-text-contract.md).
   Typed blocks/geometry, OCR-page layout, a `text_lineage_map`, and a general table detector remain
-  open; the cumulative L8 readable rendering is now the prioritised next step.
+  open; the next cumulative priority is completion of L9 beyond the delivered slices.
 - **Boundary to L10:** L9 knows block order; L10 persists precise per-line/word coordinates as
   reusable geometry.
 
