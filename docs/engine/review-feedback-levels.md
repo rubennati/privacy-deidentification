@@ -91,11 +91,14 @@ is the L8 `review_result` model.
 - **Persisted:** append-only JSONL at `document-data/{document_id}/feedback/pii_feedback.jsonl`. Each
   line carries a timestamp, document/artifact ids, the entity fingerprint (type + offsets +
   recognizer + score), the verdict/issue_type/optional comment, the artifact's engine settings, and
-  app/schema version. On load, `GET …/pii/feedback?artifact_id=…` collapses the log to the **latest
-  verdict per entity key** (type + start + end + recognizer) and returns counts/verdicts only.
+  app/schema version. New feedback is accepted only when type, offsets, and recognizer match an
+  entity in the referenced `pii_result`; the stored score comes from that artifact. On load,
+  `GET …/pii/feedback?artifact_id=…` collapses validated lines to the **latest verdict per entity
+  key** (type + start + end + recognizer) and returns counts/verdicts only.
 - **Privacy boundary:** the structured fingerprint excludes document text, OCR full text, and raw
-  entity values. Optional comments and opaque fields such as `text_hash` can nevertheless carry
-  sensitive input, so the JSONL remains protected document data; the UI does not send `text_hash`.
+  entity values. Optional `text_hash` values must be lowercase SHA-256 digests. Comments are short
+  reviewer notes: do not copy document text, OCR text, or raw PII into them. The JSONL remains
+  protected document data.
 - **Gated:** available only when `ENABLE_DEV_ENGINE_SETTINGS=true`; with the gate off, the UI hides
   the controls and both `POST …/pii/feedback` and `GET …/pii/feedback` return `403`.
 - **Explicitly not:** a learning system. It never changes detection, never mutates the immutable
@@ -115,7 +118,8 @@ is the L8 `review_result` model.
 - Survives `docker compose down` (host bind mount), removed with the document's directory.
 - Local development/review data: **not** committed (`volumes/` is git-ignored) and never to be
   committed. Use it only for controlled local or aggregate analysis. The structured fingerprint
-  contains no document/OCR/entity text, but optional comments remain sensitive input.
+  contains no document/OCR/entity text, but optional comments remain sensitive input and must not
+  contain copied document text or raw PII.
 
 ## Level 6 — Grouped occurrences  ⛔ *open (next)*
 

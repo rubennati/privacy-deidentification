@@ -175,6 +175,9 @@ export function PiiEntityCard({
             rows={2}
             className="w-full rounded-lg border border-card-border bg-card px-2 py-1 text-xs text-ink"
           />
+          <p className="text-xs text-muted">
+            Do not paste document text or raw PII into comments.
+          </p>
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"

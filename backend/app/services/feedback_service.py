@@ -4,9 +4,10 @@ This is deliberately *not* a learning system and *not* the L2 ``review_result`` 
 records structured feedback lines locally so recurring detection errors can be analysed later.
 It is gated behind ``ENABLE_DEV_ENGINE_SETTINGS`` and writes nothing when the gate is off.
 
-Privacy by construction: only offsets, entity type, recognizer, score, and an optional opaque
-``text_hash`` are stored — never document text, OCR full text, or raw entity values. Engine
-settings are copied from the referenced PII artifact (server-authoritative), not the client.
+Only offsets, entity type, recognizer, the artifact-authoritative score, and an optional validated
+SHA-256 ``text_hash`` are stored — never document text, OCR full text, or raw entity values. Entity
+identity and engine settings are derived from the referenced PII artifact, not trusted from the
+client.
 """
 
 from __future__ import annotations
@@ -21,7 +22,9 @@ from app import __version__
 from app.config import Settings
 from app.errors import ApiError
 from app.schemas import (
+    PiiEntity,
     PiiFeedbackAck,
+    PiiFeedbackEntityRef,
     PiiFeedbackRecord,
     PiiFeedbackRequest,
     PiiFeedbackSummary,
@@ -48,6 +51,16 @@ class FeedbackArtifactNotFoundError(ApiError):
         super().__init__("Referenced PII result not found.", 404)
 
 
+class FeedbackEntityNotFoundError(ApiError):
+    """Raised when the submitted fingerprint is not present in the referenced PII artifact."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Feedback entity reference does not match any entity in the referenced PII artifact.",
+            422,
+        )
+
+
 def record_pii_feedback(
     settings: Settings, document_id: str, request: PiiFeedbackRequest
 ) -> PiiFeedbackAck:
@@ -64,13 +77,26 @@ def record_pii_feedback(
     if artifact is None:
         raise FeedbackArtifactNotFoundError
 
+    matched_entity = _find_matching_entity(artifact.content.entities, request.entity)
+    if matched_entity is None:
+        raise FeedbackEntityNotFoundError
+
+    authoritative_entity = PiiFeedbackEntityRef(
+        type=matched_entity.entity_type,
+        start=matched_entity.start_offset,
+        end=matched_entity.end_offset,
+        score=matched_entity.score,
+        recognizer=matched_entity.recognizer,
+        text_hash=request.entity.text_hash,
+    )
+
     engine_settings = artifact.content.engine_settings
     record = PiiFeedbackRecord(
         app_version=__version__,
         recorded_at=_now_utc_iso(),
         document_id=document_id,
         artifact_id=request.artifact_id,
-        entity=request.entity,
+        entity=authoritative_entity,
         feedback=request.feedback,
         engine_settings=engine_settings,
         engine_settings_origin="artifact" if engine_settings is not None else "unknown",
@@ -97,7 +123,8 @@ def summarize_pii_feedback(
         raise FeedbackDisabledError
     if get_document_record(settings, document_id) is None:
         raise DocumentNotFoundError
-    if get_pii_artifact(settings, document_id, artifact_id) is None:
+    artifact = get_pii_artifact(settings, document_id, artifact_id)
+    if artifact is None:
         raise FeedbackArtifactNotFoundError
 
     destination = _feedback_directory(settings, document_id) / _FEEDBACK_FILENAME
@@ -108,6 +135,8 @@ def summarize_pii_feedback(
             if record is None or record.artifact_id != artifact_id:
                 continue
             entity = record.entity
+            if _find_matching_entity(artifact.content.entities, entity) is None:
+                continue
             key = (entity.type, entity.start, entity.end, entity.recognizer)
             latest_by_key[key] = PiiFeedbackSummaryItem(
                 type=entity.type,
@@ -123,6 +152,26 @@ def summarize_pii_feedback(
         artifact_id=artifact_id,
         items=list(latest_by_key.values()),
     )
+
+
+def _find_matching_entity(
+    artifact_entities: list[PiiEntity], reference: PiiFeedbackEntityRef
+) -> PiiEntity | None:
+    """Find an artifact entity by the stable feedback identity fields.
+
+    Score, page mapping, entity id, and optional legacy fields are deliberately not identity
+    fields. This keeps matching stable across artifacts that lack optional metadata while ensuring
+    the client cannot invent a type, span, or recognizer.
+    """
+    for entity in artifact_entities:
+        if (
+            entity.entity_type == reference.type
+            and entity.start_offset == reference.start
+            and entity.end_offset == reference.end
+            and entity.recognizer == reference.recognizer
+        ):
+            return entity
+    return None
 
 
 def _parse_record(line: str) -> PiiFeedbackRecord | None:
