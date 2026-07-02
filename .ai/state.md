@@ -26,7 +26,8 @@
 - **OCR/Text: L5 done.** L6 OCR confidence and L7 `quality_report` are next. A first additive
   `layout_text_result` v1 (optional field on `text_result`; pypdf layout mode, PDF text-layer pages;
   OCR/DOCX/image → `null`) landed as an out-of-order OCR L9 slice — `text_result.text` stays
-  byte-stable and PII still runs only on canonical text. No UI yet (follow-up).
+  byte-stable and PII still runs only on canonical text. Review can show this field as display-only
+  plain text; canonical remains the default and the only highlighted/offset-bearing view.
 - **PII/Sensitive-Data: L9 done; L10 partial.** Dev-only human-feedback capture exists; grouping
   (L11), overlap resolution (L12), and binding review (L13) remain open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only.** Grouping (L6) and a lineage-bound

@@ -53,8 +53,9 @@ Four distinct text layers plus a lineage map, fixed by the
   content (whitespace/paragraph/hyphenation) starting at OCR L8. No PII-offset guarantee; never a PII
   input.
 - **`layout_text_result`** (new, optional, additive) is a **layout-preserving** plain-text
-  reconstruction (pages, blocks, columns, tables) for Review/UI, starting at OCR L9. No PII-offset
-  guarantee.
+  reconstruction (pages, blocks, columns, tables) for Review/UI, starting at OCR L9. The Review UI
+  renders it as an unhighlighted display-only alternative and falls back to canonical text when it
+  is absent. No PII-offset guarantee.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
   its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.

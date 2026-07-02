@@ -191,8 +191,11 @@ separation rule above. See the sequence in
   DOCX, image, and all-OCR documents leave the field `null`.
 - **Unchanged:** `text_result.text` (canonical) is byte-identical to before; PII runs only on it;
   legacy artifacts without the field stay valid. `pii_input_text` remains an alias of canonical.
+- **Review UI:** when the optional field is present, reviewers can switch from the default canonical
+  view to a display-only monospaced layout view. PII highlights and offset links remain canonical;
+  layout text is never highlighted, and legacy artifacts fall back silently to canonical text.
 - **Not in v1:** `readable_text`, a distinct `pii_input_text`, `text_lineage_map`, block/line
-  geometry, table reconstruction, and any UI (a UI toggle is a proposed follow-up).
+  geometry, and table reconstruction.
 
 ## Future implementation direction
 
