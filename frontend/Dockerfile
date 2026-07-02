@@ -15,6 +15,9 @@ RUN npm run build
 # nginx-unprivileged runs as a non-root user and listens on 8080 by default.
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
+LABEL org.opencontainers.image.source="privacy-deidentification" \
+      org.opencontainers.image.title="privacy-deidentification-frontend"
+
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 

@@ -23,7 +23,8 @@ FULL  := INSTALL_OCR=true  INSTALL_PII=true  BACKEND_MEMORY_LIMIT=2g
 
 .PHONY: help up up-pii up-ocr up-full down build build-pii build-ocr build-full rebuild \
 	ocr-models ocr-smoke pii-smoke logs ps lint typecheck test lock clean \
-	benchmark-private benchmark-private-json benchmark-test
+	benchmark-private benchmark-private-json benchmark-test \
+	docker-df docker-prune docker-prune-project dev-rebuild
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -119,3 +120,23 @@ benchmark-test: ## Run the private benchmark runner's synthetic unit tests (no O
 
 bf: ## Build and force recreate
 	-docker compose up -d --build --force-recreate
+
+docker-df: ## Show Docker disk usage (images, containers, volumes, build cache)
+	docker system df
+	docker system df -v
+
+docker-prune: ## Safe cleanup: dangling images/containers/networks/build cache. Never touches volumes.
+	docker image prune -f
+	docker container prune -f
+	docker network prune -f
+	docker builder prune -f
+
+docker-prune-project: ## Prune dangling images labeled for this project (falls back to docker-prune if none match)
+	docker image prune -f --filter label=org.opencontainers.image.source=privacy-deidentification
+	# Note: dangling build-stage layers are untagged and unlabeled, so this filter mostly affects
+	# labeled, tagged images. Use `make docker-prune` as the reliable default for dangling cleanup.
+
+dev-rebuild: ## Full local rebuild: down, up --build --force-recreate, then prune dangling images. No volume prune.
+	docker compose down --remove-orphans
+	$(SLIM) $(COMPOSE) up -d --build --force-recreate
+	docker image prune -f

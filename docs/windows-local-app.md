@@ -35,7 +35,12 @@ Falls Docker noch nicht laeuft, startet der Launcher Docker Desktop und wartet b
 ```
 
 Das Update holt den aktuellen Stand, wechselt auf `main`, akzeptiert nur einen Fast-Forward und
-baut die Container neu. Bei lokalen Aenderungen stoppt es, ohne Dateien zu ueberschreiben.
+baut die Container neu. Bei lokalen Aenderungen stoppt es, ohne Dateien zu ueberschreiben. `update`
+und `start` loeschen nie Docker-Volumes, Uploads oder Dokumentdaten unter `volumes/`.
+
+Wachsen die Docker-Images ueber die Zeit an (mehrere Rebuilds), kann im geklonten Repository unter
+`$HOME\PrivacyDeID\app` `docker image prune -f` sicher ausgefuehrt werden: das entfernt nur alte,
+ungenutzte Images, niemals Volumes oder lokale Daten.
 
 ## Stop
 
