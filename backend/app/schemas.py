@@ -149,6 +149,12 @@ class TextContent(BaseModel):
     # no layout was reconstructed (e.g. DOCX, image, or all-OCR documents), so legacy artifacts
     # without this field remain valid. See docs/engine/ocr-layout-text-contract.md.
     layout_text_result: str | None = Field(default=None)
+    # Additive, optional, INTERNAL semantic reading-order reconstruction (OCR L9 slice; PII-input
+    # v1). Not yet the active PII detection input — PII continues to run on ``text`` above — and not
+    # displayed in the UI. It groups two-column blocks and reconstructs table rows for PDF
+    # text-layer pages only; ``None`` when not reconstructed (DOCX, image, all-OCR documents, or a
+    # page geometry could not be established). See docs/engine/ocr-layout-text-contract.md.
+    pii_input_text: str | None = Field(default=None)
 
     @model_validator(mode="after")
     def _validate_text_summary(self) -> TextContent:

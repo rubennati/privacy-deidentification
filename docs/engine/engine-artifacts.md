@@ -29,6 +29,7 @@ input, or report may be committed.
 | `ocr_result` / `text_layer_result` | ◻ conceptual | source-specific page output | yes | folded into `text_result` today |
 | `quality_report` | 🔜 OCR L7 | source mix, coverage, confidence summary | metrics only | immutable artifact |
 | `layout_text_result` | ✅ v1 (field on `text_result`) | readable layout plain-text for PDF text layer (L9 v1); readable text (L8) and typed blocks/geometry (L9+) later | yes | additive optional field on `text_result` |
+| `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
 | `structured_document_result` | 🔜 OCR L11 | tables, sections, key-value regions | yes | immutable artifact |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | `review_result` | 🔜 Review L8 | lineage-bound human decision overlay on `pii_result` | yes | immutable artifact |
@@ -46,9 +47,10 @@ Four distinct text layers plus a lineage map, fixed by the
   `text_result`. It is the single source of truth and coordinate system; PII offsets always resolve
   to this text. It is **not** redefined to mean readable text.
 - **`pii_input_text`** (new, optional, additive; internal) is a **detection-optimised** view that
-  preserves logical blocks/roles/table/address structure. In v1 it equals canonical text; it may
-  diverge later **only** with a tested lineage map (round-trippable to canonical). Not user-facing,
-  not a rival source of truth.
+  preserves logical blocks/roles/table structure. v1 (PDF text layer) delivers a real, geometric
+  left/right block grouping and row-wise table reconstruction — but it is **not** the active PII
+  detection input, and it may become one later **only** with a tested lineage map (round-trippable
+  to canonical). Not user-facing, not a rival source of truth.
 - **`readable_text`** (new, optional, additive) is a **human-readable** normalisation of the same
   content (whitespace/paragraph/hyphenation) starting at OCR L8. No PII-offset guarantee; never a PII
   input.

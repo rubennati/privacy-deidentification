@@ -31,6 +31,7 @@ from app.services.docx_extraction import extract_docx_text
 from app.services.ocr_adapters import OcrAdapter
 from app.services.original_artifact_service import get_verified_original
 from app.services.pdf_renderer import PdfRenderer
+from app.services.pii_input_text import build_page_pii_input_text
 
 _OCR_WORKSPACE_ROOT = Path("/tmp")
 
@@ -141,6 +142,10 @@ def _extract_pdf(
     # Per-page (page_number, layout rendering | None, canonical page text). ``None`` marks a page
     # whose layout was not reconstructed (OCR pages, or a text layer that failed layout mode).
     layout_entries: list[tuple[int, str | None, str]] = []
+    # Per-page (page_number, semantic reading-order text | None, canonical page text). ``None``
+    # marks a page whose pii_input_text could not be reconstructed (OCR pages, or a text layer
+    # where fragment/column detection was not confident).
+    pii_input_entries: list[tuple[int, str | None, str]] = []
     with TemporaryDirectory(prefix="ocr-", dir=_OCR_WORKSPACE_ROOT) as temporary_directory:
         output_dir = Path(temporary_directory)
         for page_number, (page, audit_page) in enumerate(
@@ -161,6 +166,7 @@ def _extract_pdf(
                 text = ocr_adapter.extract_text(image_path)
                 source = "paddleocr"
                 layout_segment: str | None = None
+                pii_input_segment: str | None = None
             else:
                 # Canonical text is the unchanged default extraction — the offset-stable PII input.
                 text = page.extract_text() or ""
@@ -172,6 +178,10 @@ def _extract_pdf(
                     layout_segment = page.extract_text(extraction_mode="layout") or None
                 except Exception:
                     layout_segment = None
+                # Additive, internal semantic reading-order reconstruction (PII-input v1). Never
+                # feeds PII detection and never affects ``text``; returns None rather than raising
+                # when fragment/column detection is not confident for this page.
+                pii_input_segment = build_page_pii_input_text(page)
             pages.append(
                 TextPageResult(
                     page_number=page_number,
@@ -183,6 +193,7 @@ def _extract_pdf(
                 )
             )
             layout_entries.append((page_number, layout_segment, text))
+            pii_input_entries.append((page_number, pii_input_segment, text))
 
     used_text_layer = any(page.has_text_layer for page in pages)
     used_ocr = any(page.ocr_used for page in pages)
@@ -195,6 +206,7 @@ def _extract_pdf(
         tool_versions.update(ocr_adapter.tool_versions())
     text = "\n\n".join(page.text for page in pages)
     layout_text_result = _combine_layout_segments(layout_entries)
+    pii_input_text = _combine_pii_input_segments(pii_input_entries)
     flags = [
         flag
         for flag, used in (("pdf_mixed", source == "pdf_mixed"), ("ocr_used", used_ocr))
@@ -210,6 +222,7 @@ def _extract_pdf(
         tool_versions,
         flags,
         layout_text_result=layout_text_result,
+        pii_input_text=pii_input_text,
     )
 
 
@@ -236,6 +249,33 @@ def _combine_layout_segments(entries: list[tuple[int, str | None, str]]) -> str 
     combined = blocks[0]
     for (page_number, _, _), block in zip(entries[1:], blocks[1:], strict=True):
         combined += f"\n\n{_PAGE_MARKER.format(page_number=page_number)}\n\n{block}"
+    return combined or None
+
+
+_PII_INPUT_PAGE_MARKER = "[PAGE {page_number}]"
+
+
+def _combine_pii_input_segments(entries: list[tuple[int, str | None, str]]) -> str | None:
+    """Join per-page semantic reading-order reconstructions into one internal text block.
+
+    Text-layer pages contribute their block/table reconstruction; a page without one (OCR, or
+    uncertain fragment/column detection) is marked and falls back to its linear text. Returns
+    ``None`` when no page produced a reconstruction, so the field stays absent rather than
+    duplicating the canonical text. Mirrors ``_combine_layout_segments`` with a distinct page
+    marker and fallback wording so the two additive fields are never confused.
+    """
+    if all(segment is None for _, segment, _ in entries):
+        return None
+    blocks: list[str] = []
+    for page_number, segment, page_text in entries:
+        if segment is not None:
+            blocks.append(segment.rstrip("\n"))
+        else:
+            marker = f"[page {page_number}: pii_input_text not reconstructed]"
+            blocks.append(f"{marker}\n{page_text}".rstrip("\n"))
+    combined = blocks[0]
+    for (page_number, _, _), block in zip(entries[1:], blocks[1:], strict=True):
+        combined += f"\n\n{_PII_INPUT_PAGE_MARKER.format(page_number=page_number)}\n\n{block}"
     return combined or None
 
 
@@ -309,6 +349,7 @@ def _text_content(
     tool_versions: dict[str, str],
     flags: list[str],
     layout_text_result: str | None = None,
+    pii_input_text: str | None = None,
 ) -> TextContent:
     return TextContent(
         document_id=document_id,
@@ -321,6 +362,7 @@ def _text_content(
         tool_versions=tool_versions,
         flags=flags,
         layout_text_result=layout_text_result,
+        pii_input_text=pii_input_text,
     )
 
 
