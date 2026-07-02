@@ -1,12 +1,15 @@
-"""Synthetic, model-free tests for the insurance-at-de Presidio pattern pack."""
+"""Synthetic, model-free tests for the insurance-at-de Presidio pattern pack.
+
+Patterns are evaluated with the ``regex`` engine (the one Presidio's PatternRecognizer uses),
+because the labelled-line lookbehinds are variable-width, which the stdlib ``re`` rejects.
+"""
 
 from __future__ import annotations
 
-import re
-
 import pytest
+import regex as re
 
-from app.services.pii_profiles import DOMAIN_SENSITIVE_TYPES
+from app.services.pii_profiles import ADDRESS_CONTACT_TYPES, DOMAIN_SENSITIVE_TYPES
 from app.services.pii_recognizers import (
     INSURANCE_AT_DE_RECOGNIZER_SPECS,
     PatternSpec,
@@ -132,6 +135,38 @@ def _matching_patterns(entity_type: str, value: str) -> list[PatternSpec]:
             "USER_ID",
             ("USER-AT-8871", "USR/2026/441", "Benutzerkennung: s.kowalski@wb2025"),
         ),
+        (
+            "ADDRESS",
+            (
+                "Mariengasse 12",
+                "Beispielgasse 12, 1010 Wien",
+                "Linzer Straße 3/2/7",
+                "Musterallee 18/10/44, 8020 Graz",
+                "Adresse: Objekt 12, Haus B",
+            ),
+        ),
+        (
+            "CONTACT_LINE",
+            (
+                "Kontakt: Frau Dr. Eva Muster, +43 664 1234567",
+                "Ansprechpartner: Herr Ing. Max Beispiel",
+                "Kontakt:\nEigentuemer: Herr Max Beispiel, Tel 0664 1234567",
+                "Hausverwaltung: Muster Hausverwaltung, office@example.at",
+                # Label qualifiers before the colon are tolerated for contact labels.
+                "Ansprechpartner HV:\nHerr Dipl.-Ing. Max Beispiel",
+                "Kontakt Eigent.:\n+43 664 9012345",
+                "Auftraggeberin: Frau Mag. Eva Muster",
+            ),
+        ),
+        (
+            "CUSTOMER_LINE",
+            (
+                "Kunde: Max Beispiel",
+                "Kundendaten: Beispiel GmbH, Wien",
+                "Kunde:\nBeispiel Holding AG",
+                "Rechnung an:\nBeispiel GmbH",
+            ),
+        ),
     ],
 )
 def test_each_entity_type_has_multiple_synthetic_matches(
@@ -209,6 +244,19 @@ def test_generic_domain_ids_require_an_adjacent_label() -> None:
         ("TAX_ID_AT", "123456789"),
         ("POLICY_NUMBER", "2025"),
         ("CUSTOMER_NUMBER", "4711"),
+        # A distance phrase is not an address, and a bare suffix word carries no street name.
+        ("ADDRESS", "Der Anfahrtsweg 12 km ist kurz."),
+        ("ADDRESS", "Am Weg 5"),
+        ("ADDRESS", "Nettobetrag 1.234,56 EUR"),
+        # A contact label followed by generic document text is not a contact line.
+        ("CONTACT_LINE", "Kontakt: Seite 2 von 3"),
+        ("CONTACT_LINE", "Frau Dr. Eva Muster ohne Label davor"),
+        # "Endkunde:" has no word boundary before "kunde", and a bare line is label-less.
+        ("CUSTOMER_LINE", "Endkunde: Max Beispiel"),
+        ("CUSTOMER_LINE", "Max Beispiel"),
+        # A "Kundennummer:" line is a CUSTOMER_NUMBER, never a customer line (no qualifier
+        # tolerance on customer labels).
+        ("CUSTOMER_LINE", "Kundennummer: KD-1234"),
     ],
 )
 def test_values_without_their_own_context_do_not_leak_across_types(
@@ -260,3 +308,27 @@ def test_every_profile_domain_type_has_a_registered_recognizer() -> None:
     }
 
     assert set(DOMAIN_SENSITIVE_TYPES).issubset(registered_types)
+    assert set(ADDRESS_CONTACT_TYPES).issubset(registered_types)
+
+
+def test_labelled_line_types_never_match_without_an_adjacent_label() -> None:
+    # The line-level types must not blindly mark document sections: without their label the
+    # contact/customer lines never match, and ADDRESS matches only the strict street shape.
+    assert _matching_patterns("CONTACT_LINE", "Herr Ing. Max Beispiel, +43 664 1234567") == []
+    assert _matching_patterns("CUSTOMER_LINE", "Beispiel GmbH, 1010 Wien") == []
+    assert _matching_patterns("ADDRESS", "Gesamtlänge 12 Meter, Position 4") == []
+
+
+def test_contact_line_next_line_capture_excludes_the_label() -> None:
+    text = "Ansprechpartner:\nFrau Mag. Eva Muster, Tel 0664 1234567"
+    matches = [
+        (pattern, match)
+        for pattern in _SPECS_BY_TYPE["CONTACT_LINE"].patterns
+        for match in [re.search(pattern.regex, text)]
+        if match
+    ]
+
+    assert matches
+    for _, match in matches:
+        assert match.group(0).startswith("Frau")
+        assert "\n" not in match.group(0)
