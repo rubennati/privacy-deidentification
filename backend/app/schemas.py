@@ -423,6 +423,102 @@ class PiiRunRequest(BaseModel):
         return self.pii_profile is not None
 
 
+# Verdict is the coarse outcome; issue_type refines it. "correct" is the only issue_type allowed
+# for a "positive" verdict; every other value marks a concrete problem class for later analysis.
+PiiFeedbackVerdict = Literal["positive", "issue"]
+PiiFeedbackIssueType = Literal[
+    "correct",
+    "false_positive",
+    "wrong_type",
+    "span_too_long_left",
+    "span_too_long_right",
+    "span_too_short_left",
+    "span_too_short_right",
+    "duplicate_or_should_merge",
+    "overlap_conflict",
+    "missing_related_entity",
+    "other",
+]
+
+
+class PiiFeedbackEntityRef(BaseModel):
+    """The minimal, non-sensitive fingerprint of the entity a reviewer commented on.
+
+    Offsets + type + recognizer are enough to correlate feedback with a re-run later. Raw entity
+    text is never accepted or stored here; ``text_hash`` is an optional, opaque digest a caller
+    may supply, capped in length and never expanded back into text server-side.
+    """
+
+    type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    score: float = Field(ge=0, le=1)
+    recognizer: str = Field(max_length=200)
+    text_hash: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def _validate_span(self) -> PiiFeedbackEntityRef:
+        if self.end <= self.start:
+            raise ValueError("end offset must be greater than start offset")
+        return self
+
+
+class PiiFeedbackDetail(BaseModel):
+    """The reviewer's verdict on one entity. ``comment`` is optional, dev-only free text."""
+
+    verdict: PiiFeedbackVerdict
+    issue_type: PiiFeedbackIssueType
+    comment: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("comment", mode="before")
+    @classmethod
+    def _normalize_comment(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def _validate_verdict_issue_pairing(self) -> PiiFeedbackDetail:
+        if self.verdict == "positive" and self.issue_type != "correct":
+            raise ValueError("a positive verdict must use issue_type 'correct'")
+        if self.verdict == "issue" and self.issue_type == "correct":
+            raise ValueError("an issue verdict must not use issue_type 'correct'")
+        return self
+
+
+class PiiFeedbackRequest(BaseModel):
+    """Dev-only review feedback for one detected PII entity (POST body)."""
+
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity: PiiFeedbackEntityRef
+    feedback: PiiFeedbackDetail
+
+
+class PiiFeedbackRecord(BaseModel):
+    """One append-only feedback line as persisted to disk (privacy-safe by construction)."""
+
+    schema_version: Literal["1"] = "1"
+    app_version: str
+    recorded_at: str
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity: PiiFeedbackEntityRef
+    feedback: PiiFeedbackDetail
+    # Authoritative settings copied from the referenced PII artifact; None on legacy artifacts
+    # written before per-run engine settings existed. ``engine_settings_origin`` records which.
+    engine_settings: PiiEngineSettings | None = None
+    engine_settings_origin: Literal["artifact", "unknown"] = "unknown"
+
+
+class PiiFeedbackAck(BaseModel):
+    """Small confirmation returned after a feedback line is appended."""
+
+    recorded: bool
+    schema_version: str
+    recorded_at: str
+
+
 class DocumentSummary(BaseModel):
     """Public representation of an uploaded document, as returned by the documents API."""
 

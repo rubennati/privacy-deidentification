@@ -79,6 +79,22 @@ def get_latest_pii_artifact(settings: Settings, document_id: str) -> PiiArtifact
     return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
 
 
+def get_pii_artifact(
+    settings: Settings, document_id: str, artifact_id: str
+) -> PiiArtifact | None:
+    """Return one specific PII artifact by id, or None if missing or not a PII result.
+
+    Used to validate an ``artifact_id`` a client refers to (e.g. review feedback) and to read
+    the artifact's authoritative engine settings without trusting the client.
+    """
+    if not _ID_PATTERN.fullmatch(artifact_id):
+        return None
+    path = _document_artifact_directory(settings, document_id) / f"{artifact_id}.json"
+    if not path.is_file():
+        return None
+    return _read_pii_artifact(path, document_id)
+
+
 def _document_artifact_directory(settings: Settings, document_id: str) -> Path:
     if not _ID_PATTERN.fullmatch(document_id):
         raise ValueError("invalid document id")

@@ -5,7 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, status
 
 from app.config import Settings, get_settings
-from app.schemas import ErrorResponse, PiiArtifact, PiiRunRequest
+from app.schemas import (
+    ErrorResponse,
+    PiiArtifact,
+    PiiFeedbackAck,
+    PiiFeedbackRequest,
+    PiiRunRequest,
+)
+from app.services.feedback_service import record_pii_feedback
 from app.services.pii_adapters import PiiAnalyzer, get_pii_analyzer
 from app.services.pii_service import create_pii_artifact, get_latest_pii
 
@@ -49,3 +56,22 @@ def get_document_pii(
 ) -> PiiArtifact:
     """Return the newest PII result for a document."""
     return get_latest_pii(settings, document_id)
+
+
+@router.post(
+    "/{document_id}/pii/feedback",
+    response_model=PiiFeedbackAck,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
+)
+def submit_pii_feedback(
+    document_id: str,
+    request: PiiFeedbackRequest = Body(...),
+    settings: Settings = Depends(get_settings),
+) -> PiiFeedbackAck:
+    """Append dev-only review feedback for one detected PII entity (gated; 403 when disabled)."""
+    return record_pii_feedback(settings, document_id, request)

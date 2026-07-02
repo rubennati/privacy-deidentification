@@ -292,7 +292,13 @@ export default function DocumentDetailPage() {
                 )}
               </section>
               {pii ? (
-                <PiiEntityList entities={pii.content.entities} stale={piiStatus === "stale"} />
+                <PiiEntityList
+                  entities={pii.content.entities}
+                  stale={piiStatus === "stale"}
+                  documentId={documentId}
+                  artifactId={pii.id}
+                  feedbackEnabled={devPiiSettingsEnabled}
+                />
               ) : (
                 <section>
                   <h2 className="font-semibold text-ink">Erkannte Entities</h2>

@@ -1,11 +1,23 @@
 import type { PiiEntity } from "../../api/workstations";
+import { PiiEntityFeedback } from "./PiiEntityFeedback";
 
 interface PiiEntityListProps {
   entities: readonly PiiEntity[];
   stale: boolean;
+  documentId: string;
+  /** Id of the PII artifact these entities belong to; used to attach feedback. */
+  artifactId: string;
+  /** Dev gate: when false, per-entity feedback controls are hidden. */
+  feedbackEnabled: boolean;
 }
 
-export function PiiEntityList({ entities, stale }: PiiEntityListProps) {
+export function PiiEntityList({
+  entities,
+  stale,
+  documentId,
+  artifactId,
+  feedbackEnabled,
+}: PiiEntityListProps) {
   return (
     <section aria-labelledby="entity-list-heading">
       <div className="flex items-center justify-between gap-3">
@@ -44,6 +56,12 @@ export function PiiEntityList({ entities, stale }: PiiEntityListProps) {
                 <dt>Recognizer</dt>
                 <dd className="break-all">{entity.recognizer}</dd>
               </dl>
+              <PiiEntityFeedback
+                documentId={documentId}
+                artifactId={artifactId}
+                entity={entity}
+                enabled={feedbackEnabled}
+              />
             </li>
           ))}
         </ul>

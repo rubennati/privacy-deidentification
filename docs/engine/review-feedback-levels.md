@@ -33,6 +33,24 @@ Level numbers are cumulative and **not** comparable to the OCR or PII ladders.
 - **Acceptance:** candidates render with correct offsets; stale/missing lineage is surfaced; no HTML
   injection, no source-text logging.
 
+### Dev-only feedback capture (analysis side-channel, not L2)
+
+A small **dev-only** control set on each entity card records structured review feedback so
+recurring detection errors can be analysed later. It is deliberately **not** the L2
+`review_result` model and **not** a learning system — it never changes detection, never mutates
+the immutable `pii_result`, and applies no rules.
+
+- **Gated:** available only when `ENABLE_DEV_ENGINE_SETTINGS=true` (same dev gate as per-run engine
+  overrides). With the gate off, the UI hides the controls and `POST …/pii/feedback` returns `403`.
+- **Persisted:** append-only JSONL at `document-data/{document_id}/feedback/pii_feedback.jsonl`
+  (under the git-ignored `volumes/` mount; removed with the document). Each line carries a
+  timestamp, document/artifact ids, the entity fingerprint (type + offsets + recognizer + score),
+  the verdict/issue_type/optional comment, the artifact's engine settings, and app/schema version.
+- **Privacy:** no document text, OCR full text, or raw entity value is stored — offsets and types
+  are enough for analysis; an optional opaque `text_hash` field exists but the UI does not send it.
+- **Not a level:** production stays gated off; promoting this into the auditable L2 `review_result`
+  overlay (below) is separate, future work.
+
 ## Level 2 — Confirm / reject a candidate  ⛔ *open (next)*
 
 - **Human can:** mark a candidate **confirmed** or **rejected**.

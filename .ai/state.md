@@ -88,6 +88,14 @@
 - New `pii_result` artifacts record effective non-sensitive engine settings under
   `content.engine_settings` (`pii_profile`, candidate validation, score threshold, source) so
   dev-mode runs remain traceable without storing extra text or raw PII.
+- Dev-only PII review feedback: gated by `ENABLE_DEV_ENGINE_SETTINGS`, `POST
+  /api/documents/{id}/pii/feedback` appends one privacy-safe line to
+  `document-data/{id}/feedback/pii_feedback.jsonl` (timestamp, doc/artifact ids, entity
+  fingerprint = type+offsets+recognizer+score, verdict/issue_type/comment, artifact engine
+  settings, app/schema version). Analysis input only — not a learning system, never mutates
+  `pii_result`, no rules. Gate off ⇒ UI hides the per-entity controls and the endpoint returns
+  `403`. No document/OCR/entity text is stored. See
+  [`docs/engine/review-feedback-levels.md`](../docs/engine/review-feedback-levels.md).
 - PII highlighting validates Python Unicode-codepoint offsets in a pure tested helper; overlapping
   entities are resolved deterministically while the entity list retains every detection.
 - `GET /api/config` exposes the effective limits so the frontend mirrors the backend.
