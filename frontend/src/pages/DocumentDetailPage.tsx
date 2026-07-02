@@ -32,7 +32,13 @@ import {
   type StationStatus,
 } from "../components/workstations/StationPanel";
 import { StatusNotice } from "../components/StatusNotice";
+import { DocumentAnalysisPanel } from "../components/DocumentAnalysisPanel";
 import { ViewModeToggle, type ViewMode } from "../components/ViewModeToggle";
+import {
+  isAnalysisRunning,
+  runDocumentAnalysis,
+  type AnalysisStep,
+} from "../lib/documentAnalysis";
 import { formatBytes, formatTimestamp } from "../lib/format";
 
 interface UiError {
@@ -58,6 +64,8 @@ export default function DocumentDetailPage() {
   const [pii, setPii] = useState<PiiArtifact | null>(null);
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("canonical");
+  const [analysisStep, setAnalysisStep] = useState<AnalysisStep>("idle");
+  const [analysisError, setAnalysisError] = useState<UiError | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("user");
   const [selectedPiiProfile, setSelectedPiiProfile] = useState("");
   const [loading, setLoading] = useState(true);
@@ -84,6 +92,8 @@ export default function DocumentDetailPage() {
     }
     setSelectedPiiProfile("");
     setReviewTextMode("canonical");
+    setAnalysisStep("idle");
+    setAnalysisError(null);
 
     void (async () => {
       try {
@@ -179,6 +189,8 @@ export default function DocumentDetailPage() {
       ? "current"
       : "stale";
   const currentPiiEntities = piiStatus === "current" ? (pii?.content.entities ?? []) : [];
+  // A full, current analysis exists once both OCR and PII match the latest upstream inputs.
+  const hasCurrentAnalysis = ocrStatus === "current" && piiStatus === "current";
   const devPiiSettingsEnabled = appConfig?.devEngineSettingsEnabled ?? false;
   // The dev view (and its toggle) exists only where dev engine settings are enabled; everywhere
   // else the user view is the sole, default experience.
@@ -205,6 +217,37 @@ export default function DocumentDetailPage() {
       }));
     } finally {
       setPending((current) => ({ ...current, [station]: false }));
+    }
+  };
+
+  // The user-view analysis action: run the existing Audit → OCR → PII stations in order via the
+  // shared orchestration, applying each returned artifact as it arrives so a later failure keeps
+  // the earlier results. Backend lineage validation stays authoritative; no IDs are constructed.
+  const runUserAnalysis = async () => {
+    if (!documentId || isAnalysisRunning(analysisStep)) {
+      return;
+    }
+    setAnalysisError(null);
+    // Tracks the station currently in flight so a failure maps to a safe, station-specific message.
+    let activeStation: StationName = "audit";
+    try {
+      await runDocumentAnalysis(documentId, {
+        onStep: (step) => {
+          setAnalysisStep(step);
+          if (step === "audit" || step === "ocr" || step === "pii") {
+            activeStation = step;
+          }
+        },
+        onAudit: setAudit,
+        onText: (result) => {
+          setText(result);
+          setReviewTextMode("canonical");
+        },
+        onPii: setPii,
+      });
+    } catch (error) {
+      setAnalysisStep("idle");
+      setAnalysisError(toStationError(error, activeStation));
     }
   };
 
@@ -316,10 +359,29 @@ export default function DocumentDetailPage() {
               Extrahierter Text und erkannte PII-Entities. Es werden keine Inhalte verändert.
             </p>
           </div>
+          {/* User view gets a single product-facing analysis action; dev view keeps its separate
+              per-station controls above and never renders this panel. */}
+          {!isDevView && (
+            <div className="mb-5">
+              <DocumentAnalysisPanel
+                step={analysisStep}
+                hasCurrentAnalysis={hasCurrentAnalysis}
+                error={analysisError}
+                onRun={() => void runUserAnalysis()}
+              />
+            </div>
+          )}
           {!text ? (
-            <p className="rounded-lg bg-dropzone p-4 text-sm text-muted">
-              OCR/Text noch nicht ausgeführt.
-            </p>
+            isDevView ? (
+              <p className="rounded-lg bg-dropzone p-4 text-sm text-muted">
+                OCR/Text noch nicht ausgeführt.
+              </p>
+            ) : (
+              <p className="rounded-lg bg-dropzone p-4 text-sm text-muted">
+                Dieses Dokument wurde noch nicht analysiert. Starten Sie die Analyse, um den
+                extrahierten Text und erkannte sensible Daten zu sehen.
+              </p>
+            )
           ) : (
             <div
               className={
