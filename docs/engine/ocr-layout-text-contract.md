@@ -182,9 +182,21 @@ are **not** v1 — they build on the block/geometry structure from OCR L9–L10 
 separation rule above. See the sequence in
 [`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md).
 
+## Implementation status (v1)
+
+- **Delivered:** `layout_text_result` as an **additive optional field on the existing `text_result`**
+  (Option A — simpler and lower-risk than a separate artifact). Produced for **PDF text-layer pages**
+  via pypdf's `extract_text(extraction_mode="layout")` (no new dependency). OCR pages are marked "not
+  reconstructed" and fall back to their linear text; page boundaries are shown with a visible marker.
+  DOCX, image, and all-OCR documents leave the field `null`.
+- **Unchanged:** `text_result.text` (canonical) is byte-identical to before; PII runs only on it;
+  legacy artifacts without the field stay valid. `pii_input_text` remains an alias of canonical.
+- **Not in v1:** `readable_text`, a distinct `pii_input_text`, `text_lineage_map`, block/line
+  geometry, table reconstruction, and any UI (a UI toggle is a proposed follow-up).
+
 ## Future implementation direction
 
-Plan only — **not implemented here**:
+Plan for the layers beyond the v1 slice:
 
 - v1 can start with libraries already present (no new dependency); `pii_input_text = canonical_text`
   and `layout_text_result` is optional.

@@ -12,7 +12,7 @@ import pytest
 from docx import Document as DocxDocument
 from fastapi.testclient import TestClient
 from PIL import Image
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from app.api.ocr import provide_ocr_adapter
@@ -654,6 +654,162 @@ def test_corrupt_original_returns_422_after_integrity_validation(
     response = client.post(f"/api/documents/{document_id}/ocr")
 
     assert response.status_code == 422
+
+
+def _pdf_two_column_table_bytes() -> bytes:
+    """Synthetic single-page offer: two side-by-side blocks and a table. No real data.
+
+    Text runs are placed at absolute page coordinates so pypdf's layout extraction can reconstruct
+    columns and table rows; the default extraction linearises them.
+    """
+    runs = [
+        (40, 770, "KOSTENVORANSCHLAG"),
+        (40, 730, "AUFTRAGNEHMER"), (320, 730, "AUFTRAGGEBER"),
+        (40, 712, "Sanierungsbau Perchtoldsdorf GmbH"),
+        (320, 712, "Herr Dipl.-Ing. Franz Hubermayr"),
+        (40, 694, "Lindenstrasse 42"), (320, 694, "Rosengasse 7/12"),
+        (40, 640, "Angebot Nr.: KV-2026-0417"), (320, 640, "Datum: 01.07.2026"),
+        (40, 590, "Pos."), (90, 590, "Leistung"), (330, 590, "Menge"),
+        (390, 590, "Einheit"), (450, 590, "Einzelpreis"), (530, 590, "Gesamt"),
+        (40, 572, "1"), (90, 572, "Abbrucharbeiten Innenwaende"), (330, 572, "45"),
+        (390, 572, "m2"), (450, 572, "38,00"), (530, 572, "1.710,00"),
+        (40, 554, "2"), (90, 554, "Fassadendaemmung"), (330, 554, "180"),
+        (390, 554, "m2"), (450, 554, "92,00"), (530, 554, "16.560,00"),
+    ]
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=600, height=800)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})}
+    )
+    data = "".join(f"BT /F1 10 Tf {x} {y} Td ({text}) Tj ET\n" for x, y, text in runs)
+    stream = DecodedStreamObject()
+    stream.set_data(data.encode("latin-1"))
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _line_with(text: str, *tokens: str) -> str | None:
+    return next(
+        (line for line in text.split("\n") if all(token in line for token in tokens)),
+        None,
+    )
+
+
+def test_pdf_text_layer_produces_layout_text_result(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    fixture = _pdf_two_column_table_bytes()
+    upload, _ = _upload_and_audit(client, "offer.pdf", fixture, "application/pdf")
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    # Canonical text is exactly the unchanged default extraction — the offset-stable PII input.
+    expected_canonical = "\n\n".join(
+        page.extract_text() or "" for page in PdfReader(BytesIO(fixture)).pages
+    )
+    assert content["text"] == expected_canonical
+    layout = content["layout_text_result"]
+    assert layout is not None
+    # The layout rendering is a distinct, additive view — not the canonical text.
+    assert layout != content["text"]
+    # Two-column block stays side by side on one line.
+    assert _line_with(layout, "AUFTRAGNEHMER", "AUFTRAGGEBER") is not None
+    # Table header and its first value row each stay on a single readable line (no line-by-line
+    # collapse of header vs values).
+    assert _line_with(layout, "Pos.", "Leistung", "Gesamt") is not None
+    assert _line_with(layout, "Abbrucharbeiten Innenwaende", "1.710,00") is not None
+    # A clean text-layer PDF still never touches OCR.
+    assert adapter.calls == []
+    assert renderer.calls == []
+
+
+def test_layout_text_result_absent_for_docx(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client,
+        "document.docx",
+        _docx_bytes("First", "Second"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    assert response.json()["content"]["layout_text_result"] is None
+
+
+def test_layout_text_result_absent_for_image(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.outputs = ["Image text"]
+    upload, _ = _upload_and_audit(client, "image.png", _image_bytes("PNG"), "image/png")
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    assert response.json()["content"]["layout_text_result"] is None
+
+
+def test_layout_text_result_marks_ocr_pages_and_page_boundaries(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.outputs = ["Scanned page two text"]
+    upload, _ = _upload_and_audit(
+        client, "mixed.pdf", _pdf_pages_bytes(_GOOD_TEXT, None), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    layout = response.json()["content"]["layout_text_result"]
+    assert layout is not None
+    # Page 1 (text layer) contributes a layout rendering.
+    assert _GOOD_TEXT.split()[0] in layout
+    # Page boundary is visible and the OCR page is marked as not reconstructed, falling back to its
+    # linear text.
+    assert "----- page 2 -----" in layout
+    assert "[page 2: layout not reconstructed]" in layout
+    assert "Scanned page two text" in layout
+
+
+def test_legacy_text_artifact_without_layout_field_remains_valid(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    created = client.post(f"/api/documents/{upload['id']}/ocr").json()
+    path = _artifact_path(document_data_dir, upload["id"], created["id"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    # Simulate a legacy artifact written before this field existed.
+    payload["content"].pop("layout_text_result", None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = client.get(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 200
+    assert response.json()["content"]["layout_text_result"] is None
 
 
 def test_delete_removes_audit_and_text_artifacts(
