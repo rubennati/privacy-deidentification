@@ -23,7 +23,10 @@ import {
 } from "../api/piiFeedback";
 import { PiiEntityList } from "../components/pii/PiiEntityList";
 import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
-import { PiiTextViewer } from "../components/pii/PiiTextViewer";
+import {
+  ReviewTextViewer,
+  type ReviewTextMode,
+} from "../components/pii/ReviewTextViewer";
 import {
   StationPanel,
   type StationStatus,
@@ -53,6 +56,7 @@ export default function DocumentDetailPage() {
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
+  const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("canonical");
   const [selectedPiiProfile, setSelectedPiiProfile] = useState("");
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<UiError | null>(null);
@@ -77,6 +81,7 @@ export default function DocumentDetailPage() {
       };
     }
     setSelectedPiiProfile("");
+    setReviewTextMode("canonical");
 
     void (async () => {
       try {
@@ -252,7 +257,12 @@ export default function DocumentDetailPage() {
             disabled={!audit || pending.audit || pending.ocr || pending.pii}
             disabledReason={!audit ? "Zuerst ein Audit erstellen." : undefined}
             error={stationErrors.ocr}
-            onAction={() => void execute("ocr", () => runOcr(documentId), setText)}
+            onAction={() =>
+              void execute("ocr", () => runOcr(documentId), (result) => {
+                setText(result);
+                setReviewTextMode("canonical");
+              })
+            }
           >
             {text ? <TextSummary artifact={text} /> : <p>Noch kein Text-Artifact vorhanden.</p>}
           </StationPanel>
@@ -299,21 +309,18 @@ export default function DocumentDetailPage() {
             </p>
           ) : (
             <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-              <section aria-labelledby="text-viewer-heading">
-                <h2 id="text-viewer-heading" className="font-semibold text-ink">
-                  Extrahierter Text
-                </h2>
-                <div className="mt-4 max-h-[70vh] overflow-auto rounded-xl border border-card-border bg-dropzone p-5">
-                  {text.content.text ? (
-                    <PiiTextViewer text={text.content.text} entities={currentPiiEntities} />
-                  ) : (
-                    <p className="text-sm text-muted">Der extrahierte Text ist leer.</p>
-                  )}
-                </div>
+              <div>
+                <ReviewTextViewer
+                  canonicalText={text.content.text}
+                  layoutText={text.content.layout_text_result}
+                  entities={currentPiiEntities}
+                  mode={reviewTextMode}
+                  onModeChange={setReviewTextMode}
+                />
                 {!pii && (
                   <p className="mt-3 text-xs text-muted">PII-Erkennung noch nicht ausgeführt.</p>
                 )}
-              </section>
+              </div>
               {pii ? (
                 <PiiEntityList
                   entities={pii.content.entities}
