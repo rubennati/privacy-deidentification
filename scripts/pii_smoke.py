@@ -18,9 +18,20 @@ from app.services.pii_candidate_validation import validate_candidates
 
 _SAMPLE = (
     "Kontakt: max@example.at; UID: ATU12345678; "
-    "SV-Nummer: 1234 120478; Polizzennummer: POL-TEST-2026-0042"
+    "SV-Nummer: 1234 120478; Polizzennummer: POL-TEST-2026-0042\n"
+    "Ansprechpartner: Frau Dr. Eva Muster, +43 664 1234567\n"
+    "Adresse: Beispielgasse 12, 1010 Wien\n"
+    "Kunde: Muster Holding GmbH"
 )
-_ENTITY_TYPES = ("EMAIL_ADDRESS", "UID_AT", "SVNR_AT", "POLICY_NUMBER")
+_ENTITY_TYPES = (
+    "EMAIL_ADDRESS",
+    "UID_AT",
+    "SVNR_AT",
+    "POLICY_NUMBER",
+    "ADDRESS",
+    "CONTACT_LINE",
+    "CUSTOMER_LINE",
+)
 
 
 def main() -> int:

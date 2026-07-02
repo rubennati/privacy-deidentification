@@ -62,7 +62,10 @@ def test_type_group_buckets_structured_ner_domain_and_other() -> None:
     assert type_group("UID_AT") == "domain_sensitive_types"
     assert type_group("ASSESSMENT_NUMBER") == "domain_sensitive_types"
     assert type_group("USER_ID") == "domain_sensitive_types"
-    assert type_group("ADDRESS") == "other_types"
+    assert type_group("ADDRESS") == "address_contact_types"
+    assert type_group("CONTACT_LINE") == "address_contact_types"
+    assert type_group("CUSTOMER_LINE") == "address_contact_types"
+    assert type_group("BIRTH_DATE") == "other_types"
 
 
 def test_spans_overlap_enough_by_ratio() -> None:

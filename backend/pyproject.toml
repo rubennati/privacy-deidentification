@@ -32,6 +32,9 @@ dev = [
     "httpx>=0.27,<1.0",
     "ruff>=0.6,<1.0",
     "mypy>=1.11,<2.0",
+    # Evaluates the recognizer pattern specs in unit tests with the same engine Presidio uses
+    # (the labelled-line lookbehinds are variable-width, which the stdlib `re` rejects).
+    "regex>=2024.4",
 ]
 
 [build-system]
