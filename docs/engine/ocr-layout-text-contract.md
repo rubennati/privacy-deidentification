@@ -218,12 +218,16 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   `null` (a marked linear fallback per page on multi-page documents, mirroring
   `layout_text_result`). **It is internal and not displayed in the UI** — a proposed later step.
 - **Unchanged:** `text_result.text` (canonical) is byte-identical to before; PII runs only on it;
-  `layout_text_result` generation is unaffected; legacy artifacts without either field stay valid.
-  `pii_input_text` remains **not** the active PII detection input — PII continues to run on
-  canonical text; this v1 slice is additive, experimental, and not wired into detection.
-- **Not in v1:** `readable_text`, `text_lineage_map`, block/line geometry (coordinates persisted for
-  reuse), a structured `pii_input_blocks` schema, semantic role labelling (contractor vs. customer),
-  a general table-end detector, and any UI.
+  `layout_text_result` v1 generation is unaffected; legacy artifacts without either field stay
+  valid. `pii_input_text` is now an additive, internal v1 field — not an alias of canonical — but
+  it remains **not** the active PII detection input; PII continues to run on canonical text only.
+- **Review UI:** when `layout_text_result` is present, reviewers can switch from the default
+  canonical view to a display-only monospaced layout view, falling back to canonical text when the
+  field is absent. PII highlights and offset links remain bound to canonical text only; layout text
+  is never highlighted. `pii_input_text` has no UI in v1 (internal/experimental).
+- **Not in v1:** `readable_text`, `text_lineage_map`, block/line geometry, a general table
+  detector, a structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
+  customer) for `pii_input_text` blocks, and active PII use of `pii_input_text`.
 
 ## Future implementation direction
 

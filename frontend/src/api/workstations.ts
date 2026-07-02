@@ -62,6 +62,8 @@ export interface TextArtifact {
     pages: TextPageResult[];
     tool_versions: Record<string, string>;
     flags: string[];
+    // Optional display-only reconstruction. Legacy artifacts omit it; PII offsets stay on `text`.
+    layout_text_result?: string | null;
   };
 }
 

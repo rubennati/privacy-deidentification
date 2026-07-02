@@ -23,12 +23,16 @@
 
 ## Engine maturity snapshot (0–19)
 
-- **OCR/Text: L5 done.** L6 OCR confidence and L7 `quality_report` are next. Two additive OCR L9
-  slices landed out of order, both leaving `text_result.text` byte-stable with PII still running
-  only on canonical text: `layout_text_result` (optional field; pypdf layout mode, PDF text-layer
-  pages; OCR/DOCX/image → `null`) and `pii_input_text` (a second optional field; internal/
-  experimental left-right block grouping + row-wise table reconstruction for PDF text-layer pages,
-  built from pypdf text-position data, **not** the active PII input). No UI for either (follow-up).
+- **OCR/Text: L5 done.** L6 OCR confidence and L7 `quality_report` remain the next regular OCR
+  steps. Two additive, out-of-order OCR L9 slices exist on top, both leaving `text_result.text`
+  byte-stable with PII still running only on canonical text:
+  - `layout_text_result` — optional field on `text_result`; pypdf layout mode, PDF text-layer pages;
+    OCR/DOCX/image → `null`. Display-only; the Review UI can optionally show it as unhighlighted
+    plain text, with canonical text remaining the default and the only highlighted/offset-bearing
+    view.
+  - `pii_input_text` — a second optional field on `text_result`; internal/experimental semantic
+    reading-order text (left/right block grouping, row-wise table reconstruction) for PDF
+    text-layer pages, built from pypdf text-position data. **Not** the active PII input; no UI.
 - **PII/Sensitive-Data: L9 done; L10 partial.** Dev-only human-feedback capture exists; grouping
   (L11), overlap resolution (L12), and binding review (L13) remain open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only.** Grouping (L6) and a lineage-bound
