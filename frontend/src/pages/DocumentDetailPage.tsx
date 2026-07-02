@@ -32,6 +32,7 @@ import {
   type StationStatus,
 } from "../components/workstations/StationPanel";
 import { StatusNotice } from "../components/StatusNotice";
+import { ViewModeToggle, type ViewMode } from "../components/ViewModeToggle";
 import { formatBytes, formatTimestamp } from "../lib/format";
 
 interface UiError {
@@ -57,6 +58,7 @@ export default function DocumentDetailPage() {
   const [pii, setPii] = useState<PiiArtifact | null>(null);
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("canonical");
+  const [viewMode, setViewMode] = useState<ViewMode>("user");
   const [selectedPiiProfile, setSelectedPiiProfile] = useState("");
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<UiError | null>(null);
@@ -178,6 +180,10 @@ export default function DocumentDetailPage() {
       : "stale";
   const currentPiiEntities = piiStatus === "current" ? (pii?.content.entities ?? []) : [];
   const devPiiSettingsEnabled = appConfig?.devEngineSettingsEnabled ?? false;
+  // The dev view (and its toggle) exists only where dev engine settings are enabled; everywhere
+  // else the user view is the sole, default experience.
+  const effectiveViewMode: ViewMode = devGateEnabled ? viewMode : "user";
+  const isDevView = effectiveViewMode === "dev";
   const piiRunRequest: PiiRunRequest | undefined =
     devPiiSettingsEnabled && selectedPiiProfile !== ""
       ? { pii_profile: selectedPiiProfile }
@@ -205,9 +211,12 @@ export default function DocumentDetailPage() {
   return (
     <main className="min-h-screen bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] px-4 py-10 sm:py-14">
       <div className="mx-auto max-w-6xl">
-        <Link to="/documents" className="text-sm font-medium text-accent-dark hover:underline">
-          ← Zurück zu Dokumenten
-        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link to="/documents" className="text-sm font-medium text-accent-dark hover:underline">
+            ← Zurück zu Dokumenten
+          </Link>
+          {devGateEnabled && <ViewModeToggle mode={viewMode} onChange={setViewMode} />}
+        </div>
 
         <section className="mt-5 rounded-2xl border border-card-border bg-card p-6 shadow-[0_2px_12px_rgba(31,79,67,0.05)]">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
@@ -222,16 +231,19 @@ export default function DocumentDetailPage() {
               {document.status}
             </span>
           </div>
-          <dl className="mt-6 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
-            <Metadata label="MIME-Type" value={document.detected_mime_type ?? "Legacy/Unbekannt"} />
-            <Metadata label="Dokument-ID" value={document.id} code />
-            <Metadata label="Original-Artifact" value={document.original_artifact?.id ?? "Nicht vorhanden"} code />
-            <div className="sm:col-span-2 lg:col-span-3">
-              <Metadata label="SHA-256" value={document.sha256 ?? "Legacy/Unbekannt"} code />
-            </div>
-          </dl>
+          {isDevView && (
+            <dl className="mt-6 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+              <Metadata label="MIME-Type" value={document.detected_mime_type ?? "Legacy/Unbekannt"} />
+              <Metadata label="Dokument-ID" value={document.id} code />
+              <Metadata label="Original-Artifact" value={document.original_artifact?.id ?? "Nicht vorhanden"} code />
+              <div className="sm:col-span-2 lg:col-span-3">
+                <Metadata label="SHA-256" value={document.sha256 ?? "Legacy/Unbekannt"} code />
+              </div>
+            </dl>
+          )}
         </section>
 
+        {isDevView && (
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <StationPanel
             title="Audit"
@@ -295,6 +307,7 @@ export default function DocumentDetailPage() {
             />
           </StationPanel>
         </div>
+        )}
 
         <section className="mt-6 rounded-2xl border border-card-border bg-card p-6 shadow-[0_2px_12px_rgba(31,79,67,0.05)]">
           <div className="mb-5">
@@ -308,7 +321,13 @@ export default function DocumentDetailPage() {
               OCR/Text noch nicht ausgeführt.
             </p>
           ) : (
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+            <div
+              className={
+                isDevView
+                  ? "grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]"
+                  : "grid gap-6"
+              }
+            >
               <div>
                 <ReviewTextViewer
                   canonicalText={text.content.text}
@@ -316,26 +335,28 @@ export default function DocumentDetailPage() {
                   entities={currentPiiEntities}
                   mode={reviewTextMode}
                   onModeChange={setReviewTextMode}
+                  showEntityMeta={isDevView}
                 />
-                {!pii && (
+                {isDevView && !pii && (
                   <p className="mt-3 text-xs text-muted">PII-Erkennung noch nicht ausgeführt.</p>
                 )}
               </div>
-              {pii ? (
-                <PiiEntityList
-                  entities={pii.content.entities}
-                  stale={piiStatus === "stale"}
-                  documentId={documentId}
-                  artifactId={pii.id}
-                  feedbackEnabled={devPiiSettingsEnabled}
-                  feedbackStatuses={feedbackStatuses}
-                />
-              ) : (
-                <section>
-                  <h2 className="font-semibold text-ink">Erkannte Entities</h2>
-                  <p className="mt-4 text-sm text-muted">PII-Erkennung noch nicht ausgeführt.</p>
-                </section>
-              )}
+              {isDevView &&
+                (pii ? (
+                  <PiiEntityList
+                    entities={pii.content.entities}
+                    stale={piiStatus === "stale"}
+                    documentId={documentId}
+                    artifactId={pii.id}
+                    feedbackEnabled={devPiiSettingsEnabled}
+                    feedbackStatuses={feedbackStatuses}
+                  />
+                ) : (
+                  <section>
+                    <h2 className="font-semibold text-ink">Erkannte Entities</h2>
+                    <p className="mt-4 text-sm text-muted">PII-Erkennung noch nicht ausgeführt.</p>
+                  </section>
+                ))}
             </div>
           )}
         </section>

@@ -20,6 +20,7 @@ const entity: PiiEntity = {
 function render(
   mode: "canonical" | "layout",
   layoutText: string | null | undefined,
+  showEntityMeta?: boolean,
 ): string {
   return renderToStaticMarkup(
     <ReviewTextViewer
@@ -28,6 +29,7 @@ function render(
       entities={[entity]}
       mode={mode}
       onModeChange={vi.fn()}
+      showEntityMeta={showEntityMeta}
     />,
   );
 }
@@ -47,6 +49,20 @@ describe("ReviewTextViewer", () => {
     expect(html).toContain("Hallo ");
     expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
     expect(html).not.toContain("Layout text is for reading/review only");
+  });
+
+  it("exposes entity type/score as a hover title by default (dev view)", () => {
+    const html = render("canonical", null);
+
+    expect(html).toContain('title="LOCATION');
+  });
+
+  it("suppresses the entity hover title when meta is hidden (user view)", () => {
+    const html = render("canonical", null, false);
+
+    // The highlight itself remains; only the technical hover metadata is gone.
+    expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
+    expect(html).not.toContain('title="LOCATION');
   });
 
   it("shows layout text as unhighlighted plain text with the canonical-offset notice", () => {

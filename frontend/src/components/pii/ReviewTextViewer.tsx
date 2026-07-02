@@ -9,6 +9,8 @@ interface ReviewTextViewerProps {
   entities: readonly PiiEntity[];
   mode: ReviewTextMode;
   onModeChange: (mode: ReviewTextMode) => void;
+  /** Forwarded to the highlighted text view: when false, hover metadata is suppressed. */
+  showEntityMeta?: boolean;
 }
 
 const MODE_BUTTON_BASE = "rounded-md px-3 py-1.5 text-xs font-medium transition-colors";
@@ -19,6 +21,7 @@ export function ReviewTextViewer({
   entities,
   mode,
   onModeChange,
+  showEntityMeta = true,
 }: ReviewTextViewerProps) {
   const hasLayoutText = layoutText != null;
   const activeMode = hasLayoutText && mode === "layout" ? "layout" : "canonical";
@@ -79,7 +82,7 @@ export function ReviewTextViewer({
             <p className="text-sm text-muted">Der Layout-Text ist leer.</p>
           )
         ) : canonicalText ? (
-          <PiiTextViewer text={canonicalText} entities={entities} />
+          <PiiTextViewer text={canonicalText} entities={entities} showEntityMeta={showEntityMeta} />
         ) : (
           <p className="text-sm text-muted">Der extrahierte Text ist leer.</p>
         )}
