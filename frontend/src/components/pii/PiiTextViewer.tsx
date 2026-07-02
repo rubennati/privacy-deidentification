@@ -24,7 +24,7 @@ export function PiiTextViewer({ text, entities, showEntityMeta = true }: PiiText
   const segments = buildHighlightSegments(text, entities);
 
   return (
-    <div className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-ink">
+    <div className="whitespace-pre-wrap break-words text-[15px] leading-8 text-ink">
       {segments.map((segment, index) =>
         segment.kind === "text" ? (
           <span key={`text-${index}`}>{segment.text}</span>

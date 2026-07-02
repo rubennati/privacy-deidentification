@@ -51,6 +51,14 @@ describe("ReviewTextViewer", () => {
     expect(html).not.toContain("Layout text is for reading/review only");
   });
 
+  it("renders the extracted text inside a centered A4 paper sheet", () => {
+    const html = render("canonical", null);
+
+    // The A4-width, centered paper container is the review's primary document surface.
+    expect(html).toContain("max-w-[210mm]");
+    expect(html).toContain("mx-auto");
+  });
+
   it("exposes entity type/score as a hover title by default (dev view)", () => {
     const html = render("canonical", null);
 
