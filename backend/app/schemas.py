@@ -144,6 +144,11 @@ class TextContent(BaseModel):
     pages: list[TextPageResult] = Field(default_factory=list)
     tool_versions: dict[str, str] = Field(default_factory=dict)
     flags: list[str] = Field(default_factory=list)
+    # Additive, optional human-readable layout reconstruction (OCR L9). It never feeds PII and is
+    # not the canonical text: ``text`` above stays the offset-stable source of truth. ``None`` when
+    # no layout was reconstructed (e.g. DOCX, image, or all-OCR documents), so legacy artifacts
+    # without this field remain valid. See docs/engine/ocr-layout-text-contract.md.
+    layout_text_result: str | None = Field(default=None)
 
     @model_validator(mode="after")
     def _validate_text_summary(self) -> TextContent:

@@ -28,7 +28,7 @@ input, or report may be committed.
 | `best_text_result` | ✅ today as `text_result` | canonical text used by PII and review | yes | immutable artifact |
 | `ocr_result` / `text_layer_result` | ◻ conceptual | source-specific page output | yes | folded into `text_result` today |
 | `quality_report` | 🔜 OCR L7 | source mix, coverage, confidence summary | metrics only | immutable artifact |
-| `layout_text_result` | 🔜 OCR L8–L9 | readable text at L8; layout-aware blocks at L9 | yes | immutable artifact |
+| `layout_text_result` | ✅ v1 (field on `text_result`) | readable layout plain-text for PDF text layer (L9 v1); readable text (L8) and typed blocks/geometry (L9+) later | yes | additive optional field on `text_result` |
 | `structured_document_result` | 🔜 OCR L11 | tables, sections, key-value regions | yes | immutable artifact |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | `review_result` | 🔜 Review L8 | lineage-bound human decision overlay on `pii_result` | yes | immutable artifact |

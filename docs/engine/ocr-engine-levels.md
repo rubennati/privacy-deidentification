@@ -142,7 +142,7 @@ artifact are not yet built.
   still reference the canonical text.
 - **Boundary to L9:** L8 reflows text heuristically; L9 orders text by real block/line geometry.
 
-## Level 9 — Layout-aware text  ⛔ *open*
+## Level 9 — Layout-aware text  ⏳ *v1 (PDF text layer)*
 
 - **Description:** preserve reading order and block structure (columns, headings, paragraphs) so text
   reflects the page, not a top-to-bottom character dump.
@@ -151,6 +151,11 @@ artifact are not yet built.
 - **Artifacts:** `layout_text_result` with ordered, typed blocks and coordinates.
 - **Acceptance:** multi-column and header/footer pages produce human-sensible reading order; the
   canonical text remains the PII input.
+- **Status:** a first additive `layout_text_result` (an optional field on `text_result`, pypdf
+  `extraction_mode="layout"`, PDF text-layer pages only; OCR/DOCX/image → `null`) is delivered as an
+  out-of-order v1 slice — `text_result.text` stays byte-stable and PII still runs on canonical text.
+  Typed blocks/geometry and OCR-page layout remain open; the cumulative L6 confidence / L7
+  `quality_report` are still the prioritised next steps.
 - **Boundary to L10:** L9 knows block order; L10 persists precise per-line/word coordinates as
   reusable geometry.
 
