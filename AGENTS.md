@@ -33,15 +33,17 @@ The central engines are planned on a **0–19 maturity scale** (see
   should name its category, risk class, and detection strategy.
 - Feature and documentation PRs target `dev`, not `main` (see [Approval](#approval)).
 
-## Product principle: tool-first / adapter-only
+## Product principle: tool-first / adapter-bound
 
-The de-identification capability is delivered by **integrating proven open-source tools
-behind adapters**, not by writing custom intelligence. Do **not** implement bespoke OCR, PII
-detection, NER, redaction or pseudonymization algorithms. Use established components (e.g.
-OCRmyPDF / Tesseract / MinerU for extraction, Presidio / noirdoc for detection, PyMuPDF for
-redaction) integrated behind a port/interface. Our own code is orchestration, the review UI,
-file handling, export logic and secure integration. Each external tool sits behind an
-adapter so it can be swapped without touching business logic.
+Core intelligence comes from **proven open-source tools behind ports/adapters**. Do not build a
+bespoke OCR engine, NER/LLM engine, redaction engine, or pseudonymization engine. Also avoid large
+opaque rule sets and untested ad-hoc heuristics.
+
+Small, deterministic domain logic is allowed when it remains adapter-bound, documented, tested,
+benchmarkable, reviewable, and auditable. Examples include Presidio `PatternRecognizer`s, context
+rules, candidate validation, domain recognizers, and narrowly scoped deterministic heuristics.
+External engines must remain replaceable without changing orchestration or product workflows.
+Our code owns orchestration, adapters, review UI, file handling, export, and secure integration.
 
 ## Workflow
 
@@ -61,7 +63,7 @@ Run via the `Makefile` (everything runs in Docker — no host toolchain needed):
 
 - `make lint` — Ruff (Python) + ESLint (TypeScript)
 - `make typecheck` — mypy (Python) + `tsc --noEmit` (TypeScript)
-- `make test` — pytest (backend)
+- `make test` — pytest (backend) + Vitest (frontend)
 - `make build` — build both container images
 - `make up` / `make down` — start / stop the stack
 
