@@ -23,11 +23,16 @@
 
 ## Engine maturity snapshot (0–19)
 
-- **OCR/Text: L5 done.** L6 OCR confidence and L7 `quality_report` are next. A first additive
-  `layout_text_result` v1 (optional field on `text_result`; pypdf layout mode, PDF text-layer pages;
-  OCR/DOCX/image → `null`) landed as an out-of-order OCR L9 slice — `text_result.text` stays
-  byte-stable and PII still runs only on canonical text. Review can show this field as display-only
-  plain text; canonical remains the default and the only highlighted/offset-bearing view.
+- **OCR/Text: L5 done.** L6 OCR confidence and L7 `quality_report` remain the next regular OCR
+  steps. Two additive, out-of-order OCR L9 slices exist on top, both leaving `text_result.text`
+  byte-stable with PII still running only on canonical text:
+  - `layout_text_result` — optional field on `text_result`; pypdf layout mode, PDF text-layer pages;
+    OCR/DOCX/image → `null`. Display-only; the Review UI can optionally show it as unhighlighted
+    plain text, with canonical text remaining the default and the only highlighted/offset-bearing
+    view.
+  - `pii_input_text` — a second optional field on `text_result`; internal/experimental semantic
+    reading-order text (left/right block grouping, row-wise table reconstruction) for PDF
+    text-layer pages, built from pypdf text-position data. **Not** the active PII input; no UI.
 - **PII/Sensitive-Data: L9 done; L10 partial.** Dev-only human-feedback capture exists; grouping
   (L11), overlap resolution (L12), and binding review (L13) remain open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only.** Grouping (L6) and a lineage-bound
@@ -70,13 +75,15 @@ confidence (L6) + `quality_report` (L7) before further deep PII work**, so the c
 2–3 levels ahead of the PII/review frontier.
 
 The OCR L8/L9 text-layer work is contract-first: the output model and invariants are fixed in
-[`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md) **before**
-any implementation. Four layers — canonical `best_text_result` (source of truth, offset-stable), an
-internal detection-optimised `pii_input_text` (**v1: alias of canonical**), `readable_text`, and
-`layout_text_result` — tied by a `text_lineage_map`. There must be **no two unconnected
-source-of-truth texts**: every layer maps back to canonical/source; `pii_input_text` may diverge from
-canonical only with a tested mapping. The readable/layout/PII-input layers are additive and never a
-standalone PII input.
+[`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Four layers
+— canonical `best_text_result` (source of truth, offset-stable), an internal detection-optimised
+`pii_input_text`, `readable_text`, and `layout_text_result` — tied by a `text_lineage_map`.
+`layout_text_result` and `pii_input_text` each have a delivered PDF-text-layer v1 slice (see above);
+`readable_text` and `text_lineage_map` remain open. There must be **no two unconnected
+source-of-truth texts**: every layer maps back to canonical/source. `pii_input_text` may become the
+**active PII detection input** only with a tested `text_lineage_map` (the separation gate) — PII
+runs exclusively on canonical text today, regardless of `pii_input_text`'s v1 content. The readable/
+layout/PII-input layers are additive and never a standalone PII input.
 
 Feedback integrity hardening completes the planned trust-boundary bugfix without advancing an engine
 level. The checkpoint still leaves OCR/Text at L5, PII L10 partial, and Redaction L0; the next plan is:

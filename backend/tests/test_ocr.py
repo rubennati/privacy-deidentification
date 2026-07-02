@@ -812,6 +812,257 @@ def test_legacy_text_artifact_without_layout_field_remains_valid(
     assert response.json()["content"]["layout_text_result"] is None
 
 
+def _pdf_contact_blocks_and_table_bytes() -> bytes:
+    """Synthetic single-page offer: two multi-line contact blocks and a table. No real data.
+
+    The left block (x=40) and right block (x=320) each carry several lines so a reading-order
+    reconstruction can be checked for "left block fully, then right block fully" rather than only a
+    single shared row. Line/company/street names are invented and structurally similar to, but not
+    copied from, real documents.
+    """
+    runs = [
+        (40, 770, "Sanierungsbau Perchtoldsdorf GmbH"),
+        (320, 770, "Herr Dipl.-Ing. Franz Hubermayr"),
+        (40, 752, "Lindenstrasse 42"),
+        (320, 752, "Anna Hubermayr geb. Steininger"),
+        (40, 734, "2380 Perchtoldsdorf Oesterreich"),
+        (320, 734, "Rosengasse 7/12"),
+        (40, 716, "Tel: +43 660 1234567"),
+        (320, 716, "2340 Moedling Oesterreich"),
+        (40, 698, "office@example-contractor.at"),
+        (320, 698, "Tel: +43 699 8765432"),
+        (40, 680, "UID: ATU12345678"),
+        (320, 680, "franz.hubermayr@example.at"),
+        (320, 662, "Geburtsdatum: 14.03.1978"),
+        (40, 600, "Pos."), (90, 600, "Leistung"), (330, 600, "Menge"),
+        (390, 600, "Einheit"), (450, 600, "Einzelpreis"), (530, 600, "Gesamt"),
+        (40, 582, "1"), (90, 582, "Abbrucharbeiten Innenwaende"), (330, 582, "45"),
+        (390, 582, "m2"), (450, 582, "38,00"), (530, 582, "1710,00"),
+        (40, 564, "2"), (90, 564, "Fassadendaemmung"), (330, 564, "180"),
+        (390, 564, "m2"), (450, 564, "92,00"), (530, 564, "16560,00"),
+    ]
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=600, height=800)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})}
+    )
+    data = "".join(f"BT /F1 10 Tf {x} {y} Td ({text}) Tj ET\n" for x, y, text in runs)
+    stream = DecodedStreamObject()
+    stream.set_data(data.encode("latin-1"))
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def test_pii_input_text_generated_for_pdf_text_layer(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    fixture = _pdf_contact_blocks_and_table_bytes()
+    upload, _ = _upload_and_audit(client, "offer.pdf", fixture, "application/pdf")
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    pii_input_text = content["pii_input_text"]
+    assert pii_input_text is not None
+    assert "[BLOCK: left]" in pii_input_text
+    assert "[BLOCK: right]" in pii_input_text
+    assert "[TABLE]" in pii_input_text
+    assert adapter.calls == []
+    assert renderer.calls == []
+
+
+def test_pii_input_text_left_block_fully_before_right_block(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "offer.pdf", _pdf_contact_blocks_and_table_bytes(), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    pii_input_text = response.json()["content"]["pii_input_text"]
+    left_index = pii_input_text.index("[BLOCK: left]")
+    right_index = pii_input_text.index("[BLOCK: right]")
+    table_index = pii_input_text.index("[TABLE]")
+    # Whole left block precedes the whole right block, which precedes the table — not an
+    # X/Y-interleaved dump of both columns.
+    assert left_index < right_index < table_index
+
+
+def test_pii_input_text_keeps_contractor_lines_in_left_block_only(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "offer.pdf", _pdf_contact_blocks_and_table_bytes(), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    pii_input_text = response.json()["content"]["pii_input_text"]
+    left_index = pii_input_text.index("[BLOCK: left]")
+    right_index = pii_input_text.index("[BLOCK: right]")
+    left_segment = pii_input_text[left_index:right_index]
+    right_segment = pii_input_text[right_index:]
+    # A left-column line lands in the left block and never among the right block's lines.
+    assert "Lindenstrasse 42" in left_segment
+    assert "Lindenstrasse 42" not in right_segment
+
+
+def test_pii_input_text_keeps_customer_lines_in_right_block(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "offer.pdf", _pdf_contact_blocks_and_table_bytes(), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    pii_input_text = response.json()["content"]["pii_input_text"]
+    right_index = pii_input_text.index("[BLOCK: right]")
+    table_index = pii_input_text.index("[TABLE]")
+    right_segment = pii_input_text[right_index:table_index]
+    assert "Herr Dipl.-Ing. Franz Hubermayr" in right_segment
+    assert "Anna Hubermayr geb. Steininger" in right_segment
+
+
+def test_pii_input_text_table_rows_reconstructed_row_wise(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "offer.pdf", _pdf_contact_blocks_and_table_bytes(), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    pii_input_text = response.json()["content"]["pii_input_text"]
+    assert _line_with(pii_input_text, "Pos.", "Leistung", "Gesamt") is not None
+    assert _line_with(pii_input_text, "Abbrucharbeiten Innenwaende", "1710,00") is not None
+
+
+def test_pii_input_text_does_not_change_canonical_text(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    fixture = _pdf_contact_blocks_and_table_bytes()
+    upload, _ = _upload_and_audit(client, "offer.pdf", fixture, "application/pdf")
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    content = response.json()["content"]
+    expected_canonical = "\n\n".join(
+        page.extract_text() or "" for page in PdfReader(BytesIO(fixture)).pages
+    )
+    assert content["text"] == expected_canonical
+
+
+def test_pii_input_text_does_not_affect_layout_text_result(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "offer.pdf", _pdf_two_column_table_bytes(), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    content = response.json()["content"]
+    # Both additive fields are produced independently for the same document; pii_input_text does
+    # not replace or alter the existing layout_text_result behaviour.
+    assert content["pii_input_text"] is not None
+    layout = content["layout_text_result"]
+    assert layout is not None
+    assert _line_with(layout, "AUFTRAGNEHMER", "AUFTRAGGEBER") is not None
+    assert _line_with(layout, "Pos.", "Leistung", "Gesamt") is not None
+
+
+def test_pii_input_text_absent_for_docx(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client,
+        "document.docx",
+        _docx_bytes("First", "Second"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    assert response.json()["content"]["pii_input_text"] is None
+
+
+def test_pii_input_text_absent_for_image(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.outputs = ["Image text"]
+    upload, _ = _upload_and_audit(client, "image.png", _image_bytes("PNG"), "image/png")
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    assert response.json()["content"]["pii_input_text"] is None
+
+
+def test_pii_input_text_marks_ocr_pages_and_page_boundaries(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.outputs = ["Scanned page two text"]
+    upload, _ = _upload_and_audit(
+        client, "mixed.pdf", _pdf_pages_bytes(_GOOD_TEXT, None), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    pii_input_text = response.json()["content"]["pii_input_text"]
+    assert pii_input_text is not None
+    assert "[PAGE 2]" in pii_input_text
+    assert "[page 2: pii_input_text not reconstructed]" in pii_input_text
+    assert "Scanned page two text" in pii_input_text
+
+
+def test_legacy_text_artifact_without_pii_input_text_field_remains_valid(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    created = client.post(f"/api/documents/{upload['id']}/ocr").json()
+    path = _artifact_path(document_data_dir, upload["id"], created["id"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    # Simulate a legacy artifact written before this field existed.
+    payload["content"].pop("pii_input_text", None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = client.get(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 200
+    assert response.json()["content"]["pii_input_text"] is None
+
+
 def test_delete_removes_audit_and_text_artifacts(
     client: TestClient,
     document_data_dir: Path,

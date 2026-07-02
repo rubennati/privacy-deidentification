@@ -151,11 +151,17 @@ artifact are not yet built.
 - **Artifacts:** `layout_text_result` with ordered, typed blocks and coordinates.
 - **Acceptance:** multi-column and header/footer pages produce human-sensible reading order; the
   canonical text remains the PII input.
-- **Status:** a first additive `layout_text_result` (an optional field on `text_result`, pypdf
-  `extraction_mode="layout"`, PDF text-layer pages only; OCR/DOCX/image → `null`) is delivered as an
-  out-of-order v1 slice — `text_result.text` stays byte-stable and PII still runs on canonical text.
-  Typed blocks/geometry and OCR-page layout remain open; the cumulative L6 confidence / L7
-  `quality_report` are still the prioritised next steps.
+- **Status:** two additive v1 slices are delivered, both out-of-order ahead of the cumulative L6/L7
+  work, and both leave `text_result.text` byte-stable with PII still running on canonical text:
+  - `layout_text_result` — an optional field on `text_result`, pypdf `extraction_mode="layout"`,
+    PDF text-layer pages only; OCR/DOCX/image → `null`.
+  - `pii_input_text` — a second optional field on `text_result`: an internal, experimental,
+    detection-optimised reading-order reconstruction for PDF text-layer pages (left/right block
+    grouping, row-wise table rows from a known header line), built from pypdf's own text-position
+    data (`visitor_operand_before`, no new dependency). **Not** the active PII input — see
+    [`ocr-layout-text-contract.md`](ocr-layout-text-contract.md).
+  Typed blocks/geometry, OCR-page layout, a `text_lineage_map`, and a general table detector remain
+  open; the cumulative L6 confidence / L7 `quality_report` are still the prioritised next steps.
 - **Boundary to L10:** L9 knows block order; L10 persists precise per-line/word coordinates as
   reusable geometry.
 
