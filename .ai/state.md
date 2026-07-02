@@ -88,6 +88,22 @@
 - New `pii_result` artifacts record effective non-sensitive engine settings under
   `content.engine_settings` (`pii_profile`, candidate validation, score threshold, source) so
   dev-mode runs remain traceable without storing extra text or raw PII.
+- Dev-only PII review feedback: gated by `ENABLE_DEV_ENGINE_SETTINGS`. `POST
+  /api/documents/{id}/pii/feedback` appends one privacy-safe line; `GET
+  /api/documents/{id}/pii/feedback?artifact_id=…` returns the latest verdict per entity key
+  (type+start+end+recognizer), no comment/raw value, so the UI restores per-entity state and
+  locks a card once feedback exists. Gate off ⇒ both endpoints `403` and the UI hides the
+  controls. Entity cards carry a header "Passt" button, an issue picker with per-reason
+  explanations, an entity-type legend, and clickable offsets that jump/flash the span in the
+  extracted-text view. Analysis input only — not a learning system, never mutates `pii_result`,
+  no rules. No document/OCR/entity text is stored.
+  Dev review feedback storage is file-based and local:
+  `volumes/document-data/<document_id>/feedback/pii_feedback.jsonl` (host side of the existing
+  `document-data` bind mount; created on first write, survives `docker compose down`, removed with
+  the document, git-ignored). Follow-ups tracked in docs: entity grouping (next review level),
+  "Entity Resolution / Overlap Precedence Rules" (separate PR), and display-ordering by
+  precise-vs-NER types. See
+  [`docs/engine/review-feedback-levels.md`](../docs/engine/review-feedback-levels.md).
 - PII highlighting validates Python Unicode-codepoint offsets in a pure tested helper; overlapping
   entities are resolved deterministically while the entity list retains every detection.
 - `GET /api/config` exposes the effective limits so the frontend mirrors the backend.

@@ -16,6 +16,11 @@ import {
   type TextArtifact,
   WorkstationApiError,
 } from "../api/workstations";
+import {
+  buildFeedbackStatusMap,
+  fetchPiiFeedbackSummary,
+  type PiiFeedbackStatus,
+} from "../api/piiFeedback";
 import { PiiEntityList } from "../components/pii/PiiEntityList";
 import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
 import { PiiTextViewer } from "../components/pii/PiiTextViewer";
@@ -47,6 +52,7 @@ export default function DocumentDetailPage() {
   const [audit, setAudit] = useState<AuditArtifact | null>(null);
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
+  const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
   const [selectedPiiProfile, setSelectedPiiProfile] = useState("");
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<UiError | null>(null);
@@ -107,6 +113,23 @@ export default function DocumentDetailPage() {
       active = false;
     };
   }, [documentId]);
+
+  // Restore per-entity feedback state for the current PII artifact when the dev gate is on.
+  const devGateEnabled = appConfig?.devEngineSettingsEnabled ?? false;
+  const piiArtifactId = pii?.id ?? null;
+  useEffect(() => {
+    if (!documentId || !piiArtifactId || !devGateEnabled) {
+      setFeedbackStatuses({});
+      return;
+    }
+    let active = true;
+    void fetchPiiFeedbackSummary(documentId, piiArtifactId).then((summary) => {
+      if (active) setFeedbackStatuses(buildFeedbackStatusMap(summary));
+    });
+    return () => {
+      active = false;
+    };
+  }, [documentId, piiArtifactId, devGateEnabled]);
 
   if (loading) {
     return (
@@ -292,7 +315,14 @@ export default function DocumentDetailPage() {
                 )}
               </section>
               {pii ? (
-                <PiiEntityList entities={pii.content.entities} stale={piiStatus === "stale"} />
+                <PiiEntityList
+                  entities={pii.content.entities}
+                  stale={piiStatus === "stale"}
+                  documentId={documentId}
+                  artifactId={pii.id}
+                  feedbackEnabled={devPiiSettingsEnabled}
+                  feedbackStatuses={feedbackStatuses}
+                />
               ) : (
                 <section>
                   <h2 className="font-semibold text-ink">Erkannte Entities</h2>
