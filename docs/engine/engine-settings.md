@@ -9,6 +9,10 @@ Settings are read from environment variables via [`backend/app/config.py`](../..
 (12-factor); [`.env.example`](../../.env.example) is the annotated source of truth. This doc does not
 change any behaviour — it is planning/reference material for the 0–19 ladders.
 
+Settings shape *which detection strategy* runs (profile, score threshold, candidate validation);
+which strategies map to which entity categories is modelled in
+[`entity-taxonomy.md`](entity-taxonomy.md).
+
 ## Classification axes
 
 Each setting is rated on five axes:

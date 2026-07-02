@@ -140,6 +140,14 @@
     L8–L9, OCR L10/L15.
   See [ADR-0011](../docs/adr/0011-engine-capability-model.md) and
   [ADR-0016](../docs/adr/0016-engine-maturity-levels-0-19.md).
+- [`docs/engine/entity-taxonomy.md`](../docs/engine/entity-taxonomy.md) adds the **fachliche
+  taxonomy** alongside the maturity ladders: 19 business categories (PERSON…DOMAIN_SPECIFIC), their
+  entity types (grounded in `pii_profiles.py`), **risk/protection classes P0–P5** (P0–P4 GDPR
+  gradient; **P5 = Geheimschutz/secrets, not GDPR-only**; risk escalates by context), a
+  detection-strategy vocabulary, per-type coverage (implemented/partial/planned/out-of-scope), review
+  obligation, later redaction policy, and an OCR+PII tool↔strategy mapping. Docs-only, no
+  behaviour/recognizer/profile/dependency change. See
+  [ADR-0017](../docs/adr/0017-entity-taxonomy-and-risk-classes.md).
 
 ## Approach (tool-first / adapter-only)
 

@@ -20,6 +20,11 @@ ladders. This engine uses the **0–19 maturity scale** ([why 0–19](README.md#
 mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
+**What** the engine detects — the business categories, concrete entity types, their risk /
+protection class (P0–P5), and the fitting detection strategy — is modelled in
+[`entity-taxonomy.md`](entity-taxonomy.md). This ladder is the *maturity* axis; the taxonomy is the
+*coverage/sensitivity* axis.
+
 **Current standing:** **L9 done (L0–L9); L10 partial (dev-only human feedback capture).** Structured
 + AT/DE + insurance/legal recognizers, named profiles, benchmark, candidate validation, context
 hardening, address/contact-line coverage, and reproducible artifact `engine_settings` are all
