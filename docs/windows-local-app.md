@@ -2,9 +2,9 @@
 
 ## Voraussetzungen
 
-- Windows 10 oder 11 mit PowerShell
+- Windows 11 mit PowerShell
 - Git for Windows
-- Docker Desktop mit Linux-Containern
+- Docker Desktop mit Linux-Containern (wsl: <https://learn.microsoft.com/en-us/windows/wsl/install>)
 
 Der Installer installiert keine Systemsoftware ohne Zustimmung. Fehlt Git oder Docker Desktop,
 zeigt er den offiziellen Download und, falls vorhanden, einen optionalen `winget`-Befehl an.
