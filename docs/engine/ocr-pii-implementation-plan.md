@@ -10,9 +10,9 @@ loop, and the OCR-vs-PII sequencing rationale. It **invents no new level numbers
 is defined in [`ocr-engine-levels.md`](ocr-engine-levels.md) and
 [`pii-engine-levels.md`](pii-engine-levels.md).
 
-The output-model contract for the OCR L8/L9 text work below (canonical `best_text_result` vs new
-`readable_text` vs `layout_text_result`, and their invariants) is fixed in
-[`ocr-layout-text-contract.md`](ocr-layout-text-contract.md).
+The output-model contract for the OCR L8/L9 text work below (canonical `best_text_result` vs the
+internal `pii_input_text` vs `readable_text` vs `layout_text_result`, tied by a `text_lineage_map`,
+and their invariants) is fixed in [`ocr-layout-text-contract.md`](ocr-layout-text-contract.md).
 
 ## Purpose
 

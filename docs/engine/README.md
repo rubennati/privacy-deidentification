@@ -46,7 +46,7 @@ right, and making both human-reviewable, comes first.
 | [`target-architecture.md`](target-architecture.md) | Target architecture, the DB question, and the optional local-AI question. |
 | [`roadmap.md`](roadmap.md) | Which PRs come next, in which order, with scope and acceptance criteria. |
 | [`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md) | Operative OCR/PII PR sequence, cadence, and the checkpoint loop that re-validates the plan after each PR. |
-| [`ocr-layout-text-contract.md`](ocr-layout-text-contract.md) | The canonical / readable / layout text-layer contract and invariants, fixed before layout implementation. |
+| [`ocr-layout-text-contract.md`](ocr-layout-text-contract.md) | The canonical / PII-input / readable / layout text-layer contract, the lineage map, and invariants, fixed before layout implementation. |
 
 **OCR/Text and PII/Sensitive-Data are the core engines**; the other engines (Review, Feedback,
 Benchmark, Audit, Redaction) support and measure them. The operative plan that keeps OCR/Text ahead

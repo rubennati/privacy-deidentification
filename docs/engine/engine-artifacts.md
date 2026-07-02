@@ -39,20 +39,29 @@ only when a later station requires it.
 
 ## Canonical and readable text
 
-Three distinct text layers, fixed by the
+Four distinct text layers plus a lineage map, fixed by the
 [OCR/Layout text contract](ocr-layout-text-contract.md):
 
 - **`best_text_result`** is the **canonical**, correctness-first text represented today by
-  `text_result`. PII offsets always reference this text. It is **not** redefined to mean readable
-  text.
+  `text_result`. It is the single source of truth and coordinate system; PII offsets always resolve
+  to this text. It is **not** redefined to mean readable text.
+- **`pii_input_text`** (new, optional, additive; internal) is a **detection-optimised** view that
+  preserves logical blocks/roles/table/address structure. In v1 it equals canonical text; it may
+  diverge later **only** with a tested lineage map (round-trippable to canonical). Not user-facing,
+  not a rival source of truth.
 - **`readable_text`** (new, optional, additive) is a **human-readable** normalisation of the same
   content (whitespace/paragraph/hyphenation) starting at OCR L8. No PII-offset guarantee; never a PII
   input.
 - **`layout_text_result`** (new, optional, additive) is a **layout-preserving** plain-text
-  reconstruction (pages, blocks, columns, tables) starting at OCR L9. No PII-offset guarantee.
+  reconstruction (pages, blocks, columns, tables) for Review/UI, starting at OCR L9. No PII-offset
+  guarantee.
+- **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
+  ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
+  its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.
 
-`readable_text` and `layout_text_result` are additive and never mutate canonical text or shift PII
-offsets; older artifacts without them stay valid.
+These layers are additive and never mutate canonical text or shift PII offsets; there are **no two
+unconnected source-of-truth texts** — every layer maps back to canonical (and source) via
+`text_lineage_map`. Older artifacts without the new fields stay valid.
 
 ## Dev feedback side-channel
 
