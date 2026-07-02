@@ -36,3 +36,7 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   OCR, PII, Review, Benchmark, and Redaction.
 - [ADR-0017](../docs/adr/0017-entity-taxonomy-and-risk-classes.md) — Entity taxonomy, detection
   strategies, and risk/protection classes P0–P5.
+- [ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md) — OCR/Text and PII/Sensitive-Data are
+  the core engines; OCR/Text stays 2–3 levels ahead of PII/Redaction; a checkpoint loop re-validates
+  the plan after each engine PR. Operative sequence in
+  [`ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md).
