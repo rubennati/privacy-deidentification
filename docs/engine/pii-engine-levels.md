@@ -24,7 +24,7 @@ recorded in `pii_result`; per-profile validation posture remains future L5 work.
 | Profile | Intent | Entity coverage | Validation posture |
 | --- | --- | --- | --- |
 | `structured-only` | High precision, low noise (conservative code fallback if `PII_PROFILE` is unset; `.env.example` recommends `insurance-at-de` instead) | EMAIL/PHONE/IBAN/CREDIT_CARD/IP/URL | validation runs, near-zero drops (light types pass through) |
-| `insurance-at-de` | AT/DE + insurance/legal domain identifiers | structured + AT/DE + policy/claim/contract/… | validation runs; only `BIC` + a few domain IDs get a context check |
+| `insurance-at-de` | AT/DE + insurance/legal domain identifiers | structured + AT/DE + policy/claim/contract/… + ADDRESS/CONTACT_LINE/CUSTOMER_LINE ([ADR-0015](../adr/0015-structured-address-contact-line-recognizers.md)) | validation runs; only `BIC` + a few domain IDs get a context check |
 | `broad-review` | Maximise recall for a human reviewer | above + PERSON/ORGANIZATION/LOCATION | full lexical/context validation on PERSON/ORGANIZATION/LOCATION |
 | `review-heavy` | Nothing missed; reviewer resolves everything | above + DATE_TIME | above, plus DATE_TIME year-only/shape checks |
 
@@ -73,7 +73,9 @@ those profiles — there is no profile branching in the validator itself.
 - **Metrics:** per-type P/R/F1 for the AT/DE types; recall lift on `PHONE_NUMBER`/`IBAN_CODE`.
 - **Tests/benchmarks:** recognizer unit tests with synthetic AT/DE-shaped values; benchmark deltas.
 - **Tools:** Presidio custom pattern/context recognizers (no new heavy dependency).
-- **Not in scope:** postal/address recognition remains open; NER tuning (L5); real values in tests.
+- **Not in scope:** postal/address recognition (delivered later via
+  [ADR-0015](../adr/0015-structured-address-contact-line-recognizers.md)); NER tuning (L5); real
+  values in tests.
 - **Acceptance:** synthetic AT/DE identifiers are detected; `PHONE_NUMBER` recall rises materially
   on the benchmark without wrecking precision.
 
@@ -242,7 +244,7 @@ verdict + reason both survive, so a human (or a later review action) can overrid
 | --- | --- | --- |
 | 0 None | n/a | — |
 | 1 Structured basics | ✅ done (quality uneven on AT/DE) | Presidio structured recognizers, default allowlist |
-| 2 AT/DE pattern pack | ✅ core delivered | Presidio pattern/context recognizers; address remains open |
+| 2 AT/DE pattern pack | ✅ core delivered | Presidio pattern/context recognizers; address/contact-line covered via [ADR-0015](../adr/0015-structured-address-contact-line-recognizers.md) |
 | 3 Insurance/legal pack | ✅ done | domain-sensitive recognizers and benchmark coverage |
 | 4 Entity profiles | ⏳ partial | named coverage profiles recorded; per-profile benchmark reporting open |
 | 5 Candidate validation | ✅ done | KEEP/SCORE_DOWN/DROP post-processing; NER over-tagging reduced |
@@ -288,12 +290,27 @@ types are untouched.
 **Determinism:** two consecutive `make benchmark-private` runs per profile produced identical
 reports (timestamps aside).
 
-**Unsupported types** (both profiles, after regenerating artifacts): exactly the seven documented
-labels — `ADDRESS`, `BIRTH_DATE`, `BIRTH_PLACE`, `CONTACT_LINE`, `CUSTOMER_LINE`, `FAMILY_NAME`,
-`GIVEN_NAME`.
+**Structured address & contact-line coverage
+([ADR-0015](../adr/0015-structured-address-contact-line-recognizers.md)) — Engine-5 →
++`ADDRESS`/`CONTACT_LINE`/`CUSTOMER_LINE`, aggregate before/after on the same corpus:**
+
+| Metric | Before (Engine-5) | After (ADR-0015) |
+| --- | --- | --- |
+| `review-heavy` global | 118 TP / 147 FP / 91 FN, P=0.4453, R=0.5646, F1=0.4979 | 140 TP / 158 FP / 69 FN, P=0.4698, R=0.6699, F1=0.5523 |
+| `insurance-at-de` global | 77 TP / 27 FP / 132 FN, P=0.7404, R=0.3684, F1=0.4920 | 99 TP / 38 FP / 110 FN, P=0.7226, R=0.4737, F1=0.5723 |
+| `address_contact_types` group (new) | — (all 26 candidates were unsupported FNs in `other_types`) | 22 TP / 11 FP / 4 FN, P=0.6667, R=0.8462, F1=0.7458 |
+| Per type | — | `ADDRESS` 18/10/3 (R=0.8571), `CONTACT_LINE` 3/1/1, `CUSTOMER_LINE` 1/0/0 |
+| NER / structured / domain-sensitive groups | — | bit-for-bit unchanged in both profiles |
+| Unsupported types | 7 labels | 4: `BIRTH_DATE`, `BIRTH_PLACE`, `FAMILY_NAME`, `GIVEN_NAME` |
+
+The one remaining `CONTACT_LINE` false negative is a labelled line without any contact signal
+(no honorific/title/phone/e-mail) — the content-shape requirement declines to blindly mark such
+a line by design. `review-heavy` precision *rose* (the new deterministic types out-earn their
+false positives), and both runs were again deterministic across two consecutive invocations.
 
 **What is missing next:**
-1. Address/contact-line recognition and the seven remaining unsupported semantic labels.
+1. The four remaining unsupported semantic labels (`BIRTH_DATE`, `BIRTH_PLACE`, `FAMILY_NAME`,
+   `GIVEN_NAME`).
 2. Per-profile benchmark runs in one invocation (today: rerun per configured profile) and
    validation posture surfaced per-profile, to complete L4.
 3. Review/feedback persistence (Engine-6) so a human can act on validation-surviving candidates.

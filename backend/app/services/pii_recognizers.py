@@ -15,6 +15,11 @@ Matching policy (which types may match a value without an adjacent label):
   unrelated number: ``SVNR_AT``, ``TAX_ID_AT``, ``CREDIT_CARD``, ``LICENSE_PLATE_AT``,
   ``PASSPORT_NUMBER``, ``ID_CARD_NUMBER`` and the *generic* value form of every domain identifier
   (``POLICY_NUMBER`` … ``USER_ID``). The match span is only the value, never the label.
+- Line-level semantic types (``ADDRESS``, ``CONTACT_LINE``, ``CUSTOMER_LINE``): ``ADDRESS``
+  matches directly only on the unambiguous AT/DE street shape (street word + house number,
+  optional ``PLZ Ort`` tail); the labelled-line forms require an immediately adjacent label
+  (same line or the directly following line) *and* a content-shape check on the captured line,
+  so a label followed by unrelated text never blindly marks a whole line.
 
 Format-strong direct matches can still be false positives on look-alike values; no candidate
 validation runs here — that is deliberately left to the Engine-5 follow-up.
@@ -94,6 +99,54 @@ def _contextual_patterns(
         for label_index, label in enumerate(labels)
         for separator_index, separator in enumerate(_CONTEXT_SEPARATORS)
     )
+
+
+# Post-colon tails for labelled-line capture: the value may follow on the same line (": " or
+# ":") or on its own, directly following line (":\n"). The span is only the value, never the
+# label line.
+_LINE_LABEL_TAILS = (" ", "", "\n")
+
+
+def _labeled_line_patterns(
+    name: str,
+    line_regex: str,
+    labels: tuple[str, ...],
+    score: float = 0.65,
+    allow_label_qualifier: bool = False,
+) -> tuple[PatternSpec, ...]:
+    """Match one line of text directly after a labelled colon, without including the label.
+
+    ``line_regex`` must carry its own content-shape requirement (e.g. "contains a digit" or
+    "contains a contact signal") so a label followed by unrelated text does not blindly match.
+
+    ``allow_label_qualifier`` tolerates a short qualifier between label and colon
+    ("Ansprechpartner HV:", "Kontakt Eigent.:", "Auftraggeberin:"). The resulting lookbehind is
+    variable-width, which the ``regex`` engine used by Presidio (and by the recognizer unit
+    tests) supports; the stdlib ``re`` module would reject it.
+    """
+    line_body = line_regex.removeprefix("(?i)")
+    qualifier = r"[^\n:]{0,24}" if allow_label_qualifier else ""
+    return tuple(
+        PatternSpec(
+            name=f"{name}_line_{label_index}_{tail_index}",
+            regex=(
+                rf"(?i)(?<=\b{re.escape(label)}{qualifier}:{re.escape(tail)}){line_body}"
+            ),
+            score=score,
+        )
+        for label_index, label in enumerate(labels)
+        for tail_index, tail in enumerate(_LINE_LABEL_TAILS)
+    )
+
+
+# AT/DE street shape: compound street word ("Mariengasse", OCR-safe "strasse"), a house number
+# with optional stair/door parts ("12", "12a", "18/10/44"), and an optional ", PLZ Ort" tail.
+# A unit lookahead keeps distance phrases ("Anfahrtsweg 12 km") from matching as an address.
+_STREET_SUFFIX = r"(?:straße|strasse|gasse|platz|weg|allee)"
+# The trailing lookahead rejects a following digit (so backtracking cannot shorten the number
+# to dodge the unit check) and a following measurement unit or percent/currency sign.
+_HOUSE_NUMBER = r"\d{1,4}[a-z]?(?:\s*/\s*\d{1,4}[a-z]?){0,3}(?!\d|\s*(?:km|cm|mm|kg|m)\b|\s*[%€])"
+_POSTAL_CITY = r"\d{4,5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+)?"
 
 
 def _domain_identifier(
@@ -396,6 +449,80 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
         "USER_ID",
         r"(?i)(?<![\w])(?:USR|USER)(?:[-/][A-Z0-9._@]+){1,5}(?![\w])",
         ("benutzerkennung", "benutzer-id", "benutzerid", "user-id", "userid", "login"),
+    ),
+    RecognizerSpec(
+        name="AtDeAddressRecognizer",
+        entity_type="ADDRESS",
+        patterns=(
+            PatternSpec(
+                # Compound street word with attached suffix ("Mariengasse 12, 8020 Graz").
+                # A bare suffix word alone ("Weg 5") cannot match: the stem requires at least
+                # one extra character before the suffix.
+                "at_de_street_compound",
+                rf"(?i)\b[a-zäöüß-]+{_STREET_SUFFIX}\s+{_HOUSE_NUMBER}"
+                rf"(?:\s*,\s*{_POSTAL_CITY})?",
+                0.7,
+            ),
+            PatternSpec(
+                # Two-word street ("Linzer Straße 12"), deliberately case-sensitive so ordinary
+                # prose ("auf dem weg 5") cannot match; the first word needs three letters so a
+                # capitalised preposition ("Am Weg 5" mid-prose) does not qualify either.
+                "at_de_street_two_word",
+                rf"\b[A-ZÄÖÜ][a-zäöüß.-]{{2,}}\s+(?:Straße|Strasse|Gasse|Platz|Weg|Allee)"
+                rf"\s+{_HOUSE_NUMBER}(?:\s*,\s*{_POSTAL_CITY})?",
+                0.7,
+            ),
+            *_labeled_line_patterns(
+                # Labelled address line for streets the shape patterns miss (OCR-mangled or
+                # exotic street names); the line must contain a digit (house number/PLZ).
+                "labeled_address",
+                r"(?=[^\n]{0,80}\d)[A-ZÄÖÜ0-9][^\n]{4,79}",
+                ("adresse", "anschrift", "wohnadresse", "objektadresse"),
+                0.6,
+            ),
+        ),
+        context=("adresse", "anschrift", "wohnhaft", "plz", "ort"),
+    ),
+    RecognizerSpec(
+        name="ContactLineRecognizer",
+        entity_type="CONTACT_LINE",
+        patterns=_labeled_line_patterns(
+            # The captured line must carry a person/contact signal (honorific, title, phone
+            # shape, or e-mail) so a contact label followed by generic text never matches.
+            # The qualifier tolerance also covers derived label forms ("Kontaktdaten",
+            # "Ansprechpartnerin", "Ansprechpartner HV", "Kontakt Eigent.").
+            "contact_line",
+            r"(?=[^\n]{0,100}(?:@|\+\d|\b0\d|\bherr\b|\bfrau\b|\btel\b|\btelefon\b"
+            r"|\bmobil\b|\bdipl\b|\bmag\.|\bing\.|\bdr\.))[A-ZÄÖÜa-zäöü0-9+(][^\n]{5,119}",
+            (
+                "kontakt",
+                "ansprechpartner",
+                "ansprechperson",
+                "sachbearbeiter",
+                "bearbeiter",
+                "eigentümer",
+                "eigentuemer",
+                "hausverwaltung",
+                "verwalter",
+                "auftraggeber",
+            ),
+            allow_label_qualifier=True,
+        ),
+        context=("kontakt", "ansprechpartner", "sachbearbeiter", "eigentümer", "auftraggeber"),
+    ),
+    RecognizerSpec(
+        name="CustomerLineRecognizer",
+        entity_type="CUSTOMER_LINE",
+        patterns=_labeled_line_patterns(
+            # The captured line must contain at least two letters (a name/company, never a bare
+            # number or an empty remainder). No qualifier tolerance here: "Kunde" + qualifier
+            # would swallow "Kundennummer:" lines, which are CUSTOMER_NUMBER, not a customer
+            # line.
+            "customer_line",
+            r"(?=[^\n]{0,80}[A-Za-zÄÖÜäöüß]{2})[A-ZÄÖÜ0-9][^\n]{2,79}",
+            ("kunde", "kundin", "kundendaten", "rechnung an"),
+        ),
+        context=("kunde", "kundendaten", "rechnung"),
     ),
 )
 

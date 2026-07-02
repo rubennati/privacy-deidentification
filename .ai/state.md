@@ -63,6 +63,11 @@
   (default on) is an escape hatch. Validation intensity follows entity type, not profile, so
   PERSON/ORGANIZATION/LOCATION/DATE_TIME stay opt-in exactly as before. See
   [ADR-0013](../docs/adr/0013-pii-candidate-validation.md).
+- Deterministic `ADDRESS`/`CONTACT_LINE`/`CUSTOMER_LINE` recognizers (street shape + labelled-line
+  capture with content-shape checks) extend the pack; the types form the `ADDRESS_CONTACT_TYPES`
+  group in `insurance-at-de`/`broad-review`/`review-heavy` and the benchmark's
+  `address_contact_types` group. See
+  [ADR-0015](../docs/adr/0015-structured-address-contact-line-recognizers.md).
 - Presidio/spaCy are isolated behind a lazy adapter and optional `pii` image extra; the pinned
   German model is installed at image build time and never downloaded during a request.
 - The document detail UI invokes each workstation manually, surfaces missing/stale/current
@@ -108,7 +113,8 @@ signals prioritise closing PII detection gaps before review/redaction:
 
 1. Engine-6 — Review/feedback model: persist human confirm/reject/add over immutable PII labels.
 2. Engine-2 — OCR L4–L5 hardening (OCR confidence + `quality_report` + human-readable text).
-3. Add address/contact-line coverage and per-profile benchmark reporting.
+3. Per-profile benchmark reporting (address/contact-line coverage landed via ADR-0015; the
+   remaining unsupported labels are BIRTH_DATE/BIRTH_PLACE/FAMILY_NAME/GIVEN_NAME).
 4. Add CI/CD gates (lint/typecheck/test/SAST/SCA) and a benchmark regression gate.
 
 ## Active constraints

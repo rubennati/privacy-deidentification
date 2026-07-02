@@ -37,7 +37,11 @@ CANONICAL_TYPE_MAP: dict[str, str] = {
     "ORGANIZATION": "ORGANIZATION",
     "LOC": "LOCATION",
     "LOCATION": "LOCATION",
+    # Deterministic line-level types (Engine-5 follow-up): street-shape addresses and labelled
+    # contact/customer lines. See `TYPE_GROUPS["address_contact_types"]`.
     "ADDRESS": "ADDRESS",
+    "CONTACT_LINE": "CONTACT_LINE",
+    "CUSTOMER_LINE": "CUSTOMER_LINE",
     "DATE": "DATE_TIME",
     "DATE_TIME": "DATE_TIME",
     # BIRTH_DATE is deliberately NOT folded into DATE_TIME: it is a distinct, more sensitive
@@ -106,6 +110,7 @@ TYPE_GROUPS: dict[str, frozenset[str]] = {
             "USER_ID",
         }
     ),
+    "address_contact_types": frozenset({"ADDRESS", "CONTACT_LINE", "CUSTOMER_LINE"}),
 }
 _OTHER_GROUP = "other_types"
 

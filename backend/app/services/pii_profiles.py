@@ -53,6 +53,14 @@ DOMAIN_SENSITIVE_TYPES: tuple[str, ...] = (
     *DOMAIN_IDENTIFIER_TYPES,
 )
 
+# Deterministic line-level types (street-shape and labelled contact/customer lines); pattern
+# recognizers, not NER — see docs/adr/0015-structured-address-contact-line-recognizers.md.
+ADDRESS_CONTACT_TYPES: tuple[str, ...] = (
+    "ADDRESS",
+    "CONTACT_LINE",
+    "CUSTOMER_LINE",
+)
+
 NER_TYPES: tuple[str, ...] = (
     "PERSON",
     "ORGANIZATION",
@@ -73,16 +81,19 @@ class PiiProfile:
 PII_PROFILES: dict[PiiProfileName, PiiProfile] = {
     "structured-only": PiiProfile("structured-only", STRUCTURED_TYPES),
     "insurance-at-de": PiiProfile(
-        "insurance-at-de", (*STRUCTURED_TYPES, *DOMAIN_SENSITIVE_TYPES)
+        "insurance-at-de",
+        (*STRUCTURED_TYPES, *DOMAIN_SENSITIVE_TYPES, *ADDRESS_CONTACT_TYPES),
     ),
     "broad-review": PiiProfile(
-        "broad-review", (*STRUCTURED_TYPES, *DOMAIN_SENSITIVE_TYPES, *NER_TYPES)
+        "broad-review",
+        (*STRUCTURED_TYPES, *DOMAIN_SENSITIVE_TYPES, *ADDRESS_CONTACT_TYPES, *NER_TYPES),
     ),
     "review-heavy": PiiProfile(
         "review-heavy",
         (
             *STRUCTURED_TYPES,
             *DOMAIN_SENSITIVE_TYPES,
+            *ADDRESS_CONTACT_TYPES,
             *NER_TYPES,
             *LOWER_CONFIDENCE_NER_TYPES,
         ),
