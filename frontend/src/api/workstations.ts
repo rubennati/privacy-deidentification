@@ -91,6 +91,13 @@ export interface PiiValidationSummary {
   score_down_by_reason: Record<string, number>;
 }
 
+export interface PiiArtifactEngineSettings {
+  pii_profile: string;
+  candidate_validation_enabled: boolean;
+  score_threshold: number;
+  source: "server-default" | "dev-ui-override";
+}
+
 export interface PiiArtifact {
   id: string;
   document_id: string;
@@ -103,6 +110,7 @@ export interface PiiArtifact {
     document_id: string;
     input_text_artifact_id: string;
     pii_version: "1";
+    profile: string;
     language: string;
     score_threshold: number;
     text_char_count: number;
@@ -113,7 +121,13 @@ export interface PiiArtifact {
     flags: string[];
     // Engine-5 candidate validation summary. Absent on artifacts written before it existed.
     validation?: PiiValidationSummary | null;
+    // Effective non-sensitive settings for this run. Absent on legacy artifacts.
+    engine_settings?: PiiArtifactEngineSettings | null;
   };
+}
+
+export interface PiiRunRequest {
+  pii_profile: string;
 }
 
 interface ApiError {
@@ -155,20 +169,26 @@ export function fetchPii(documentId: string): Promise<PiiArtifact> {
   return requestArtifact<PiiArtifact>(documentId, "pii", "GET");
 }
 
-export function runPii(documentId: string): Promise<PiiArtifact> {
-  return requestArtifact<PiiArtifact>(documentId, "pii", "POST");
+export function runPii(documentId: string, request?: PiiRunRequest): Promise<PiiArtifact> {
+  return requestArtifact<PiiArtifact>(documentId, "pii", "POST", request);
 }
 
 async function requestArtifact<T>(
   documentId: string,
   station: Station,
   method: "GET" | "POST",
+  body?: unknown,
 ): Promise<T> {
   let response: Response;
   try {
+    const request: RequestInit = { method };
+    if (body !== undefined) {
+      request.headers = { "Content-Type": "application/json" };
+      request.body = JSON.stringify(body);
+    }
     response = await fetch(
       `/api/documents/${encodeURIComponent(documentId)}/${station}`,
-      { method },
+      request,
     );
   } catch {
     throw new WorkstationApiError("Keine Verbindung zum Server.", 0);

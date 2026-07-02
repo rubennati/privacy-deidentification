@@ -19,6 +19,7 @@ from app.main import app
 from app.schemas import TextArtifact, TextContent, TextPageResult
 from app.services.artifact_service import save_text_artifact
 from app.services.pii_adapters import DetectedEntity, PiiUnavailableError
+from app.services.pii_profiles import get_pii_profile
 
 
 class FakePiiAnalyzer:
@@ -154,6 +155,12 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
     assert artifact["artifact_type"] == "pii_result"
     assert artifact["station"] == "pii"
     assert artifact["input_text_artifact_id"] == latest.id
+    assert artifact["content"]["engine_settings"] == {
+        "pii_profile": "custom",
+        "candidate_validation_enabled": True,
+        "score_threshold": 0.5,
+        "source": "server-default",
+    }
     entity = artifact["content"]["entities"][0]
     assert entity == {
         "id": entity["id"],
@@ -300,6 +307,88 @@ def test_service_forwards_configured_allowlist_verbatim(
         settings.pii_entity_types
     )
     assert response.json()["content"]["profile"] == "structured-only"
+
+
+def test_post_rejects_dev_override_when_disabled(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+    pii_fake.results["Kontakt max@example.at"] = [_entity("EMAIL_ADDRESS", 8, 22, 1.0)]
+
+    response = client.post(
+        f"/api/documents/{document_id}/pii",
+        json={"pii_profile": "review-heavy"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_post_without_body_continues_to_work_when_dev_gate_is_enabled(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.enable_dev_engine_settings = True
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+    pii_fake.results["Kontakt max@example.at"] = [_entity("EMAIL_ADDRESS", 8, 22, 1.0)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    assert response.json()["content"]["engine_settings"] == {
+        "pii_profile": "custom",
+        "candidate_validation_enabled": True,
+        "score_threshold": 0.5,
+        "source": "server-default",
+    }
+
+
+@pytest.mark.parametrize(
+    "profile",
+    ["structured-only", "insurance-at-de", "broad-review", "review-heavy"],
+)
+def test_post_accepts_dev_profile_override_when_enabled_for_all_profiles(
+    profile: str,
+    client: TestClient,
+    settings: Settings,
+    pii_fake: FakePiiAnalyzer,
+) -> None:
+    settings.enable_dev_engine_settings = True
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+    pii_fake.results["Kontakt max@example.at"] = [_entity("EMAIL_ADDRESS", 8, 22, 1.0)]
+
+    response = client.post(
+        f"/api/documents/{document_id}/pii",
+        json={"pii_profile": profile},
+    )
+
+    assert response.status_code == 201
+    assert pii_fake.entity_types_seen == [get_pii_profile(profile).entity_types]
+    assert response.json()["content"]["engine_settings"] == {
+        "pii_profile": profile,
+        "candidate_validation_enabled": True,
+        "score_threshold": 0.5,
+        "source": "dev-ui-override",
+    }
+
+
+def test_post_rejects_unknown_dev_profile(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+
+    response = client.post(
+        f"/api/documents/{document_id}/pii",
+        json={"pii_profile": "maximum-everything"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_missing_text_result_returns_409(

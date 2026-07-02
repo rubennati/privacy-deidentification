@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { fetchAppConfig, type AppConfig } from "../api/config";
 import { DocumentsApiError, fetchDocument, type DocumentSummary } from "../api/documents";
 import {
   fetchAudit,
@@ -11,10 +12,12 @@ import {
   runPii,
   type AuditArtifact,
   type PiiArtifact,
+  type PiiRunRequest,
   type TextArtifact,
   WorkstationApiError,
 } from "../api/workstations";
 import { PiiEntityList } from "../components/pii/PiiEntityList";
+import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
 import { PiiTextViewer } from "../components/pii/PiiTextViewer";
 import {
   StationPanel,
@@ -34,13 +37,17 @@ type StationName = "audit" | "ocr" | "pii";
 // "erneut erstellen" (create again) is the correct verb, not "Reset".
 const RERUN_HINT =
   "Ein erneuter Lauf erzeugt ein neues Ergebnis. Vorherige Ergebnisse bleiben als Artefakte erhalten.";
+const DEV_PII_HINT =
+  "Ein neuer Lauf erzeugt ein neues Ergebnis. Ein gewaehltes Dev-Profil gilt nur fuer diesen Lauf.";
 
 export default function DocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
   const [document, setDocument] = useState<DocumentSummary | null>(null);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [audit, setAudit] = useState<AuditArtifact | null>(null);
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
+  const [selectedPiiProfile, setSelectedPiiProfile] = useState("");
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<UiError | null>(null);
   const [stationErrors, setStationErrors] = useState<Record<StationName, UiError | null>>({
@@ -63,12 +70,17 @@ export default function DocumentDetailPage() {
         active = false;
       };
     }
+    setSelectedPiiProfile("");
 
     void (async () => {
       try {
-        const loadedDocument = await fetchDocument(documentId);
+        const [loadedDocument, loadedConfig] = await Promise.all([
+          fetchDocument(documentId),
+          fetchAppConfig(),
+        ]);
         if (!active) return;
         setDocument(loadedDocument);
+        setAppConfig(loadedConfig);
 
         const [auditResult, textResult, piiResult] = await Promise.all([
           loadOptional(() => fetchAudit(documentId), "audit"),
@@ -137,6 +149,11 @@ export default function DocumentDetailPage() {
       ? "current"
       : "stale";
   const currentPiiEntities = piiStatus === "current" ? (pii?.content.entities ?? []) : [];
+  const devPiiSettingsEnabled = appConfig?.devEngineSettingsEnabled ?? false;
+  const piiRunRequest: PiiRunRequest | undefined =
+    devPiiSettingsEnabled && selectedPiiProfile !== ""
+      ? { pii_profile: selectedPiiProfile }
+      : undefined;
 
   const execute = async <T,>(
     station: StationName,
@@ -220,16 +237,29 @@ export default function DocumentDetailPage() {
           <StationPanel
             title="PII"
             status={piiStatus}
-            actionLabel={pii ? "PII erneut erstellen" : "PII starten"}
-            actionHint={pii ? RERUN_HINT : undefined}
+            actionLabel={
+              devPiiSettingsEnabled
+                ? "PII mit ausgewaehltem Profil starten"
+                : pii
+                  ? "PII erneut erstellen"
+                  : "PII starten"
+            }
+            actionHint={devPiiSettingsEnabled ? DEV_PII_HINT : pii ? RERUN_HINT : undefined}
             pendingLabel="PII-Erkennung läuft …"
             pending={pending.pii}
             disabled={!text || pending.ocr || pending.pii}
             disabledReason={!text ? "Zuerst OCR/Text erzeugen." : undefined}
             error={stationErrors.pii}
-            onAction={() => void execute("pii", () => runPii(documentId), setPii)}
+            onAction={() => void execute("pii", () => runPii(documentId, piiRunRequest), setPii)}
           >
             {pii ? <PiiSummary artifact={pii} /> : <p>PII-Erkennung noch nicht ausgeführt.</p>}
+            <PiiEngineSettingsPanel
+              config={appConfig?.pii ?? null}
+              devSettingsEnabled={devPiiSettingsEnabled}
+              selectedProfile={selectedPiiProfile}
+              artifactSettings={pii?.content.engine_settings ?? null}
+              onProfileChange={setSelectedPiiProfile}
+            />
           </StationPanel>
         </div>
 
@@ -309,10 +339,12 @@ function TextSummary({ artifact }: { artifact: TextArtifact }) {
 }
 
 function PiiSummary({ artifact }: { artifact: PiiArtifact }) {
+  const profile = artifact.content.engine_settings?.pii_profile ?? artifact.content.profile;
   return (
     <dl className="space-y-1">
       <SummaryRow label="Entities" value={String(artifact.content.entities.length)} />
       <SummaryRow label="Sprache" value={artifact.content.language} />
+      <SummaryRow label="Profil" value={profile} />
       <SummaryRow label="Schwellwert" value={artifact.content.score_threshold.toFixed(2)} />
     </dl>
   );
@@ -364,6 +396,8 @@ function toStationError(error: unknown, station: StationName): UiError {
           : station === "pii"
             ? "Zuerst OCR/Text erzeugen."
             : "Das Original-Artifact ist nicht verwendbar."
+        : error.status === 403
+          ? "Dev Engine Settings sind auf diesem Server deaktiviert."
         : error.status === 422
           ? station === "pii"
             ? "Der Text konnte nicht verarbeitet werden."

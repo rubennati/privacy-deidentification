@@ -8,7 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.services.pii_profiles import DOMAIN_SENSITIVE_TYPES, STRUCTURED_TYPES
+from app.services.pii_profiles import (
+    ADDRESS_CONTACT_TYPES,
+    DOMAIN_SENSITIVE_TYPES,
+    PII_PROFILES,
+    STRUCTURED_TYPES,
+)
 
 
 def test_storage_configuration_uses_clear_names_and_accepts_legacy_upload_dir() -> None:
@@ -48,6 +53,29 @@ def test_config_returns_effective_upload_constraints(client: TestClient) -> None
     body = response.json()
     assert body["max_upload_bytes"] == 1024  # from the test settings fixture
     assert body["allowed_extensions"] == ["docx", "jpeg", "jpg", "pdf", "png"]
+    assert body["dev_engine_settings_enabled"] is False
+    assert body["pii"] == {
+        "default_profile": "custom",
+        "available_profiles": list(PII_PROFILES),
+        "candidate_validation_enabled": True,
+        "score_threshold": 0.5,
+    }
+
+
+def test_dev_engine_settings_default_to_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ENABLE_DEV_ENGINE_SETTINGS", raising=False)
+
+    settings = Settings()
+
+    assert settings.enable_dev_engine_settings is False
+
+
+def test_dev_engine_settings_can_be_enabled() -> None:
+    settings = Settings(ENABLE_DEV_ENGINE_SETTINGS=True)
+
+    assert settings.enable_dev_engine_settings is True
 
 
 def test_empty_ocr_model_directory_is_unconfigured() -> None:
@@ -107,6 +135,8 @@ def test_default_pii_entity_types_are_structured_recognizers_only(
     # The noisy spaCy NER types and DATE_TIME are opt-in, not default.
     for opt_in in ("PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME"):
         assert opt_in not in settings.pii_entity_types
+    for address_contact_type in ADDRESS_CONTACT_TYPES:
+        assert address_contact_type not in settings.pii_entity_types
 
 
 def test_spacy_ner_types_remain_supported_and_opt_in() -> None:

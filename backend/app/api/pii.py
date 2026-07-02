@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, status
 
 from app.config import Settings, get_settings
-from app.schemas import ErrorResponse, PiiArtifact
+from app.schemas import ErrorResponse, PiiArtifact, PiiRunRequest
 from app.services.pii_adapters import PiiAnalyzer, get_pii_analyzer
 from app.services.pii_service import create_pii_artifact, get_latest_pii
 
@@ -24,17 +24,19 @@ def provide_pii_analyzer(settings: Settings = Depends(get_settings)) -> PiiAnaly
     responses={
         404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
         422: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
     },
 )
 def analyze_document_pii(
     document_id: str,
+    request: PiiRunRequest | None = Body(default=None),
     settings: Settings = Depends(get_settings),
     analyzer: PiiAnalyzer = Depends(provide_pii_analyzer),
 ) -> PiiArtifact:
     """Detect PII in the latest valid text result and persist an immutable result."""
-    return create_pii_artifact(settings, document_id, analyzer)
+    return create_pii_artifact(settings, document_id, analyzer, request)
 
 
 @router.get(
