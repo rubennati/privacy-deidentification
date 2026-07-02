@@ -8,6 +8,13 @@
 
 ## Snapshot
 
+- Branch policy: feature PRs target `dev`; `main` is the curated user-stable local-app branch and
+  receives only intentional promotions from `dev` or explicit hotfixes. Windows install/update
+  tooling always follows `main`.
+- Windows users can bootstrap the local Docker Compose app under `$HOME\PrivacyDeID` with
+  `scripts/windows/install.ps1`, then use the generated `deid.ps1` launcher for safe
+  `start`/`update`/`stop`/`status` operations. Updates refuse dirty working trees and never delete
+  local data.
 - Two-service architecture: `frontend` (nginx serving the React/Vite SPA + reverse-proxy
   `/api`) and `backend` (FastAPI). Backend is not published to the host.
 - Pages: `/` landing, `/upload` upload, `/documents` list + delete, and
