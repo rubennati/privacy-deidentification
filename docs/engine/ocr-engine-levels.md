@@ -317,14 +317,14 @@ fallback was expected — i.e. more conservative, not wrong.
 3. Then a deterministic **human-readable** rendering (`layout_text_result` seed) that never mutates
    the canonical `best_text_result` (L8).
 
-See [`roadmap.md`](roadmap.md) (Engine-2, Engine-3) for the sequencing.
+See the [current sequence](roadmap.md#current-sequence) and
+[later engine work](roadmap.md#later-engine-work) for the sequencing.
 
 ---
 
 ## Legacy scale mapping (0–10 → 0–19)
 
-The engine previously used a 0–10 ladder. Existing citations elsewhere (roadmap Engine-IDs, some
-cross-cutting docs) may still use the old numbers; translate with this table.
+The engine previously used a 0–10 ladder. Historical citations can be translated with this table.
 
 | Old (0–10) | Meaning | New (0–19) |
 | --- | --- | --- |

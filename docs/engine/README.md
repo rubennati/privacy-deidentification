@@ -1,8 +1,8 @@
 # Engine Capability Model
 
 This directory defines **what the de-identification engine is supposed to do**, level by level,
-independent of upload, UI, or infrastructure work. It is a target picture and a roadmap, not a new
-feature. No OCR/PII behaviour changes in the PR that introduces these documents.
+independent of upload, UI, or infrastructure work. It is a target picture and a roadmap, not an
+implementation by itself.
 
 The engine is the core of the product. Everything else (upload, storage, audit plumbing, the
 review page) exists to feed it or to expose it. The engine is four cooperating sub-engines:
@@ -53,8 +53,9 @@ are [ADR-0017](../adr/0017-entity-taxonomy-and-risk-classes.md).
 
 ## Guiding principles (carried over, not invented here)
 
-- **Tool-first / adapter-only.** We integrate proven open-source tools behind ports/adapters; we
-  do not build bespoke OCR/NER/redaction intelligence. See [`AGENTS.md`](../../AGENTS.md).
+- **Tool-first / adapter-bound.** Core OCR, NER, redaction, and pseudonymization intelligence comes
+  from established tools behind ports/adapters. Small deterministic domain rules are allowed only
+  under the documented quality and auditability constraints in [`AGENTS.md`](../../AGENTS.md).
 - **Local-first / privacy-first.** Everything runs locally. No document bytes, extracted text, or
   PII values leave the machine. This constrains every "AI assist" idea (see the local-AI chapter of
   [`target-architecture.md`](target-architecture.md#optional-local-ai--vision--document-understanding)).
@@ -77,33 +78,28 @@ Review/Human-Feedback, Benchmark/Regression, and Redaction are each defined and 
 - Every per-engine document ends with a **legacy 0–10 → 0–19 mapping table** so older citations can
   be translated.
 
-New engine PRs should state which level they advance and must not mix the old 0–10/0–14 numbering
-without a migration note. The decision is recorded in
+New engine PRs should state which level they advance. The current roadmap, metrics, artifact model,
+and level documents use the 0–19 scale; historical ADRs and explicitly labelled legacy mapping
+sections or migration banners retain older numbers where needed for traceability. The decision is
+recorded in
 [ADR-0016](../adr/0016-engine-maturity-levels-0-19.md) (which extends
 [ADR-0011](../adr/0011-engine-capability-model.md)).
-
-> **Scale note for cross-cutting docs.** [`engine-artifacts.md`](engine-artifacts.md),
-> [`quality-metrics.md`](quality-metrics.md), [`tool-strategy.md`](tool-strategy.md),
-> [`target-architecture.md`](target-architecture.md), and [`roadmap.md`](roadmap.md) — plus the
-> roadmap's `Engine-N` PR ids — may still cite the legacy per-engine 0–10 level numbers. Translate
-> them with the mapping table at the bottom of the relevant engine document. Full renumbering of
-> those cross-cutting citations is a tracked follow-up.
 
 ## Current level snapshot (0–19)
 
 Assessed against the local `dev` branch at the time of writing and against one local private
 benchmark run (12-document corpus; aggregate figures only, see
-[`quality-metrics.md`](quality-metrics.md)). Legacy 0–10 equivalents are given in parentheses.
+[`quality-metrics.md`](quality-metrics.md)).
 
 | Area | Current level (0–19) | Basis | Next level |
 | --- | --- | --- | --- |
-| OCR / Text engine | **L5 done** *(legacy L3/L4-partial)* | text extraction, lineage, OCR runtime, text-layer quality gate, per-page routing shipped; no OCR confidence or `quality_report` yet | L6 confidence → L7 `quality_report` (Engine-2) |
-| PII / sensitive-data engine | **L9 done, L10 partial** *(legacy L5-done + address/dev-settings)* | structured + AT/DE + domain recognizers, profiles, benchmark, candidate validation, context hardening, address/contact-line, reproducible `engine_settings`; **dev-only** feedback capture landed | L10 human feedback (beyond dev) → L11 grouping → L12 overlap (Engine-6) |
-| Review / human-feedback engine | **L2 done; L3–L5 dev-only** *(legacy L1)* | read-only review + lineage-safe highlights (prod); clickable offsets, legend, dev engine-settings override, per-entity dev feedback capture (behind `ENABLE_DEV_ENGINE_SETTINGS`) | L6 grouping → L8 `review_result` overlay (Engine-6) |
-| Benchmark / regression | **L8 done** *(legacy L2)* | matching, routing correctness, PII P/R/F1, privacy guard, determinism, validation counts | L9 per-profile in one run → L10 OCR confidence columns |
-| Redaction / de-identification | **L0** *(by design)* | detection-only; blocked on PII L17–L18, Review L8–L9, OCR L10/L15 | L1 requirements/threat model (Engine-9, deliberately last) |
+| OCR / Text engine | **L5 done** | text extraction, lineage, OCR runtime, text-layer quality gate, per-page routing shipped; no OCR confidence or `quality_report` yet | L6 confidence → L7 `quality_report` |
+| PII / sensitive-data engine | **L9 done, L10 partial** | structured + AT/DE + domain recognizers, profiles, benchmark, candidate validation, context hardening, address/contact-line, reproducible `engine_settings`; **dev-only** feedback capture landed | L10 feedback hardening → L11 grouping → L12 overlap |
+| Review / human-feedback engine | **L2 done; L3–L5 dev-only** | read-only review + lineage-safe highlights (prod); clickable offsets, legend, dev engine-settings override, per-entity dev feedback capture (behind `ENABLE_DEV_ENGINE_SETTINGS`) | L6 grouping → L8 `review_result` overlay |
+| Benchmark / regression | **L8 done** | matching, routing correctness, PII P/R/F1, privacy guard, determinism, validation counts | L9 per-profile in one run → L10 OCR confidence columns |
+| Redaction / de-identification | **L0 by design** | detection-only; blocked on PII L17–L18, Review L8–L9, OCR L10/L15 | L1 requirements/threat model, deliberately last |
 | Storage / core | **Sufficient for MVP** | separated roots, immutable artifacts, validated deletes | — |
-| Database | **Not implemented; architecture open** | everything file-based today | decide SQLite-first index (Engine-7 spike) |
+| Database | **Not implemented; architecture open** | everything file-based today | decide only when a binding review workflow requires it |
 
 See [`roadmap.md`](roadmap.md) for the full per-area justification and the ordered PR plan, and each
 engine's own document for the full 0–19 ladder.

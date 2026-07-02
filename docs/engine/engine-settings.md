@@ -17,7 +17,7 @@ which strategies map to which entity categories is modelled in
 
 Each setting is rated on five axes:
 
-- **Class** — `runtime` (operational/provisioning), `maturity` (a fachlich engine-reife capability),
+- **Class** — `runtime` (operational/provisioning), `maturity` (an engine-domain capability),
   or `both`.
 - **In artifact?** — must the effective value be recorded in the result artifact to make a result
   reproducible/traceable?
@@ -88,8 +88,8 @@ Notes:
 Notes:
 
 - **`OCR_MODEL_DIR`, `INSTALL_OCR`, provisioning, `BACKEND_MEMORY_LIMIT`** are pure
-  runtime/provisioning: they decide *whether and where* OCR runs, not *how good* the result is in a
-  fachlich sense. They stay server-side and are not recorded as engine reproducibility state (a
+  runtime/provisioning: they decide *whether and where* OCR runs, not the quality of the resulting
+  domain capability. They stay server-side and are not recorded as engine reproducibility state (a
   container path is not meaningful across machines).
 - **`OCR_DETECTION_MODEL_NAME` / `OCR_RECOGNITION_MODEL_NAME`** determine which recognition capability
   ran (e.g. Latin recognizer for German umlauts/ß vs the default). They **affect OCR quality** and
@@ -114,7 +114,7 @@ Notes:
 
 - **Pure runtime/default config:** `OCR_MODEL_DIR`, `INSTALL_OCR`, provisioning, `BACKEND_MEMORY_LIMIT`,
   `ENABLE_DEV_ENGINE_SETTINGS` (a dev-ops gate). These decide *whether/where* engines run.
-- **Fachlich part of engine maturity:** `PII_PROFILE`, `PII_ENTITY_TYPES`, `PII_SCORE_THRESHOLD`,
+- **Part of engine-domain maturity:** `PII_PROFILE`, `PII_ENTITY_TYPES`, `PII_SCORE_THRESHOLD`,
   `PII_CANDIDATE_VALIDATION_ENABLED` (its own pipeline stage), the quality-gate thresholds, OCR
   fallback, and the OCR/NER model choices.
 - **Must be stored in the artifact for traceability:** PII → `engine_settings` (profile, candidate

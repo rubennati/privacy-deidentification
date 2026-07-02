@@ -2,13 +2,13 @@
 
 ## Windows Quick Start
 
-PowerShell oeffnen und ausfuehren:
+Open PowerShell and run:
 
 ```powershell
 irm https://raw.githubusercontent.com/rubennati/privacy-deidentification/main/scripts/windows/install.ps1 | iex
 ```
 
-Danach stehen diese Befehle bereit:
+The following commands are then available:
 
 ```powershell
 & "$HOME\PrivacyDeID\deid.ps1" start
@@ -17,13 +17,14 @@ Danach stehen diese Befehle bereit:
 & "$HOME\PrivacyDeID\deid.ps1" status
 ```
 
-Die App laeuft unter <http://localhost:8080>. Details: [Windows Local App](docs/windows-local-app.md).
+The app runs at <http://localhost:8080>. See [Windows Local App](docs/windows-local-app.md) for
+details.
 
 ## Branch workflow
 
-Feature-PRs zielen auf `dev`. `main` ist der bewusst freigegebene lokale App-Stand und erhaelt nur
-kuratierte Merges aus `dev` oder explizite Hotfixes. Windows-Installation und Updates verwenden
-immer `main`.
+Feature and documentation PRs target `dev`, the integration branch. `main` is the curated,
+user-stable local-app branch and receives only intentional promotions from `dev` or explicit
+hotfixes. Windows installation and update scripts always use `main`.
 
 A Docker-first application foundation for privacy-focused document preparation and de-identification workflows.
 
@@ -35,13 +36,13 @@ separately under `./volumes/document-data`.
 > synchronous OCR/Text and detection-only PII workstations, plus a manual document review UI.
 > Anonymization and redaction remain separate later steps.
 
-## Approach: tool-first / adapter-only
+## Approach: tool-first / adapter-bound
 
-The de-identification capability will be delivered by **integrating proven open-source tools
-behind adapters** — not by building custom intelligence. Extraction/OCR (e.g. OCRmyPDF,
-Tesseract, MinerU), PII/PHI detection (e.g. Presidio, noirdoc) and redaction (e.g. PyMuPDF)
-are integrated behind a port/interface. Our own code is orchestration, the review UI, file
-handling, export logic and secure integration. See [`AGENTS.md`](AGENTS.md).
+Core OCR, NER, redaction, and pseudonymization intelligence comes from **proven open-source tools
+behind adapters**. Extraction/OCR (for example OCRmyPDF, Tesseract, or MinerU), PII/PHI detection
+(Presidio/noirdoc), and future redaction (PyMuPDF) remain replaceable behind ports. Narrow Presidio
+recognizers, context rules, candidate validation, and deterministic domain heuristics are allowed
+when documented, tested, benchmarkable, reviewable, and auditable. See [`AGENTS.md`](AGENTS.md).
 
 ## Engine capability model
 
@@ -120,7 +121,7 @@ and scanned PDF pages need the OCR runtime plus provisioned models.
 | ------ | ---------------------- | ---------------------------------------------------------- |
 | GET    | `/api/health/live`     | Liveness check                                             |
 | GET    | `/api/health/ready`    | Readiness check for both persistent storage directories    |
-| GET    | `/api/config`          | Effective upload constraints (size limit, allowed types)   |
+| GET    | `/api/config`          | Effective upload limits, safe PII defaults, and dev gate   |
 | POST   | `/api/uploads`         | Upload one document via `multipart/form-data` field `file` |
 | GET    | `/api/documents`       | List uploaded documents, newest first                      |
 | GET    | `/api/documents/{id}`  | Get one uploaded document                                  |
@@ -131,6 +132,8 @@ and scanned PDF pages need the OCR runtime plus provisioned models.
 | GET    | `/api/documents/{id}/ocr`    | Get the newest text result                            |
 | POST   | `/api/documents/{id}/pii`   | Detect and label PII in the newest text result         |
 | GET    | `/api/documents/{id}/pii`    | Get the newest PII result                              |
+| POST   | `/api/documents/{id}/pii/feedback` | Append gated dev-only entity feedback          |
+| GET    | `/api/documents/{id}/pii/feedback`  | Restore gated dev-only feedback by artifact    |
 
 `POST /api/uploads` returns `201` with:
 
@@ -174,8 +177,10 @@ volumes/
 └── document-data/
     └── <document_id>/
         ├── document.json
-        └── artifacts/
-            └── <artifact_id>.json
+        ├── artifacts/
+        │   └── <artifact_id>.json
+        └── feedback/
+            └── pii_feedback.jsonl
 ```
 
 `UPLOAD_STORAGE_DIR` contains byte-identical originals only. Storage filenames are generated
@@ -184,6 +189,10 @@ and never used as a path. `DOCUMENT_DATA_DIR` contains one validated UUID-named 
 document. Audit, OCR/Text, and PII results are all immutable JSON files in that document's
 `artifacts/` directory. Deleting a document removes its UUID-named original and exactly its own
 document-data directory.
+
+The feedback JSONL is a local, dev-gated analysis side-channel, not an immutable engine artifact or
+a binding review result. Its structured fingerprint excludes raw document/entity text, but optional
+comments can still contain sensitive input; treat it as protected document data and never commit it.
 
 #### Existing local development data
 
@@ -358,7 +367,7 @@ and the selected profile applies. The score threshold stays `0.5`. The `presidio
 is capped at WARNING so its initialization messages do not flood logs, while genuine warnings
 still surface.
 
-After detection, **candidate validation** (Engine-5) inspects every already-detected candidate and
+After detection, **candidate validation** (PII L6) inspects every already-detected candidate and
 keeps, downgrades, or drops it — a subtractive post-processing filter, never a new recognizer. Full
 lexical/context rules run on `PERSON`/`ORGANIZATION`/`LOCATION`/`DATE_TIME` (the dominant NER
 false-positive source); a lighter context-presence check runs on `BIC` and a handful of domain
@@ -389,6 +398,10 @@ and PII are started explicitly and never trigger the next station automatically.
 artifact lineage visible, marks stale downstream results, and only overlays PII whose input text
 artifact matches the displayed text. PII highlighting uses Unicode codepoint offsets and renders
 plain React text nodes—no HTML injection or source-text logging.
+
+With `ENABLE_DEV_ENGINE_SETTINGS=true`, the detail page also exposes one-run PII profile selection
+and per-entity feedback. Feedback is restored from the local side-channel described above; it does
+not alter `pii_result`, train a model, or create the future binding `review_result` artifact.
 
 ## Private OCR/PII benchmark
 
@@ -423,6 +436,7 @@ See [`.env.example`](.env.example) for available settings, including:
 * document metadata/artifact directory (`DOCUMENT_DATA_DIR`)
 * optional local OCR model directory
 * optional PII runtime, language, model, score threshold, and entity allowlist
+* named PII profile, candidate-validation toggle, and dev-only settings/feedback gate
 * log level
 
 ### Environment profiles
@@ -450,7 +464,7 @@ a named profile — see `.env.example` section 7 for exactly how it interacts wi
 **Common debugging steps:** after any `.env` change, recreate the containers (the relevant
 `make up*` target again) and re-run the affected station for the document you're checking —
 existing artifacts are immutable and never reflect a config change retroactively. If PII detection
-looks empty, see the "If PII detects nothing" checklist in `.env.example` section 14 before
+looks empty, see the "If PII detects nothing" checklist in `.env.example` section 8 before
 assuming something is broken.
 
 ## Development and quality
@@ -460,7 +474,7 @@ Common commands are available through the `Makefile`:
 ```bash
 make lint        # Ruff and ESLint
 make typecheck   # mypy and TypeScript
-make test        # backend tests
+make test        # backend and frontend tests
 make build       # build Docker images
 make up          # start the stack
 make down        # stop the stack

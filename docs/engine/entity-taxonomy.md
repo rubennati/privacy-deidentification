@@ -5,7 +5,7 @@ detect: the business categories, the concrete entity types, their default **risk
 class**, the **detection strategy** that fits them, how far the repository covers them **today**, and
 the review and (later) redaction handling they imply.
 
-It is the fachliche counterpart to the [0–19 maturity ladders](README.md#maturity-scale): the ladders
+It is the domain-focused counterpart to the [0–19 maturity ladders](README.md#maturity-scale): the ladders
 say *how mature* each engine is; this taxonomy says *what* it should recognise and *how sensitive*
 each thing is. It is grounded in the entity types actually configured in
 [`pii_profiles.py`](../../backend/app/services/pii_profiles.py) and the recognizers in
@@ -62,7 +62,7 @@ Consequences of treating them as orthogonal:
 ## Risk / protection classes (P0–P5)
 
 `P0–P5` express **protection need**, not detection difficulty. `P0–P4` follow a data-protection
-gradient (roughly GDPR); **`P5` is deliberately not GDPR-only** — it is Geheimschutz / secret
+gradient (roughly GDPR); **`P5` is deliberately not GDPR-only** — it covers confidentiality and secret
 protection (credentials, keys, trade secrets) whose exposure is a security incident regardless of
 personal reference.
 
@@ -73,7 +73,7 @@ personal reference.
 | **P2** | clearly personal data | full name, e-mail, phone, home address, customer/case number | standard (confirm/reject) | mask or pseudonymise |
 | **P3** | high-impact / critical identifiers | IBAN, credit card, passport, national ID, social-security number | mandatory | mask, prefer irreversible |
 | **P4** | special categories (GDPR Art. 9) or comparably sensitive | health/medical, biometric, genetic, union/religion/sexuality | mandatory + special handling | mask, irreversible, minimise even in review |
-| **P5** | critical secrets / Geheimschutz | passwords, API keys, private keys, access tokens, trade secrets | mandatory + never persist in artifacts/logs | block/redact at ingestion; treat exposure as a leak |
+| **P5** | critical secrets / confidentiality protection | passwords, API keys, private keys, access tokens, trade secrets | mandatory + never persist in artifacts/logs | block/redact at ingestion; treat exposure as a leak |
 
 Notes:
 

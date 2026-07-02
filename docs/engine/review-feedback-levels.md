@@ -93,17 +93,18 @@ is the L8 `review_result` model.
   recognizer + score), the verdict/issue_type/optional comment, the artifact's engine settings, and
   app/schema version. On load, `GET …/pii/feedback?artifact_id=…` collapses the log to the **latest
   verdict per entity key** (type + start + end + recognizer) and returns counts/verdicts only.
-- **Privacy:** no document text, OCR full text, or raw entity value is stored — offsets and types are
-  enough for analysis; an optional opaque `text_hash` exists but the UI does not send it.
+- **Privacy boundary:** the structured fingerprint excludes document text, OCR full text, and raw
+  entity values. Optional comments and opaque fields such as `text_hash` can nevertheless carry
+  sensitive input, so the JSONL remains protected document data; the UI does not send `text_hash`.
 - **Gated:** available only when `ENABLE_DEV_ENGINE_SETTINGS=true`; with the gate off, the UI hides
   the controls and both `POST …/pii/feedback` and `GET …/pii/feedback` return `403`.
 - **Explicitly not:** a learning system. It never changes detection, never mutates the immutable
   `pii_result`, and applies no rules. It is an **analysis side-channel**, not the binding L8
   `review_result` overlay.
 - **Why partial:** production stays gated off; the binding overlay is separate, future work.
-- **Acceptance:** with the gate on, a per-entity verdict persists privacy-safely and is restored +
-  locked on reload; with the gate off, the endpoints `403` and controls are hidden; no raw value is
-  ever written.
+- **Acceptance:** with the gate on, a per-entity verdict persists within the documented local
+  feedback boundary and is restored + locked on reload; with the gate off, the endpoints `403` and
+  controls are hidden.
 - **Boundary to L6:** L5 captures feedback on a *flat list*; L6 groups repeated occurrences.
 
 ### Feedback storage (local dev)
@@ -113,8 +114,8 @@ is the L8 `review_result` model.
   `/data/document-data/<id>/feedback/…`). No separate Docker volume; created on first write.
 - Survives `docker compose down` (host bind mount), removed with the document's directory.
 - Local development/review data: **not** committed (`volumes/` is git-ignored) and never to be
-  committed. It may later be inspected or provided to an AI for **aggregate** analysis. It does not
-  contain document/OCR/entity text.
+  committed. Use it only for controlled local or aggregate analysis. The structured fingerprint
+  contains no document/OCR/entity text, but optional comments remain sensitive input.
 
 ## Level 6 — Grouped occurrences  ⛔ *open (next)*
 
@@ -294,8 +295,8 @@ Design constraints (not features) for L8+:
 
 **What is missing for the next real step (→ L6/L8):** entity **grouping** (L6, the documented next
 review level) and the binding `review_result` overlay (L8) with confirm/reject (L9) bound to
-lineage. This is the first place a **database** becomes genuinely useful — see Engine-6 and Engine-7
-in [`roadmap.md`](roadmap.md).
+lineage. This is the first place a **database** becomes genuinely useful; see the
+[later engine work](roadmap.md#later-engine-work) in the roadmap.
 
 ---
 

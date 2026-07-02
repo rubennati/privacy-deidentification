@@ -12,8 +12,10 @@ Principles specific to this engine:
   validation stage (L6) prunes/scores-down obvious false positives. It is a post-processing filter,
   **not** a new detection mechanism (see the
   [dedicated section](#candidate-validation-is-a-post-processing-exclusion-step)).
-- **Tool-first / adapter-only.** Recognition is Presidio + spaCy (and later GLiNER etc.) behind an
-  adapter; we add *recognizers and rules*, not a bespoke NER model.
+- **Tool-first / adapter-bound.** Recognition is Presidio + spaCy (and later compatible tools)
+  behind an adapter. Presidio pattern recognizers, context rules, candidate validation, and small
+  deterministic domain heuristics are allowed under the quality constraints in
+  [`AGENTS.md`](../../AGENTS.md); a bespoke NER engine is not.
 
 Level numbers are cumulative and **not** comparable to the OCR, Review, Benchmark, or Redaction
 ladders. This engine uses the **0–19 maturity scale** ([why 0–19](README.md#maturity-scale)); a
@@ -205,18 +207,20 @@ stage that runs after detection**. This stage is a first-class part of the engin
 
 ## Level 10 — Human feedback capture  ⏳ *partial — dev-only, current frontier*
 
-- **Description:** capture structured, privacy-safe human feedback per detected entity so recurring
-  detection errors can be analysed — **analysis input only, not a learning system.**
+- **Description:** capture structured human feedback per detected entity so recurring detection
+  errors can be analysed — **analysis input only, not a learning system.**
 - **Delivered (dev-only, behind `ENABLE_DEV_ENGINE_SETTINGS`):** a per-entity "correct"/issue verdict
   with optional comment, appended to `document-data/{id}/feedback/pii_feedback.jsonl`; on load, the
-  latest verdict per entity key (type+start+end+recognizer) is restored and the card locks. No
-  document/OCR/entity text is stored — offsets + types + reason codes only. It never mutates
-  `pii_result` and applies no rules. See
+  latest verdict per entity key (type+start+end+recognizer) is restored and the card locks. The
+  structured fingerprint excludes document/OCR/entity text, but optional comments or opaque fields
+  can contain sensitive input; the file therefore remains inside the protected document-data
+  boundary. It never mutates `pii_result` and applies no rules. See
   [`review-feedback-levels.md`](review-feedback-levels.md#level-5--per-entity-dev-feedback-capture---partial--dev-only-current-frontier).
 - **Why partial:** production stays gated off; this is the analysis side-channel, not the binding
   L13 review overlay.
-- **Acceptance:** with the gate on, a per-entity verdict persists privacy-safely and is restored on
-  reload; with the gate off, the feedback endpoints return `403` and the controls are hidden.
+- **Acceptance:** with the gate on, a per-entity verdict persists within the documented local
+  feedback boundary and is restored on reload; with the gate off, the feedback endpoints return
+  `403` and the controls are hidden.
 - **Boundary to L11:** L10 captures feedback on a *flat list*; L11 groups repeated occurrences of the
   same entity.
 
@@ -332,8 +336,10 @@ Illustrative rules (synthetic examples only):
 - A `DATE_TIME` candidate is **disambiguated by context** into roles — birth date, invoice date,
   claim date, offer date — to inform review/redaction, not to add a detection.
 
-Validation output is always **additive and auditable**: the original candidate and the validation
-verdict + reason both survive, so a human (or a later review action) can override the machine.
+Validation output is **auditable within its artifact contract**: surviving candidates retain their
+original score, validation status, and reason codes. Dropped candidates are represented only by
+aggregate counts and reason codes, not preserved individually; a later binding review workflow
+must account for that boundary explicitly.
 
 ---
 
@@ -365,13 +371,13 @@ verdict + reason both survive, so a human (or a later review action) can overrid
 **Benchmark signal (aggregate private before/after run, candidate ground truth — a regression
 signal, not a gold standard), 12-document corpus, two deterministic runs per profile:**
 
-**`review-heavy` (NER opt-in) — Engine-4 final → Engine-5 (candidate validation on):**
+**`review-heavy` (NER opt-in) — PII L4/L5 baseline → PII L6 candidate validation:**
 
-| Metric | Before (Engine-4) | After (Engine-5) |
+| Metric | Before PII L6 | After PII L6 |
 | --- | --- | --- |
 | Global | 119 TP / 487 FP / 90 FN, P=0.1964, R=0.5694, F1=0.2920 | 118 TP / 145 FP / 91 FN, P=0.4487, R=0.5646, F1=0.5000 |
 | NER group | 42 TP / 455 FP / 29 FN, P≈0.08, R≈0.59 | 41 TP / 118 FP / 30 FN, P=0.2579, R=0.5775, F1=0.3565 |
-| Structured group | P=0.9130→0.7937 (Engine-4 delta), R=0.8772 | unchanged: P=0.7937, R=0.8772, F1=0.8333 |
+| Structured group | P=0.9130→0.7937 (L4-domain-pack delta), R=0.8772 | unchanged: P=0.7937, R=0.8772, F1=0.8333 |
 | Domain-sensitive group | 27 TP / 19 FP / 20 FN, P=0.5870, R=0.5745 | 27 TP / 14 FP / 20 FN, P=0.6585, R=0.5745, F1=0.6136 |
 | Validation | — | kept=263, dropped=14, score_down=329 (12/12 docs, validation enabled) |
 | Dropped by reason | — | `TOO_SHORT_SINGLE_TOKEN`=10, `GENERIC_DOCUMENT_WORD`=2, `NER_SINGLE_COMMON_WORD`=1, `NUMERIC_ONLY_FOR_NER`=1 |
@@ -381,7 +387,7 @@ NER precision more than tripled (FP −74%, 455→118) for a true-positive cost 
 and global FP fell 70% (487→145) while recall moved by −0.0048 — confirming the L6 goal: raise
 precision without collapsing recall.
 
-**`insurance-at-de` (no NER) — Engine-4 final → Engine-5:**
+**`insurance-at-de` (no NER) — PII L4/L5 baseline → PII L6:**
 
 | Metric | Before | After |
 | --- | --- | --- |
@@ -390,10 +396,10 @@ precision without collapsing recall.
 | Structured group | P=0.7937, R=0.8772 | unchanged: P=0.7937, R=0.8772, F1=0.8333 |
 
 **Structured address & contact-line coverage
-([ADR-0015](../adr/0015-structured-address-contact-line-recognizers.md)) — Engine-5 →
+([ADR-0015](../adr/0015-structured-address-contact-line-recognizers.md)) — PII L7 baseline →
 +`ADDRESS`/`CONTACT_LINE`/`CUSTOMER_LINE`, aggregate before/after on the same corpus:**
 
-| Metric | Before (Engine-5) | After (ADR-0015) |
+| Metric | Before PII L8 | After PII L8 (ADR-0015) |
 | --- | --- | --- |
 | `review-heavy` global | 118 TP / 147 FP / 91 FN, P=0.4453, R=0.5646, F1=0.4979 | 140 TP / 158 FP / 69 FN, P=0.4698, R=0.6699, F1=0.5523 |
 | `insurance-at-de` global | 77 TP / 27 FP / 132 FN, P=0.7404, R=0.3684, F1=0.4920 | 99 TP / 38 FP / 110 FN, P=0.7226, R=0.4737, F1=0.5723 |
@@ -413,14 +419,15 @@ reports (timestamps aside).
 3. The binding review overlay (L13–L14) so a human can confirm/reject/add against
    validation-surviving candidates.
 
-See [`roadmap.md`](roadmap.md) (Engine-6) for the next step.
+See the [current sequence](roadmap.md#current-sequence) and
+[later engine work](roadmap.md#later-engine-work) for the next steps.
 
 ---
 
 ## Legacy scale mapping (0–10 → 0–19)
 
-The engine previously used a 0–10 ladder. Existing citations elsewhere (roadmap Engine-IDs, some
-cross-cutting docs) may still use the old numbers; translate with this table. The old ladder had a
+The engine previously used a 0–10 ladder. Historical citations can be translated with this table.
+The old ladder had a
 coarser, differently ordered structure — the new scale reorders detection basics and splits the
 former "production-grade" tail into readiness levels.
 
