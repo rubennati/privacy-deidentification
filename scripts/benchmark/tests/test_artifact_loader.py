@@ -247,6 +247,78 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
     assert forbidden_fields.isdisjoint(QualityReportSummary.__dataclass_fields__)
 
 
+def test_loader_ignores_l10_text_geometry(tmp_path: Path) -> None:
+    document_data_dir = tmp_path / "document-data"
+    document_id = "8" * 32
+    _write_json(
+        document_data_dir / document_id / "document.json",
+        _document_json(document_id, "Scan.pdf", f"{document_id}.pdf", 100),
+    )
+    _write_json(
+        document_data_dir / document_id / "artifacts" / "text.json",
+        {
+            "id": "text1",
+            "document_id": document_id,
+            "artifact_type": "text_result",
+            "created_at": "2026-07-01T10:02:00Z",
+            "content": {
+                "source": "paddleocr",
+                "text": "raw recognized value",
+                "text_char_count": 20,
+                "text_geometry_version": "1",
+                "text_geometry": {
+                    "coverage": 1.0,
+                    "flags": ["ocr_geometry"],
+                    "pages": [
+                        {
+                            "page_number": 1,
+                            "page_width": 200.0,
+                            "page_height": 100.0,
+                            "coordinate_unit": "image_pixels",
+                            "source": "paddleocr",
+                            "status": "complete",
+                            "lines": [
+                                {
+                                    "line_index": 1,
+                                    "canonical_start": 0,
+                                    "canonical_end": 20,
+                                    "page_start": 0,
+                                    "page_end": 20,
+                                    "x0": 10.0,
+                                    "y0": 10.0,
+                                    "x1": 190.0,
+                                    "y1": 40.0,
+                                    "source": "paddleocr",
+                                    "confidence": 0.9,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "pages": [
+                    {
+                        "page_number": 1,
+                        "source": "paddleocr",
+                        "has_text_layer": False,
+                        "ocr_used": True,
+                        "text": "raw recognized value",
+                        "text_char_count": 20,
+                    }
+                ],
+            },
+        },
+    )
+
+    corpus = load_local_corpus(tmp_path / "uploads", document_data_dir)
+
+    # The loader ignores geometry entirely — it is never copied into the summary structures.
+    assert corpus[0].text is not None
+    text_fields = corpus[0].text.__dataclass_fields__
+    assert "text_geometry" not in text_fields
+    assert "text_geometry_version" not in text_fields
+    assert corpus[0].text.word_count == 3
+
+
 def _pii_artifact_with_validation(artifact_id: str, document_id: str, created_at: str) -> dict:
     return {
         "id": artifact_id,

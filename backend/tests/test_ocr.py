@@ -1330,6 +1330,119 @@ def test_legacy_text_artifact_without_pii_input_text_field_remains_valid(
     assert response.json()["content"]["pii_input_text"] is None
 
 
+def test_pdf_text_layer_emits_span_geometry(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    content = client.post(f"/api/documents/{upload['id']}/ocr").json()["content"]
+
+    # Canonical text and its counts remain byte-stable with geometry added.
+    assert content["text"] == "Digital text"
+    assert content["text_char_count"] == len("Digital text")
+    assert content["pages"][0]["text"] == "Digital text"
+    assert content["text_geometry_version"] == "1"
+    geometry = content["text_geometry"]
+    assert geometry is not None
+    page = geometry["pages"][0]
+    assert page["coordinate_unit"] == "pdf_points"
+    assert page["source"] == "pdf_text_layer"
+    assert page["status"] == "complete"
+    line = page["lines"][0]
+    assert content["text"][line["canonical_start"] : line["canonical_end"]] == "Digital text"
+    assert line["confidence"] is None
+    assert "text_layer_geometry" in geometry["flags"]
+
+
+def test_mixed_pdf_emits_combined_partial_geometry(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.outputs = ["Scan two", "Scan three"]
+    # Page 2 has OCR polygons; page 3 has none, so its geometry degrades to unsupported.
+    adapter.layout_lines = [
+        (
+            OcrLayoutLine(
+                text="Scan two",
+                polygon=((10.0, 20.0), (190.0, 20.0), (190.0, 50.0), (10.0, 50.0)),
+                confidence=0.88,
+            ),
+        ),
+        (),
+    ]
+    adapter.image_sizes = [(200, 100), (200, 100)]
+    upload, _ = _upload_and_audit(
+        client, "mixed.pdf", _pdf_pages_bytes("Digital one", None, None), "application/pdf"
+    )
+
+    content = client.post(f"/api/documents/{upload['id']}/ocr").json()["content"]
+
+    assert content["text"] == "Digital one\n\nScan two\n\nScan three"
+    geometry = content["text_geometry"]
+    assert [page["page_number"] for page in geometry["pages"]] == [1, 2, 3]
+    statuses = {page["page_number"]: page["status"] for page in geometry["pages"]}
+    assert statuses == {1: "complete", 2: "complete", 3: "unsupported"}
+    assert geometry["coverage"] == pytest.approx(2 / 3)
+    assert "mixed_geometry" in geometry["flags"]
+    assert "partial_geometry" in geometry["flags"]
+    # The OCR page's line maps back into the correct canonical region.
+    page_two_line = next(
+        page for page in geometry["pages"] if page["page_number"] == 2
+    )["lines"][0]
+    start, end = page_two_line["canonical_start"], page_two_line["canonical_end"]
+    assert content["text"][start:end] == "Scan two"
+    assert page_two_line["confidence"] == 0.88
+
+
+def test_image_emits_ocr_span_geometry(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.outputs = ["Image text"]
+    adapter.layout_lines = [
+        (
+            OcrLayoutLine(
+                text="Image text",
+                polygon=((10.0, 20.0), (190.0, 20.0), (190.0, 50.0), (10.0, 50.0)),
+                confidence=0.9,
+            ),
+        )
+    ]
+    adapter.image_sizes = [(200, 100)]
+    upload, _ = _upload_and_audit(client, "image.png", _image_bytes("PNG"), "image/png")
+
+    content = client.post(f"/api/documents/{upload['id']}/ocr").json()["content"]
+
+    assert content["text"] == "Image text"
+    geometry = content["text_geometry"]
+    assert geometry["pages"][0]["coordinate_unit"] == "image_pixels"
+    assert geometry["pages"][0]["status"] == "complete"
+    assert geometry["pages"][0]["lines"][0]["confidence"] == 0.9
+    assert "ocr_geometry" in geometry["flags"]
+
+
+def test_docx_has_no_span_geometry(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client,
+        "document.docx",
+        _docx_bytes("First", "Second"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    content = client.post(f"/api/documents/{upload['id']}/ocr").json()["content"]
+
+    assert content["text_geometry_version"] is None
+    assert content["text_geometry"] is None
+
+
 def test_delete_removes_audit_text_and_quality_artifacts(
     client: TestClient,
     document_data_dir: Path,

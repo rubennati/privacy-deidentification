@@ -18,10 +18,12 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L9 reached (L0–L9 done); L10 is next.** Each successful OCR/Text run now
-persists additive readable/layout views plus versioned, ordered, typed `layout_blocks` with coarse
-normalized page bounds. Canonical text, routing, active PII input, and `quality_report` remain
-unchanged.
+**Current standing:** **L10 reached (L0–L10 done); L11 is next.** Each successful OCR/Text run now
+persists additive readable/layout views, versioned ordered/typed `layout_blocks` with coarse
+normalized page bounds, and additive `text_geometry` that maps canonical line spans to page-local
+line boxes (`pdf_points` for text-layer, `image_pixels` for OCR). Canonical text, routing, active PII
+input, and `quality_report` remain unchanged; L10 geometry is review/redaction-preparation only and
+is not redaction-ready (that remains L15).
 
 ---
 
@@ -185,20 +187,35 @@ unchanged.
     block. Heading/body/caption/header/footer typing is conservative and positional/typographic.
   A `text_lineage_map`, precise line/word geometry, canonical-offset lookup, and a general table
   detector remain open at L10/L11. The existing layout string and Review UI behavior are unchanged.
-- **Boundary to L10:** L9 knows block order; L10 persists precise per-line/word coordinates as
-  reusable geometry.
+- **Boundary to L10:** L9 knows block order; L10 persists per-line coordinates mapped to canonical
+  spans as reusable geometry.
 
-## Level 10 — Bounding boxes / span geometry  ⛔ *open*
+## Level 10 — Bounding boxes / span geometry  ✅ *done*
 
-- **Description:** persist per-line/word coordinates and begin linking canonical-text offsets to page
-  geometry.
-- **Engine must:** store bounding boxes (page, x/y/w/h) for OCR and, where available, text-layer
-  tokens; expose a lookup from a canonical text offset range to the page boxes that produced it.
-- **Artifacts:** geometry annotations on `layout_text_result`/`ocr_result`.
+- **Description:** persist per-line coordinates and link canonical-text offsets to page geometry.
+- **Engine must:** store page-local line boxes for OCR (PaddleOCR polygons) and, where available,
+  text-layer pages (pypdf text positions); expose a lookup from a canonical text offset range to the
+  page boxes that produced it.
+- **Artifacts:** additive `text_geometry_version = "1"` and `text_geometry` on `text_result`.
+  `text_geometry` carries per-page line boxes (`TextLineGeometry`) that map a canonical span
+  (`canonical_start`/`canonical_end` into `text_result.text`) and the matching page span
+  (`page_start`/`page_end` into `pages[].text`) to page-local `x0/y0/x1/y1` bounds in the page's
+  `coordinate_unit` (`pdf_points` for text-layer, `image_pixels` for OCR). Each page reports a
+  `status` (`complete`/`partial`/`unsupported`) and the geometry reports overall `coverage` and
+  `flags`. Line geometry carries no raw line text.
+- **Delivered:** offsets are derived by matching page-local text segments against the immutable
+  canonical page text — canonical `text`/`pages[].text` and their char counts stay byte-stable, PII
+  still runs on canonical text, and legacy artifacts without geometry remain valid. When precise line
+  boxes are not safely derivable, the page degrades to `partial`/`unsupported` with a coverage flag
+  rather than guessing. DOCX has no page geometry (`text_geometry` stays `null`). The internal
+  `resolve_span_geometry(text_geometry, start, end)` helper returns intersecting line boxes for a
+  canonical span and never returns raw text.
 - **Acceptance:** a canonical offset range resolves to one or more page boxes with correct page and
-  coordinates on representative documents.
-- **Boundary to L11:** L10 gives *where text is*; L11 reconstructs *structured regions* (tables/forms)
-  from it.
+  coordinates on text-layer and OCR pages; mixed PDFs combine per-page geometry with partial coverage.
+- **Boundary to L11:** L10 gives *where text is* (line level); L11 reconstructs *structured regions*
+  (tables/forms) from it.
+- **Boundary to L15:** L10 line geometry is for review/debug and redaction *preparation*; it is **not**
+  redaction-ready pixel-perfect coverage. Redaction-ready text+geometry mapping remains L15.
 
 ## Level 11 — Table / form reconstruction  ⛔ *open*
 
@@ -330,7 +347,7 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 7 `quality_report` artifact | ✅ done | immutable metrics-only artifact with original/audit/text lineage; benchmark consumption |
 | 8 Human-readable text | ✅ done | additive deterministic `readable_text`; canonical unchanged |
 | 9 Layout-aware text | ✅ done | ordered typed `layout_blocks` with coarse normalized bounds; existing layout string preserved |
-| 10 Bounding boxes / geometry | ⛔ open | — |
+| 10 Bounding boxes / geometry | ✅ done | additive `text_geometry` line boxes mapping canonical spans to page-local bounds; `resolve_span_geometry` lookup; canonical unchanged |
 | 11 Table / form reconstruction | ⛔ open | — |
 | 12 Multi-engine selection | ⛔ open | single engine (PaddleOCR) |
 | 13 Document understanding | ⛔ open | — |
@@ -346,10 +363,11 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next level (L10):**
+**What is missing for the next level (L11):**
 
-1. Persist precise per-line/word geometry and provide a canonical-offset → page-box lookup without
-   changing the canonical `best_text_result`.
+1. Reconstruct tables and structured regions (rows/cells, key/value pairs) from the L10 line geometry
+   as a structured representation kept separate from canonical text. Word-level geometry and
+   redaction-ready (L15) coverage also remain open; L10 delivers line-level review geometry only.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.

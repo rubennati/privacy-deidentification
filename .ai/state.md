@@ -2,9 +2,9 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **PII grouping / OCR layout foundation**.
+- Current phase: **PII grouping / OCR geometry foundation**.
 - Current objective: advance PII/Sensitive-Data L11 entity grouping while preserving the completed
-  OCR/Text L9 layout-block foundation.
+  OCR/Text L10 span-geometry foundation.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -25,13 +25,13 @@
 
 ## Engine maturity snapshot (0–19)
 
-- **OCR/Text: L9 done.** Each successful PDF/image/DOCX OCR/Text run now stores three additive,
+- **OCR/Text: L10 done.** Each successful PDF/image/DOCX OCR/Text run now stores three additive,
   non-canonical text views beside the immutable canonical text: `readable_text` (L8),
   `layout_text_result` (L9 slice), and `pii_input_text` (internal L9 slice). The existing
   metrics-only `quality_report` continues to carry source mix, audit-quality counts, confidence,
   coverage, and exact original/audit/text lineage. Reruns preserve old artifacts; the benchmark
   prefers a lineage-matching report and falls back for legacy data. Canonical text, routing, and
-  active PII input remain unchanged. OCR L9 additionally delivers:
+  active PII input remain unchanged. OCR L9/L10 additionally deliver:
   - `readable_text` — optional field on `text_result`; deterministic human-readable normalization
     (line-ending cleanup, conservative paragraph joining, simple de-hyphenation, visible page
     boundaries between canonical pages) for any non-empty canonical text. Display-only; no offset
@@ -47,6 +47,15 @@
     bounds, derived from existing pypdf positions or transient PaddleOCR polygons. Missing geometry
     degrades to an explicit fallback block. The bounds are not canonical offsets, reusable
     line/word boxes, lineage mapping, or redaction-ready geometry.
+  - `text_geometry` (L10) — optional versioned field on `text_result`; per page it maps canonical
+    line spans (`canonical_start`/`canonical_end` into `text`, `page_start`/`page_end` into
+    `pages[].text`) to page-local `x0/y0/x1/y1` line boxes in the page's `coordinate_unit`
+    (`pdf_points` for text-layer, `image_pixels` for OCR), with per-page `status` and overall
+    `coverage`/`flags`. Offsets are matched against the immutable canonical text, so canonical/page
+    text stays byte-stable; pages without safe geometry degrade to `partial`/`unsupported` and DOCX
+    has none. It carries no raw line text; the internal `resolve_span_geometry` helper resolves a
+    canonical span to intersecting boxes. This is review/redaction-prep geometry only — **not**
+    redaction-ready pixel-perfect coverage (that remains L15) and **not** the PII input.
 - **PII/Sensitive-Data: L9 done; L10 partial.** Dev-only human-feedback capture exists; grouping
   (L11), overlap resolution (L12), and binding review (L13) remain open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only.** Grouping (L6) and a lineage-bound
@@ -86,8 +95,8 @@ See [`docs/engine/`](../docs/engine/README.md),
 The binding OCR/PII sequence, cadence, and next-12-PR list live in
 [`docs/engine/ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md)
 ([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority: PII/Sensitive-Data
-L11 entity grouping**, now that OCR/Text layout-aware blocks complete L9 on top of readable text
-(L8), confidence capture (L6), and `quality_report` (L7).
+L11 entity grouping**, now that OCR/Text span geometry completes L10 on top of layout-aware blocks
+(L9), readable text (L8), confidence capture (L6), and `quality_report` (L7).
 
 The OCR L8/L9 text-layer work is contract-first: the output model and invariants are fixed in
 [`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Four layers
@@ -102,19 +111,21 @@ detection-input switch. `pii_input_text` may become the
 runs exclusively on canonical text today, regardless of `pii_input_text`'s v1 content. The readable/
 layout/PII-input layers are additive and never a standalone PII input.
 
-Feedback integrity hardening completes the planned trust-boundary bugfix without advancing an engine
-level. The checkpoint leaves OCR/Text at L9, PII L10 partial, and Redaction L0; the next plan is:
+The checkpoint leaves OCR/Text at L10, PII L10 partial, and Redaction L0; the next plan is:
 
 1. Interleave PII **L11 — entity grouping + occurrences** without changing detection.
 2. Advance PII **L12 — overlap resolution** once grouping is in place.
-3. Advance OCR/Text **L10 — precise geometry + canonical-offset lookup** without redaction work.
+3. Advance OCR/Text **L11 — table / form reconstruction** (and word-level geometry) without redaction
+   work.
 
-**Latest checkpoint (OCR L9):** OCR/Text advanced from L8 to L9 and remains sufficiently ahead of
-the binding PII/review frontier; no benchmark/feedback signal changed priority. The additive block
-model introduces no routing, canonical/page-text, active-PII-input, dependency, quality-report, or
-benchmark-privacy drift. Coarse block bounds stop at the L9 review/ordering boundary; precise
-line/word geometry, lineage mapping, and offset lookup remain L10. The next three steps are PII L11,
-PII L12, then OCR L10.
+**Latest checkpoint (OCR L10):** OCR/Text advanced from L9 to L10 with an additive `text_geometry`
+line-box mapping and an internal `resolve_span_geometry` canonical-span→box lookup, and remains
+sufficiently ahead of the binding PII/review frontier; no benchmark/feedback signal changed priority.
+The additive geometry introduces no routing, canonical/page-text, active-PII-input, dependency,
+quality-report, or benchmark-privacy drift, and legacy artifacts stay valid. Line geometry stops at
+the L10 review/redaction-prep boundary; word-level geometry, a full `text_lineage_map`, table/form
+reconstruction, and redaction-ready (L15) coverage remain open. The next three steps are PII L11,
+PII L12, then OCR L11.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

@@ -21,6 +21,8 @@ from app.schemas import (
     OriginalArtifact,
     TextArtifact,
     TextContent,
+    TextGeometry,
+    TextGeometryPage,
     TextPageResult,
 )
 from app.services.artifact_service import (
@@ -42,6 +44,11 @@ from app.services.pdf_renderer import PdfRenderer
 from app.services.pii_input_text import build_page_pii_input_text
 from app.services.quality_report_service import build_quality_report
 from app.services.readable_text import build_readable_text
+from app.services.text_geometry import (
+    build_ocr_page_geometry,
+    build_pdf_page_geometry,
+    build_text_geometry,
+)
 
 _OCR_WORKSPACE_ROOT = Path("/tmp")
 
@@ -153,6 +160,13 @@ def _extract_pdf(
 
     pages: list[TextPageResult] = []
     layout_blocks: list[LayoutBlock] = []
+    # Per-page L10 span geometry (line boxes mapped to canonical/page offsets). Pages without usable
+    # geometry are skipped here; the assembled geometry reflects that as partial coverage.
+    geometry_pages: list[TextGeometryPage] = []
+    # Running start offset of the current page's text inside the canonical ``text`` (pages are
+    # joined with the two-character "\n\n" separator), so each page's geometry can map page-local
+    # offsets back to canonical offsets without regenerating any text.
+    canonical_base = 0
     # Per-page (page_number, layout rendering | None, canonical page text). ``None`` marks a page
     # whose layout was not reconstructed (OCR pages, or a text layer that failed layout mode).
     layout_entries: list[tuple[int, str | None, str]] = []
@@ -183,6 +197,9 @@ def _extract_pdf(
                 layout_segment: str | None = None
                 pii_input_segment: str | None = None
                 page_layout_blocks = build_ocr_layout_blocks(ocr_result, page_number)
+                page_geometry = build_ocr_page_geometry(
+                    ocr_result, page_number, text, canonical_base
+                )
             else:
                 # Canonical text is the unchanged default extraction — the offset-stable PII input.
                 text = page.extract_text() or ""
@@ -199,6 +216,9 @@ def _extract_pdf(
                 # when fragment/column detection is not confident for this page.
                 pii_input_segment = build_page_pii_input_text(page)
                 page_layout_blocks = build_pdf_layout_blocks(page, page_number, text)
+                page_geometry = build_pdf_page_geometry(
+                    page, page_number, text, canonical_base
+                )
                 ocr_result = None
             pages.append(
                 TextPageResult(
@@ -219,6 +239,9 @@ def _extract_pdf(
             layout_entries.append((page_number, layout_segment, text))
             pii_input_entries.append((page_number, pii_input_segment, text))
             layout_blocks.extend(page_layout_blocks)
+            if page_geometry is not None:
+                geometry_pages.append(page_geometry)
+            canonical_base += len(text) + 2
 
     used_text_layer = any(page.has_text_layer for page in pages)
     used_ocr = any(page.ocr_used for page in pages)
@@ -233,6 +256,7 @@ def _extract_pdf(
     layout_text_result = _combine_layout_segments(layout_entries)
     pii_input_text = _combine_pii_input_segments(pii_input_entries)
     readable_text = build_readable_text(text, [page.text for page in pages])
+    text_geometry = build_text_geometry(geometry_pages, len(pages))
     flags = [
         flag
         for flag, used in (("pdf_mixed", source == "pdf_mixed"), ("ocr_used", used_ocr))
@@ -251,6 +275,7 @@ def _extract_pdf(
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
         layout_blocks=layout_blocks,
+        text_geometry=text_geometry,
     )
 
 
@@ -371,6 +396,14 @@ def _extract_image(
         ["ocr_used"],
         readable_text=build_readable_text(text, [page.text]),
         layout_blocks=build_ocr_layout_blocks(ocr_result, 1),
+        text_geometry=build_text_geometry(
+            [
+                geometry
+                for geometry in (build_ocr_page_geometry(ocr_result, 1, text, 0),)
+                if geometry is not None
+            ],
+            1,
+        ),
     )
 
 
@@ -398,6 +431,7 @@ def _text_content(
     layout_text_result: str | None = None,
     pii_input_text: str | None = None,
     layout_blocks: list[LayoutBlock] | None = None,
+    text_geometry: TextGeometry | None = None,
 ) -> TextContent:
     blocks = layout_blocks or []
     return TextContent(
@@ -415,6 +449,8 @@ def _text_content(
         pii_input_text=pii_input_text,
         layout_blocks_version="1" if blocks else None,
         layout_blocks=blocks,
+        text_geometry_version="1" if text_geometry is not None else None,
+        text_geometry=text_geometry,
     )
 
 
