@@ -25,6 +25,7 @@ from app.schemas import (
 from app.services.artifact_service import (
     get_latest_audit_artifact,
     get_latest_text_artifact,
+    save_quality_report_artifact,
     save_text_artifact,
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
@@ -33,6 +34,7 @@ from app.services.ocr_adapters import OcrAdapter, OcrExtractionResult, extract_o
 from app.services.original_artifact_service import get_verified_original
 from app.services.pdf_renderer import PdfRenderer
 from app.services.pii_input_text import build_page_pii_input_text
+from app.services.quality_report_service import build_quality_report
 
 _OCR_WORKSPACE_ROOT = Path("/tmp")
 
@@ -75,15 +77,18 @@ def create_text_artifact(
         raise OcrConflictError("Audit result MIME type does not match the current original.")
 
     content = _extract_text(document_id, original, original_path, audit, ocr_adapter, pdf_renderer)
+    created_at = _now_utc_iso()
     artifact = TextArtifact(
         id=uuid4().hex,
         document_id=document_id,
         input_artifact_id=original.id,
         input_audit_artifact_id=audit.id,
-        created_at=_now_utc_iso(),
+        created_at=created_at,
         content=content,
     )
+    quality_report = build_quality_report(original, audit, artifact, created_at)
     save_text_artifact(settings, artifact)
+    save_quality_report_artifact(settings, quality_report)
     return artifact
 
 

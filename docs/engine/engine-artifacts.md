@@ -11,7 +11,7 @@ volumes/
 ├── uploads/<document_id>.<ext>                     # byte-identical original
 └── document-data/<document_id>/
     ├── document.json                               # metadata + original artifact
-    ├── artifacts/<artifact_id>.json                # audit/text/PII and future artifacts
+    ├── artifacts/<artifact_id>.json                # audit/text/quality/PII artifacts
     └── feedback/pii_feedback.jsonl                 # dev-only feedback side-channel
 ```
 
@@ -27,7 +27,7 @@ input, or report may be committed.
 | `audit_result` | ✅ today | per-page structure, quality verdict, and routing metrics | no page text | immutable artifact |
 | `best_text_result` | ✅ today as `text_result` | canonical text used by PII/review plus additive OCR-page confidence metrics | yes | immutable artifact |
 | `ocr_result` / `text_layer_result` | ◻ conceptual | source-specific page output | yes | folded into `text_result` today |
-| `quality_report` | 🔜 OCR L7 | source mix, coverage, confidence summary | metrics only | immutable artifact |
+| `quality_report` | ✅ OCR L7 | source mix, coverage, audit quality counts, confidence summary, exact input lineage | metrics only | immutable artifact |
 | `layout_text_result` | ✅ v1 (field on `text_result`) | readable layout plain-text for PDF text layer (L9 v1); readable text (L8) and typed blocks/geometry (L9+) later | yes | additive optional field on `text_result` |
 | `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
 | `structured_document_result` | 🔜 OCR L11 | tables, sections, key-value regions | yes | immutable artifact |
@@ -75,8 +75,19 @@ not duplicate raw OCR line text. Text-layer pages use `null`/an empty list, DOCX
 and legacy text artifacts without these fields remain valid.
 
 `audit_result` stays the immutable pre-OCR routing/quality input and is never rewritten after OCR.
-OCR L7 will introduce a separate immutable `quality_report` that combines audit routing/quality
-data with the confidence stored on the exact lineage-bound `text_result`.
+
+## Quality report boundary
+
+OCR L7 appends a separate `quality_report` after every successful OCR/Text run. It references the
+exact `original_artifact`, `audit_result`, and `text_result` ids and contains only source counts,
+audit status counts, OCR confidence aggregates, character/word counts, pages-without-text coverage,
+flags, and tool-version metadata. It contains no canonical/page text, OCR line text, PII, entity
+values, layout output, or detection input. Its contract uses `artifact_type = quality_report`,
+`station = ocr_quality`, and `quality_report_version = 1`.
+
+Rerunning OCR/Text creates a new `text_result` and a new matching `quality_report`; previous audit,
+text, and quality artifacts remain byte-immutable. The benchmark uses a report only when its
+lineage matches the latest available inputs and otherwise falls back to legacy audit/text summaries.
 
 ## Dev feedback side-channel
 
@@ -95,7 +106,7 @@ is suitable only for controlled local or aggregate analysis.
 
 ## Privacy rules
 
-- **Metrics-only artifacts** (`audit_result`, future `quality_report`) contain counts, statuses, reasons,
+- **Metrics-only artifacts** (`audit_result`, `quality_report`) contain counts, statuses, reasons,
   coverage, and confidence; they contain no page text or raw entity values.
 - **Text artifacts** contain extracted text and therefore may contain PII. They remain under the
   local document-data root and are never logged or committed.
@@ -108,11 +119,12 @@ is suitable only for controlled local or aggregate analysis.
 
 ## Versioning and lineage
 
-- Existing artifacts carry explicit versions (`audit_version`, `ocr_version`, `pii_version`). New
-  artifact types follow the same convention.
+- Existing artifacts carry explicit versions (`audit_version`, `ocr_version`,
+  `quality_report_version`, `pii_version`). New artifact types follow the same convention.
 - Artifacts are append-only: a rerun creates a new artifact id and never mutates the prior result.
-- `text_result` references the original and audit artifacts; `pii_result` references its exact text
-  artifact. Future `quality_report` and `review_result` artifacts extend this chain explicitly.
+- `text_result` references the original and audit artifacts; `quality_report` references that exact
+  original/audit/text triple; `pii_result` references its exact text artifact. Future
+  `review_result` artifacts extend this chain explicitly.
 - Downstream results whose input changes are stale and are never silently reused.
 - Additive optional fields preserve legacy artifact readability. Audits written before OCR L4 have
   no `needs_ocr`; routing falls back to `has_text_layer`.

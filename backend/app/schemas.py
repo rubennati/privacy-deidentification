@@ -223,6 +223,119 @@ class TextArtifact(BaseModel):
         return self
 
 
+class QualityReportContent(BaseModel):
+    """Metrics-only OCR/Text quality summary linked to exact immutable inputs."""
+
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_audit_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    quality_report_version: Literal["1"] = "1"
+    page_count: int = Field(ge=0)
+    text_layer_pages: int = Field(ge=0)
+    ocr_pages: int = Field(ge=0)
+    mixed_source: bool
+    text_source: Literal["pdf_mixed", "pdf_text_layer", "docx_text", "paddleocr"]
+    good_text_layer_pages: int = Field(ge=0)
+    low_confidence_text_layer_pages: int = Field(ge=0)
+    broken_text_layer_pages: int = Field(ge=0)
+    empty_text_layer_pages: int = Field(ge=0)
+    pages_needing_ocr: int = Field(ge=0)
+    ocr_pages_with_confidence: int = Field(ge=0)
+    ocr_lines_with_confidence: int = Field(ge=0)
+    ocr_page_confidence_mean: float | None = Field(default=None, ge=0.0, le=1.0)
+    ocr_page_confidence_min: float | None = Field(default=None, ge=0.0, le=1.0)
+    ocr_page_confidence_max: float | None = Field(default=None, ge=0.0, le=1.0)
+    final_char_count: int = Field(ge=0)
+    final_word_count: int = Field(ge=0)
+    pages_without_text: int = Field(ge=0)
+    flags: list[str] = Field(default_factory=list)
+    tool_versions: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_page_counts(self) -> QualityReportContent:
+        if self.text_layer_pages + self.ocr_pages != self.page_count:
+            raise ValueError("quality report source counts do not match page count")
+        if self.mixed_source != (self.text_layer_pages > 0 and self.ocr_pages > 0):
+            raise ValueError("quality report mixed-source flag does not match source counts")
+        if self.pages_needing_ocr > self.page_count:
+            raise ValueError("quality report OCR routing count exceeds page count")
+        if self.pages_without_text > self.page_count:
+            raise ValueError("quality report empty-output count exceeds page count")
+        if self.ocr_pages_with_confidence > self.ocr_pages:
+            raise ValueError("quality report confidence coverage exceeds OCR page count")
+        audit_quality_pages = (
+            self.good_text_layer_pages
+            + self.low_confidence_text_layer_pages
+            + self.broken_text_layer_pages
+            + self.empty_text_layer_pages
+        )
+        if audit_quality_pages > self.page_count:
+            raise ValueError("quality report audit quality counts exceed page count")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_confidence_summary(self) -> QualityReportContent:
+        confidence_values = (
+            self.ocr_page_confidence_mean,
+            self.ocr_page_confidence_min,
+            self.ocr_page_confidence_max,
+        )
+        if self.ocr_pages_with_confidence == 0:
+            if any(value is not None for value in confidence_values):
+                raise ValueError("quality report has confidence values without covered OCR pages")
+        elif any(value is None for value in confidence_values):
+            raise ValueError("quality report confidence summary is incomplete")
+        else:
+            confidence_mean = self.ocr_page_confidence_mean
+            confidence_min = self.ocr_page_confidence_min
+            confidence_max = self.ocr_page_confidence_max
+            if confidence_mean is None or confidence_min is None or confidence_max is None:
+                raise ValueError("quality report confidence summary is incomplete")
+            if not confidence_min <= confidence_mean <= confidence_max:
+                raise ValueError("quality report confidence range is inconsistent")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> QualityReportContent:
+        if self.mixed_source != (self.text_source == "pdf_mixed"):
+            raise ValueError("quality report text source does not match source mix")
+        if self.text_source == "docx_text" and self.page_count != 0:
+            raise ValueError("DOCX quality reports must not contain synthetic pages")
+        if self.text_source == "pdf_text_layer" and self.ocr_pages:
+            raise ValueError("text-layer quality report unexpectedly contains OCR pages")
+        if self.text_source == "paddleocr" and self.text_layer_pages:
+            raise ValueError("OCR quality report unexpectedly contains text-layer pages")
+        return self
+
+
+class QualityReportArtifact(BaseModel):
+    """Immutable, metrics-only quality artifact emitted after OCR/Text extraction."""
+
+    id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_type: Literal["quality_report"] = "quality_report"
+    station: Literal["ocr_quality"] = "ocr_quality"
+    input_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_audit_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    media_type: Literal["application/json"] = "application/json"
+    created_at: str
+    content: QualityReportContent
+
+    @model_validator(mode="after")
+    def _validate_content_identity(self) -> QualityReportArtifact:
+        if self.content.document_id != self.document_id:
+            raise ValueError("quality report content belongs to a different document")
+        if self.content.input_artifact_id != self.input_artifact_id:
+            raise ValueError("quality report references a different original artifact")
+        if self.content.input_audit_artifact_id != self.input_audit_artifact_id:
+            raise ValueError("quality report references a different audit artifact")
+        if self.content.input_text_artifact_id != self.input_text_artifact_id:
+            raise ValueError("quality report references a different text artifact")
+        return self
+
+
 class PiiEntity(BaseModel):
     """One labeled PII span referencing the source text exactly."""
 

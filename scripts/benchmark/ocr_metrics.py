@@ -1,14 +1,14 @@
-"""OCR/text-layer quality metrics, computed only from local audit/text artifact summaries.
+"""OCR/text-layer quality metrics from L7 reports with legacy artifact fallback.
 
-Never touches extracted text — everything here is counts, statuses, and flags already present
-on ``AuditSummary``/``TextSummary`` (see ``artifact_loader.py``).
+Never touches extracted text — everything here is counts, statuses, and flags already present on
+``QualityReportSummary`` or legacy ``AuditSummary``/``TextSummary`` objects.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from artifact_loader import AuditSummary, DocumentArtifacts, TextSummary
+from artifact_loader import AuditSummary, DocumentArtifacts, QualityReportSummary, TextSummary
 from document_matching import BenchmarkMetadataEntry
 
 # The benchmark corpus distinguishes two "mixed" expected categories (one for a genuinely
@@ -27,12 +27,13 @@ _DIRECT_EXPECTED_CATEGORIES = frozenset({"DIRECT_TEXT_EXTRACTION", "DIRECT_TEXT_
 @dataclass(frozen=True)
 class ArtifactAvailability:
     """Presence status per artifact type, named after the backend's own ``artifact_type`` values
-    (``audit_result``/``text_result``/``pii_result``) — deliberately not ``text``, which collides
-    with the privacy guard's forbidden-field check even though this value is just a status
-    string."""
+    (``audit_result``/``text_result``/``quality_report``/``pii_result``) — deliberately not
+    ``text``, which collides with the privacy guard's forbidden-field check even though this value
+    is just a status string."""
 
     audit_result: str
     text_result: str
+    quality_report: str
     pii_result: str
 
 
@@ -52,6 +53,7 @@ class DocumentOcrMetrics:
     text_source: str | None
     final_char_count: int | None
     final_word_count: int | None
+    pages_without_text: int | None
     ocr_pages_count: int | None
     text_layer_pages_count: int | None
     ocr_pages_with_confidence: int | None
@@ -59,6 +61,7 @@ class DocumentOcrMetrics:
     ocr_page_confidence_mean: float | None
     ocr_page_confidence_min: float | None
     ocr_page_confidence_max: float | None
+    quality_report_used: bool
     expected_pipeline_category: str | None
     actual_pipeline_category: str | None
     routing_matches_expectation: bool | str
@@ -73,6 +76,7 @@ class OcrAggregateMetrics:
     total_broken_text_layer_pages: int
     total_empty_text_layer_pages: int
     total_needs_ocr_pages: int
+    total_pages_without_text: int
     total_ocr_pages_with_confidence: int
     total_ocr_lines_with_confidence: int
     ocr_page_confidence_mean: float | None
@@ -95,18 +99,30 @@ def compute_document_ocr_metrics(
 ) -> DocumentOcrMetrics:
     audit = artifacts.audit
     text = artifacts.text
+    quality_report = _matching_quality_report(artifacts)
     errors = artifacts.load_errors
 
     availability = ArtifactAvailability(
         audit_result=_artifact_status(audit is not None, any("audit" in err for err in errors)),
         text_result=_artifact_status(text is not None, any("text_result" in err for err in errors)),
+        quality_report=_artifact_status(
+            artifacts.quality_report is not None,
+            any("quality_report" in err for err in errors),
+        ),
         pii_result=_artifact_status(
             artifacts.pii is not None, any("pii_result" in err for err in errors)
         ),
     )
 
-    good = low = broken = empty = needs_ocr = 0
-    if audit is not None:
+    if quality_report is not None:
+        good = quality_report.good_text_layer_pages
+        low = quality_report.low_confidence_text_layer_pages
+        broken = quality_report.broken_text_layer_pages
+        empty = quality_report.empty_text_layer_pages
+        needs_ocr = quality_report.pages_needing_ocr
+    else:
+        good = low = broken = empty = needs_ocr = 0
+    if quality_report is None and audit is not None:
         for page in audit.pages:
             status = page.text_quality_status
             if status == "GOOD_TEXT_LAYER":
@@ -120,10 +136,22 @@ def compute_document_ocr_metrics(
             if page.needs_ocr:
                 needs_ocr += 1
 
-    ocr_pages_count = text_layer_pages_count = None
-    ocr_pages_with_confidence = ocr_lines_with_confidence = None
+    if quality_report is not None:
+        ocr_pages_count = quality_report.ocr_pages
+        text_layer_pages_count = quality_report.text_layer_pages
+        ocr_pages_with_confidence = quality_report.ocr_pages_with_confidence
+        ocr_lines_with_confidence = quality_report.ocr_lines_with_confidence
+        confidence_mean = quality_report.ocr_page_confidence_mean
+        confidence_min = quality_report.ocr_page_confidence_min
+        confidence_max = quality_report.ocr_page_confidence_max
+        pages_without_text = quality_report.pages_without_text
+    else:
+        ocr_pages_count = text_layer_pages_count = None
+        ocr_pages_with_confidence = ocr_lines_with_confidence = None
+        confidence_mean = confidence_min = confidence_max = None
+        pages_without_text = None
     page_confidences: list[float] = []
-    if text is not None and text.pages:
+    if quality_report is None and text is not None and text.pages:
         ocr_pages_count = sum(1 for page in text.pages if page.ocr_used)
         text_layer_pages_count = sum(1 for page in text.pages if not page.ocr_used)
         page_confidences = [
@@ -135,12 +163,20 @@ def compute_document_ocr_metrics(
         ocr_lines_with_confidence = sum(
             len(page.ocr_line_confidences) for page in text.pages if page.ocr_used
         )
+        confidence_mean = (
+            sum(page_confidences) / len(page_confidences) if page_confidences else None
+        )
+        confidence_min = min(page_confidences) if page_confidences else None
+        confidence_max = max(page_confidences) if page_confidences else None
+        pages_without_text = sum(page.text_char_count == 0 for page in text.pages)
 
     actual_category, notes = _actual_pipeline_category(audit, text)
     expected_category = benchmark_entry.recommended_pipeline if benchmark_entry else None
     routing_match = _routing_matches(expected_category, actual_category)
 
-    if audit is not None and audit.page_count is not None:
+    if quality_report is not None:
+        page_count = quality_report.page_count
+    elif audit is not None and audit.page_count is not None:
         page_count = audit.page_count
     elif text is not None and text.pages:
         page_count = len(text.pages)
@@ -159,23 +195,60 @@ def compute_document_ocr_metrics(
         pages_needing_ocr=needs_ocr,
         pdf_broken_text_layer_flag=bool(audit and "pdf_broken_text_layer" in audit.flags),
         pdf_pages_need_ocr_flag=bool(audit and "pdf_pages_need_ocr" in audit.flags),
-        text_source=text.source if text else None,
-        final_char_count=text.text_char_count if text else None,
-        final_word_count=text.word_count if text else None,
+        text_source=(quality_report.text_source if quality_report else text.source if text else None),
+        final_char_count=(
+            quality_report.final_char_count
+            if quality_report
+            else text.text_char_count if text else None
+        ),
+        final_word_count=(
+            quality_report.final_word_count
+            if quality_report
+            else text.word_count if text else None
+        ),
+        pages_without_text=pages_without_text,
         ocr_pages_count=ocr_pages_count,
         text_layer_pages_count=text_layer_pages_count,
         ocr_pages_with_confidence=ocr_pages_with_confidence,
         ocr_lines_with_confidence=ocr_lines_with_confidence,
-        ocr_page_confidence_mean=(
-            sum(page_confidences) / len(page_confidences) if page_confidences else None
-        ),
-        ocr_page_confidence_min=min(page_confidences) if page_confidences else None,
-        ocr_page_confidence_max=max(page_confidences) if page_confidences else None,
+        ocr_page_confidence_mean=confidence_mean,
+        ocr_page_confidence_min=confidence_min,
+        ocr_page_confidence_max=confidence_max,
+        quality_report_used=quality_report is not None,
         expected_pipeline_category=expected_category,
         actual_pipeline_category=actual_category,
         routing_matches_expectation=routing_match,
         notes=tuple(notes),
     )
+
+
+def _matching_quality_report(artifacts: DocumentArtifacts) -> QualityReportSummary | None:
+    """Use L7 metrics only when they match every available latest input artifact."""
+    report = artifacts.quality_report
+    if report is None:
+        return None
+    if artifacts.text is not None:
+        if report.input_text_artifact_id != artifacts.text.artifact_id:
+            return None
+        if (
+            artifacts.text.input_artifact_id is not None
+            and report.input_artifact_id != artifacts.text.input_artifact_id
+        ):
+            return None
+        if (
+            artifacts.text.input_audit_artifact_id is not None
+            and report.input_audit_artifact_id != artifacts.text.input_audit_artifact_id
+        ):
+            return None
+    if artifacts.audit is not None:
+        if report.input_audit_artifact_id != artifacts.audit.artifact_id:
+            return None
+        if (
+            artifacts.audit.input_artifact_id is not None
+            and report.input_artifact_id != artifacts.audit.input_artifact_id
+        ):
+            return None
+    return report
 
 
 def _actual_pipeline_category(
@@ -243,6 +316,7 @@ def aggregate_ocr_metrics(per_document: list[DocumentOcrMetrics]) -> OcrAggregat
         total_broken_text_layer_pages=sum(doc.pages_broken_text_layer for doc in per_document),
         total_empty_text_layer_pages=sum(doc.pages_empty_text_layer for doc in per_document),
         total_needs_ocr_pages=sum(doc.pages_needing_ocr for doc in per_document),
+        total_pages_without_text=sum(doc.pages_without_text or 0 for doc in per_document),
         total_ocr_pages_with_confidence=page_confidence_weight,
         total_ocr_lines_with_confidence=sum(
             doc.ocr_lines_with_confidence or 0 for doc in per_document

@@ -11,18 +11,18 @@ Hard constraints:
   only under the git-ignored `volumes/benchmark/`. Nothing real is ever committed.
 - **Privacy-guarded output.** `privacy_guard.py` blocks any report write containing a forbidden
   field name or a PII-shaped string. Reports carry aggregate metrics only.
-- **Read-only.** It reads `document.json`/`audit_result`/`text_result`/`pii_result`; missing
+- **Read-only.** It reads `document.json`/`audit_result`/`text_result`/`quality_report`/`pii_result`; missing
   artifacts are reported as `missing`, never generated.
 
 Level numbers are cumulative and **not** comparable to the other ladders. This engine uses the
 **0–19 maturity scale** ([why 0–19](README.md#maturity-scale)).
 
-**Current standing:** **L8 done (L0–L8); L9 next.** The stdlib-only runner
+**Current standing:** **L8 done (L0–L8); L9 next, with an out-of-order L10 slice.** The stdlib-only runner
 ([ADR-0010](../adr/0010-private-benchmark-runner.md), `scripts/benchmark/`,
 `make benchmark-private`) delivers corpus matching, OCR/text routing correctness, PII P/R/F1 per
-doc/type/group/global, privacy-guarded and deterministic reports, plus candidate-validation counts.
-Per-profile runs in one invocation, OCR confidence/runtime columns, trend/history, and a CI gate are
-open.
+doc/type/group/global, privacy-guarded and deterministic reports, candidate-validation counts, and
+lineage-matched OCR confidence/coverage columns with legacy fallback. Per-profile runs in one
+invocation, OCR runtime columns, trend/history, and a CI gate are open.
 
 ---
 
@@ -111,11 +111,12 @@ open.
   profile. Completes the PII L2/L9 "per-profile validation posture" reporting.
 - **Boundary to L10:** L9 broadens PII coverage; L10 adds OCR quality columns.
 
-## Level 10 — OCR confidence / coverage columns  ⛔ *open*
+## Level 10 — OCR confidence / coverage columns  ⏳ *delivered out of order*
 
 - **Description:** add per-document OCR confidence and coverage to the report (needs OCR L6–L7).
-- **Acceptance:** confidence/coverage columns appear once OCR captures confidence and a
-  `quality_report` exists.
+- **Acceptance:** met for L7 artifacts: confidence and pages-without-text coverage appear in JSON,
+  markdown, and CSV summaries; lineage mismatches fall back to legacy audit/text metrics. The
+  cumulative benchmark level remains L8 until L9 is delivered.
 - **Boundary to L11:** L10 measures OCR quality; L11 measures OCR cost.
 
 ## Level 11 — OCR runtime / memory / performance columns  ⛔ *open*

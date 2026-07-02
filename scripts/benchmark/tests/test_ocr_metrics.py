@@ -8,6 +8,7 @@ from artifact_loader import (
     DocumentArtifacts,
     LocalDocument,
     OcrLineConfidenceSummary,
+    QualityReportSummary,
     TextPageSummary,
     TextSummary,
 )
@@ -64,6 +65,38 @@ def _text(pages: list[TextPageSummary], source: str = "pdf_text_layer") -> TextS
         pages=tuple(pages),
         tool_versions={},
     )
+
+
+def _quality_report(**overrides: object) -> QualityReportSummary:
+    values: dict[str, object] = {
+        "artifact_id": "q1",
+        "created_at": "2026-07-01T10:00:00Z",
+        "input_artifact_id": "o1",
+        "input_audit_artifact_id": "a1",
+        "input_text_artifact_id": "t1",
+        "page_count": 2,
+        "text_layer_pages": 1,
+        "ocr_pages": 1,
+        "mixed_source": True,
+        "text_source": "pdf_mixed",
+        "good_text_layer_pages": 1,
+        "low_confidence_text_layer_pages": 0,
+        "broken_text_layer_pages": 0,
+        "empty_text_layer_pages": 1,
+        "pages_needing_ocr": 1,
+        "ocr_pages_with_confidence": 1,
+        "ocr_lines_with_confidence": 2,
+        "ocr_page_confidence_mean": 0.75,
+        "ocr_page_confidence_min": 0.75,
+        "ocr_page_confidence_max": 0.75,
+        "final_char_count": 150,
+        "final_word_count": 15,
+        "pages_without_text": 0,
+        "flags": ("pdf_mixed", "ocr_used"),
+        "tool_versions": {},
+    }
+    values.update(overrides)
+    return QualityReportSummary(**values)
 
 
 def test_direct_extraction_when_no_pages_need_ocr() -> None:
@@ -139,6 +172,7 @@ def test_artifact_availability_reports_missing_text_and_pii() -> None:
     metrics = compute_document_ocr_metrics("doc-1", "Report.pdf", artifacts, None)
     assert metrics.artifact_availability.audit_result == "present"
     assert metrics.artifact_availability.text_result == "missing"
+    assert metrics.artifact_availability.quality_report == "missing"
     assert metrics.artifact_availability.pii_result == "missing"
 
 
@@ -157,6 +191,7 @@ def test_ocr_and_text_layer_page_counts_from_text_summary() -> None:
     assert metrics.text_layer_pages_count == 1
     assert metrics.final_char_count == 150
     assert metrics.final_word_count == 15
+    assert metrics.pages_without_text == 0
 
 
 def test_ocr_confidence_is_aggregated_from_text_summary() -> None:
@@ -199,6 +234,55 @@ def test_ocr_confidence_is_aggregated_from_text_summary() -> None:
     assert aggregate.total_ocr_pages_with_confidence == 2
     assert aggregate.total_ocr_lines_with_confidence == 2
     assert aggregate.ocr_page_confidence_mean == pytest.approx(0.7)
+    assert aggregate.total_pages_without_text == 0
+
+
+def test_lineage_matching_quality_report_is_preferred() -> None:
+    audit = _audit([_page("GOOD_TEXT_LAYER", False), _page("EMPTY_TEXT_LAYER", True, 2)])
+    text = _text(
+        [
+            TextPageSummary(1, "pdf_text_layer", True, False, 100, 10),
+            TextPageSummary(2, "paddleocr", False, True, 50, 5),
+        ],
+        source="pdf_mixed",
+    )
+    quality_report = _quality_report()
+    artifacts = DocumentArtifacts(
+        document=_DOC,
+        audit=audit,
+        text=text,
+        pii=None,
+        quality_report=quality_report,
+    )
+
+    metrics = compute_document_ocr_metrics("doc-1", "Report.pdf", artifacts, None)
+
+    assert metrics.quality_report_used is True
+    assert metrics.artifact_availability.quality_report == "present"
+    assert metrics.ocr_pages_count == 1
+    assert metrics.ocr_lines_with_confidence == 2
+    assert metrics.ocr_page_confidence_mean == 0.75
+    assert metrics.final_word_count == 15
+    assert metrics.pages_without_text == 0
+
+
+def test_stale_quality_report_falls_back_to_legacy_summaries() -> None:
+    audit = _audit([_page("GOOD_TEXT_LAYER", False)])
+    text = _text([TextPageSummary(1, "pdf_text_layer", True, False, 100, 10)])
+    artifacts = DocumentArtifacts(
+        document=_DOC,
+        audit=audit,
+        text=text,
+        pii=None,
+        quality_report=_quality_report(input_text_artifact_id="stale"),
+    )
+
+    metrics = compute_document_ocr_metrics("doc-1", "Report.pdf", artifacts, None)
+
+    assert metrics.quality_report_used is False
+    assert metrics.page_count == 1
+    assert metrics.text_layer_pages_count == 1
+    assert metrics.ocr_pages_count == 0
 
 
 def test_aggregate_ocr_metrics_sums_page_counts_and_collects_mismatches() -> None:

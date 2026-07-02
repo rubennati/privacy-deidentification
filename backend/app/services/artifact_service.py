@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.schemas import AuditArtifact, PiiArtifact, TextArtifact
+from app.schemas import AuditArtifact, PiiArtifact, QualityReportArtifact, TextArtifact
 
 _ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _ARTIFACTS_DIRECTORY = "artifacts"
@@ -23,6 +23,11 @@ def save_audit_artifact(settings: Settings, artifact: AuditArtifact) -> None:
 
 def save_text_artifact(settings: Settings, artifact: TextArtifact) -> None:
     """Write a text artifact through a temporary file and atomic rename."""
+    _save_artifact_json(settings, artifact.document_id, artifact.id, artifact.model_dump_json())
+
+
+def save_quality_report_artifact(settings: Settings, artifact: QualityReportArtifact) -> None:
+    """Write a quality report through a temporary file and atomic rename."""
     _save_artifact_json(settings, artifact.document_id, artifact.id, artifact.model_dump_json())
 
 
@@ -57,6 +62,24 @@ def get_latest_text_artifact(settings: Settings, document_id: str) -> TextArtifa
         artifact
         for path in directory.glob("*.json")
         if (artifact := _read_text_artifact(path, document_id)) is not None
+    ]
+    if not artifacts:
+        return None
+    return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
+
+
+def get_latest_quality_report_artifact(
+    settings: Settings, document_id: str
+) -> QualityReportArtifact | None:
+    """Return the newest valid quality report for a document, if one exists."""
+    directory = _document_artifact_directory(settings, document_id)
+    if not directory.is_dir():
+        return None
+
+    artifacts = [
+        artifact
+        for path in directory.glob("*.json")
+        if (artifact := _read_quality_report_artifact(path, document_id)) is not None
     ]
     if not artifacts:
         return None
@@ -133,6 +156,16 @@ def _read_audit_artifact(path: Path, document_id: str) -> AuditArtifact | None:
 def _read_text_artifact(path: Path, document_id: str) -> TextArtifact | None:
     try:
         artifact = TextArtifact.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError):
+        return None
+    return artifact if artifact.document_id == document_id else None
+
+
+def _read_quality_report_artifact(
+    path: Path, document_id: str
+) -> QualityReportArtifact | None:
+    try:
+        artifact = QualityReportArtifact.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValidationError):
         return None
     return artifact if artifact.document_id == document_id else None

@@ -16,9 +16,9 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L6 reached (L0–L6 done); L7 is next.** Per-page routing over a text-layer
-quality gate and additive OCR **confidence** on `text_result` are complete; a first-class
-`quality_report` artifact is not yet built.
+**Current standing:** **L7 reached (L0–L7 done); L8 is next.** Each successful OCR/Text run now
+persists a separate, metrics-only `quality_report` linked to the exact original, audit, and text
+artifacts; canonical text and routing remain unchanged.
 
 ---
 
@@ -122,15 +122,17 @@ quality gate and additive OCR **confidence** on `text_result` are complete; a fi
 - **Boundary to L7:** L6 produces per-page confidence numbers; L7 aggregates them into a
   document-level `quality_report` that combines audit routing/quality data with text OCR confidence.
 
-## Level 7 — `quality_report` artifact  ⏳ *next*
+## Level 7 — `quality_report` artifact  ✅ *done*
 
 - **Description:** a first-class per-document quality summary so text quality can be tracked and
   gated over time.
-- **Engine must:** emit a `quality_report` artifact with source mix, page coverage, low-confidence
-  page counts, and confidence summary — **counts/statuses only, no page text**.
+- **Engine must:** emit an immutable `quality_report` after every successful OCR/Text run, with
+  source mix, page coverage, audit quality counts, and OCR confidence summary, linked to the exact
+  original, `audit_result`, and `text_result` — **counts/statuses only, no page text**.
 - **Artifacts:** `quality_report` (see [`engine-artifacts.md`](engine-artifacts.md)).
-- **Acceptance:** a processed document has a `quality_report` showing source mix, coverage, and
-  low-confidence counts; the benchmark can read it without touching raw text.
+- **Acceptance:** PDF, image, and DOCX runs create lineage-bound reports; reruns append new reports
+  without mutating old artifacts; the benchmark prefers a lineage-matching report and retains a
+  legacy audit/text fallback without copying raw text.
 - **Boundary to L8:** L0–L7 concern the *canonical* text and its quality; L8 introduces a separate
   *human-readable* rendering.
 
@@ -156,7 +158,7 @@ quality gate and additive OCR **confidence** on `text_result` are complete; a fi
 - **Artifacts:** `layout_text_result` with ordered, typed blocks and coordinates.
 - **Acceptance:** multi-column and header/footer pages produce human-sensible reading order; the
   canonical text remains the PII input.
-- **Status:** two additive v1 slices are delivered, both out-of-order ahead of cumulative L7
+- **Status:** two additive v1 slices are delivered, both out-of-order ahead of cumulative L8
   work, and both leave `text_result.text` byte-stable with PII still running on canonical text:
   - `layout_text_result` — an optional field on `text_result`, pypdf `extraction_mode="layout"`,
     PDF text-layer pages only; OCR/DOCX/image → `null`.
@@ -166,7 +168,7 @@ quality gate and additive OCR **confidence** on `text_result` are complete; a fi
     data (`visitor_operand_before`, no new dependency). **Not** the active PII input — see
     [`ocr-layout-text-contract.md`](ocr-layout-text-contract.md).
   Typed blocks/geometry, OCR-page layout, a `text_lineage_map`, and a general table detector remain
-  open; the cumulative L7 `quality_report` is still the prioritised next step.
+  open; the cumulative L8 readable rendering is now the prioritised next step.
 - **Boundary to L10:** L9 knows block order; L10 persists precise per-line/word coordinates as
   reusable geometry.
 
@@ -309,7 +311,7 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 4 Text-layer quality gate | ✅ done | `text_quality.py` GOOD/LOW/BROKEN/EMPTY verdicts |
 | 5 Page-level routing | ✅ done | per-page `needs_ocr` routing, `pdf_mixed`, `503`-not-garbage |
 | 6 OCR confidence | ✅ done | additive page mean + metric-only line scores on `text_result`; benchmark summaries |
-| 7 `quality_report` artifact | ⏳ next | no distinct per-document quality artifact yet |
+| 7 `quality_report` artifact | ✅ done | immutable metrics-only artifact with original/audit/text lineage; benchmark consumption |
 | 8 Human-readable text | ⛔ open | canonical text only; no readable rendering |
 | 9 Layout-aware text | ⛔ open | — |
 | 10 Bounding boxes / geometry | ⛔ open | — |
@@ -328,11 +330,9 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next levels (L7 → L8):**
+**What is missing for the next level (L8):**
 
-1. Introduce a first-class `quality_report` artifact that combines audit routing/quality metrics
-   with OCR confidence from `text_result` (counts/coverage/confidence, no text) (L7).
-2. Then a deterministic **human-readable** rendering (`layout_text_result` seed) that never mutates
+1. Introduce a deterministic **human-readable** rendering (`readable_text`) that never mutates
    the canonical `best_text_result` (L8).
 
 See the [current sequence](roadmap.md#current-sequence) and

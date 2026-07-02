@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from artifact_loader import DetectedEntity, OcrLineConfidenceSummary, load_local_corpus
+from artifact_loader import (
+    DetectedEntity,
+    OcrLineConfidenceSummary,
+    QualityReportSummary,
+    load_local_corpus,
+)
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -47,6 +52,42 @@ def _audit_artifact(artifact_id: str, document_id: str, created_at: str) -> dict
                     "needs_ocr": False,
                 }
             ],
+        },
+    }
+
+
+def _quality_report_artifact(
+    artifact_id: str, document_id: str, created_at: str
+) -> dict:
+    return {
+        "id": artifact_id,
+        "document_id": document_id,
+        "artifact_type": "quality_report",
+        "created_at": created_at,
+        "input_artifact_id": "o1",
+        "input_audit_artifact_id": "a1",
+        "input_text_artifact_id": "t1",
+        "content": {
+            "page_count": 1,
+            "text_layer_pages": 0,
+            "ocr_pages": 1,
+            "mixed_source": False,
+            "text_source": "paddleocr",
+            "good_text_layer_pages": 0,
+            "low_confidence_text_layer_pages": 0,
+            "broken_text_layer_pages": 0,
+            "empty_text_layer_pages": 1,
+            "pages_needing_ocr": 1,
+            "ocr_pages_with_confidence": 1,
+            "ocr_lines_with_confidence": 1,
+            "ocr_page_confidence_mean": 0.85,
+            "ocr_page_confidence_min": 0.85,
+            "ocr_page_confidence_max": 0.85,
+            "final_char_count": 20,
+            "final_word_count": 3,
+            "pages_without_text": 0,
+            "flags": ["ocr_used"],
+            "tool_versions": {"paddleocr": "test"},
         },
     }
 
@@ -165,6 +206,10 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
             },
         },
     )
+    _write_json(
+        document_data_dir / document_id / "artifacts" / "quality.json",
+        _quality_report_artifact("q1", document_id, "2026-07-01T10:03:00Z"),
+    )
 
     corpus = load_local_corpus(tmp_path / "uploads", document_data_dir)
 
@@ -174,6 +219,13 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
     assert page.ocr_line_confidences == (OcrLineConfidenceSummary(1, 0.85, 20),)
     assert "text" not in page.__dataclass_fields__
     assert "text" not in OcrLineConfidenceSummary.__dataclass_fields__
+    quality_report = corpus[0].quality_report
+    assert quality_report is not None
+    assert quality_report.input_text_artifact_id == "t1"
+    assert quality_report.ocr_page_confidence_mean == 0.85
+    assert quality_report.final_word_count == 3
+    forbidden_fields = {"text", "page_text", "ocr_text", "entity_text"}
+    assert forbidden_fields.isdisjoint(QualityReportSummary.__dataclass_fields__)
 
 
 def _pii_artifact_with_validation(artifact_id: str, document_id: str, created_at: str) -> dict:
