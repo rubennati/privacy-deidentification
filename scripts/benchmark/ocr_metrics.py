@@ -54,6 +54,11 @@ class DocumentOcrMetrics:
     final_word_count: int | None
     ocr_pages_count: int | None
     text_layer_pages_count: int | None
+    ocr_pages_with_confidence: int | None
+    ocr_lines_with_confidence: int | None
+    ocr_page_confidence_mean: float | None
+    ocr_page_confidence_min: float | None
+    ocr_page_confidence_max: float | None
     expected_pipeline_category: str | None
     actual_pipeline_category: str | None
     routing_matches_expectation: bool | str
@@ -68,6 +73,11 @@ class OcrAggregateMetrics:
     total_broken_text_layer_pages: int
     total_empty_text_layer_pages: int
     total_needs_ocr_pages: int
+    total_ocr_pages_with_confidence: int
+    total_ocr_lines_with_confidence: int
+    ocr_page_confidence_mean: float | None
+    ocr_page_confidence_min: float | None
+    ocr_page_confidence_max: float | None
     routing_mismatches: tuple[str, ...]
 
 
@@ -111,9 +121,20 @@ def compute_document_ocr_metrics(
                 needs_ocr += 1
 
     ocr_pages_count = text_layer_pages_count = None
+    ocr_pages_with_confidence = ocr_lines_with_confidence = None
+    page_confidences: list[float] = []
     if text is not None and text.pages:
         ocr_pages_count = sum(1 for page in text.pages if page.ocr_used)
         text_layer_pages_count = sum(1 for page in text.pages if not page.ocr_used)
+        page_confidences = [
+            page.ocr_confidence
+            for page in text.pages
+            if page.ocr_used and page.ocr_confidence is not None
+        ]
+        ocr_pages_with_confidence = len(page_confidences)
+        ocr_lines_with_confidence = sum(
+            len(page.ocr_line_confidences) for page in text.pages if page.ocr_used
+        )
 
     actual_category, notes = _actual_pipeline_category(audit, text)
     expected_category = benchmark_entry.recommended_pipeline if benchmark_entry else None
@@ -143,6 +164,13 @@ def compute_document_ocr_metrics(
         final_word_count=text.word_count if text else None,
         ocr_pages_count=ocr_pages_count,
         text_layer_pages_count=text_layer_pages_count,
+        ocr_pages_with_confidence=ocr_pages_with_confidence,
+        ocr_lines_with_confidence=ocr_lines_with_confidence,
+        ocr_page_confidence_mean=(
+            sum(page_confidences) / len(page_confidences) if page_confidences else None
+        ),
+        ocr_page_confidence_min=min(page_confidences) if page_confidences else None,
+        ocr_page_confidence_max=max(page_confidences) if page_confidences else None,
         expected_pipeline_category=expected_category,
         actual_pipeline_category=actual_category,
         routing_matches_expectation=routing_match,
@@ -191,6 +219,21 @@ def aggregate_ocr_metrics(per_document: list[DocumentOcrMetrics]) -> OcrAggregat
     mismatches = tuple(
         doc.display_filename for doc in per_document if doc.routing_matches_expectation is False
     )
+    page_confidence_weight = sum(doc.ocr_pages_with_confidence or 0 for doc in per_document)
+    page_confidence_sum = sum(
+        (doc.ocr_page_confidence_mean or 0.0) * (doc.ocr_pages_with_confidence or 0)
+        for doc in per_document
+    )
+    page_confidence_mins = [
+        doc.ocr_page_confidence_min
+        for doc in per_document
+        if doc.ocr_page_confidence_min is not None
+    ]
+    page_confidence_maxes = [
+        doc.ocr_page_confidence_max
+        for doc in per_document
+        if doc.ocr_page_confidence_max is not None
+    ]
     return OcrAggregateMetrics(
         documents=tuple(per_document),
         total_good_text_layer_pages=sum(doc.pages_good_text_layer for doc in per_document),
@@ -200,5 +243,14 @@ def aggregate_ocr_metrics(per_document: list[DocumentOcrMetrics]) -> OcrAggregat
         total_broken_text_layer_pages=sum(doc.pages_broken_text_layer for doc in per_document),
         total_empty_text_layer_pages=sum(doc.pages_empty_text_layer for doc in per_document),
         total_needs_ocr_pages=sum(doc.pages_needing_ocr for doc in per_document),
+        total_ocr_pages_with_confidence=page_confidence_weight,
+        total_ocr_lines_with_confidence=sum(
+            doc.ocr_lines_with_confidence or 0 for doc in per_document
+        ),
+        ocr_page_confidence_mean=(
+            page_confidence_sum / page_confidence_weight if page_confidence_weight else None
+        ),
+        ocr_page_confidence_min=(min(page_confidence_mins) if page_confidence_mins else None),
+        ocr_page_confidence_max=(max(page_confidence_maxes) if page_confidence_maxes else None),
         routing_mismatches=mismatches,
     )

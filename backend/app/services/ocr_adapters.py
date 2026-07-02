@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
+from math import isfinite
+from numbers import Real
 from pathlib import Path
 from threading import Lock
-from typing import Protocol, cast
+from typing import Protocol, cast, runtime_checkable
 
 from app.errors import ApiError
 
@@ -19,6 +22,31 @@ class OcrAdapter(Protocol):
     def extract_text(self, image_path: Path) -> str: ...
 
     def tool_versions(self) -> dict[str, str]: ...
+
+
+@dataclass(frozen=True)
+class OcrLineMetric:
+    """Confidence-only metadata for one recognized line; never carries its raw text."""
+
+    line_index: int
+    confidence: float
+    text_char_count: int
+
+
+@dataclass(frozen=True)
+class OcrExtractionResult:
+    """Canonical OCR text plus additive engine-reported confidence metrics."""
+
+    text: str
+    confidence: float | None = None
+    line_confidences: tuple[OcrLineMetric, ...] = ()
+
+
+@runtime_checkable
+class ConfidenceReportingOcrAdapter(Protocol):
+    """Optional adapter extension; callers retain support for legacy text-only adapters."""
+
+    def extract_result(self, image_path: Path) -> OcrExtractionResult: ...
 
 
 class _PaddleEngine(Protocol):
@@ -48,8 +76,12 @@ class PaddleOcrAdapter:
         self._lock = Lock()
 
     def extract_text(self, image_path: Path) -> str:
+        """Retain the original text-only adapter API for compatibility."""
+        return self.extract_result(image_path).text
+
+    def extract_result(self, image_path: Path) -> OcrExtractionResult:
         results = self._get_engine().predict(input=str(image_path))
-        return "\n".join(_extract_recognized_texts(results))
+        return _extract_result(results)
 
     def tool_versions(self) -> dict[str, str]:
         versions: dict[str, str] = {}
@@ -119,8 +151,16 @@ def get_ocr_adapter(
     )
 
 
-def _extract_recognized_texts(results: object) -> list[str]:
+def extract_ocr_result(ocr_adapter: OcrAdapter, image_path: Path) -> OcrExtractionResult:
+    """Extract OCR text and metrics, falling back cleanly for legacy text-only adapters."""
+    if isinstance(ocr_adapter, ConfidenceReportingOcrAdapter):
+        return ocr_adapter.extract_result(image_path)
+    return OcrExtractionResult(text=ocr_adapter.extract_text(image_path))
+
+
+def _extract_result(results: object) -> OcrExtractionResult:
     texts: list[str] = []
+    line_confidences: list[OcrLineMetric] = []
     for result in _as_sequence(results):
         payload = getattr(result, "json", result)
         if callable(payload):
@@ -129,10 +169,40 @@ def _extract_recognized_texts(results: object) -> list[str]:
             result_payload = payload.get("res", payload)
             if isinstance(result_payload, Mapping):
                 recognized = result_payload.get("rec_texts", [])
-                for text in _as_sequence(recognized):
+                scores = _as_sequence(result_payload.get("rec_scores", []))
+                for payload_index, text in enumerate(_as_sequence(recognized)):
                     if isinstance(text, str) and text:
                         texts.append(text)
-    return texts
+                        score = _valid_confidence(
+                            scores[payload_index] if payload_index < len(scores) else None
+                        )
+                        if score is not None:
+                            line_confidences.append(
+                                OcrLineMetric(
+                                    line_index=len(texts),
+                                    confidence=score,
+                                    text_char_count=len(text),
+                                )
+                            )
+    confidence = (
+        sum(line.confidence for line in line_confidences) / len(line_confidences)
+        if line_confidences
+        else None
+    )
+    return OcrExtractionResult(
+        text="\n".join(texts),
+        confidence=confidence,
+        line_confidences=tuple(line_confidences),
+    )
+
+
+def _valid_confidence(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        return None
+    confidence = float(value)
+    if not isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+        return None
+    return confidence
 
 
 def _as_sequence(value: object) -> Sequence[object]:

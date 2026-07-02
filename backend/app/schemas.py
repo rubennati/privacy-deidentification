@@ -111,6 +111,14 @@ class AuditArtifact(BaseModel):
         return self
 
 
+class OcrLineConfidence(BaseModel):
+    """Metric-only confidence for one PaddleOCR-recognized line."""
+
+    line_index: int = Field(ge=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    text_char_count: int = Field(ge=0)
+
+
 class TextPageResult(BaseModel):
     """Ordered text extracted from one PDF or image page."""
 
@@ -120,6 +128,10 @@ class TextPageResult(BaseModel):
     ocr_used: bool
     text: str
     text_char_count: int = Field(ge=0)
+    # OCR L6 metrics are additive and never carry duplicate raw line text. Legacy artifacts omit
+    # these fields; non-OCR pages keep ``None``/an empty list.
+    ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    ocr_line_confidences: list[OcrLineConfidence] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_page_summary(self) -> TextPageResult:
@@ -128,6 +140,13 @@ class TextPageResult(BaseModel):
         expected = (self.source == "pdf_text_layer", self.source == "paddleocr")
         if (self.has_text_layer, self.ocr_used) != expected:
             raise ValueError("page source does not match text-layer and OCR flags")
+        if not self.ocr_used and (
+            self.ocr_confidence is not None or self.ocr_line_confidences
+        ):
+            raise ValueError("non-OCR pages must not carry OCR confidence")
+        line_indexes = [line.line_index for line in self.ocr_line_confidences]
+        if line_indexes != sorted(set(line_indexes)):
+            raise ValueError("OCR line confidence indexes must be unique and ordered")
         return self
 
 

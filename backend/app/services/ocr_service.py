@@ -16,6 +16,7 @@ from app.errors import ApiError
 from app.schemas import (
     AuditArtifact,
     AuditPageResult,
+    OcrLineConfidence,
     OriginalArtifact,
     TextArtifact,
     TextContent,
@@ -28,7 +29,7 @@ from app.services.artifact_service import (
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.docx_extraction import extract_docx_text
-from app.services.ocr_adapters import OcrAdapter
+from app.services.ocr_adapters import OcrAdapter, OcrExtractionResult, extract_ocr_result
 from app.services.original_artifact_service import get_verified_original
 from app.services.pdf_renderer import PdfRenderer
 from app.services.pii_input_text import build_page_pii_input_text
@@ -163,7 +164,8 @@ def _extract_pdf(
                     )
                 except Exception as exc:
                     raise OcrProcessingError("PDF page could not be rendered.") from exc
-                text = ocr_adapter.extract_text(image_path)
+                ocr_result = extract_ocr_result(ocr_adapter, image_path)
+                text = ocr_result.text
                 source = "paddleocr"
                 layout_segment: str | None = None
                 pii_input_segment: str | None = None
@@ -182,6 +184,7 @@ def _extract_pdf(
                 # feeds PII detection and never affects ``text``; returns None rather than raising
                 # when fragment/column detection is not confident for this page.
                 pii_input_segment = build_page_pii_input_text(page)
+                ocr_result = None
             pages.append(
                 TextPageResult(
                     page_number=page_number,
@@ -190,6 +193,12 @@ def _extract_pdf(
                     ocr_used=source == "paddleocr",
                     text=text,
                     text_char_count=len(text),
+                    ocr_confidence=(
+                        ocr_result.confidence if ocr_result is not None else None
+                    ),
+                    ocr_line_confidences=(
+                        _line_confidences(ocr_result) if ocr_result is not None else []
+                    ),
                 )
             )
             layout_entries.append((page_number, layout_segment, text))
@@ -318,7 +327,8 @@ def _extract_image(
     audit: AuditArtifact,
     ocr_adapter: OcrAdapter,
 ) -> TextContent:
-    text = ocr_adapter.extract_text(original_path)
+    ocr_result = extract_ocr_result(ocr_adapter, original_path)
+    text = ocr_result.text
     page = TextPageResult(
         page_number=1,
         source="paddleocr",
@@ -326,6 +336,8 @@ def _extract_image(
         ocr_used=True,
         text=text,
         text_char_count=len(text),
+        ocr_confidence=ocr_result.confidence,
+        ocr_line_confidences=_line_confidences(ocr_result),
     )
     return _text_content(
         document_id,
@@ -337,6 +349,17 @@ def _extract_image(
         ocr_adapter.tool_versions(),
         ["ocr_used"],
     )
+
+
+def _line_confidences(result: OcrExtractionResult) -> list[OcrLineConfidence]:
+    return [
+        OcrLineConfidence(
+            line_index=line.line_index,
+            confidence=line.confidence,
+            text_char_count=line.text_char_count,
+        )
+        for line in result.line_confidences
+    ]
 
 
 def _text_content(

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from artifact_loader import (
     AuditPageSummary,
     AuditSummary,
     DocumentArtifacts,
     LocalDocument,
+    OcrLineConfidenceSummary,
     TextPageSummary,
     TextSummary,
 )
@@ -154,6 +157,48 @@ def test_ocr_and_text_layer_page_counts_from_text_summary() -> None:
     assert metrics.text_layer_pages_count == 1
     assert metrics.final_char_count == 150
     assert metrics.final_word_count == 15
+
+
+def test_ocr_confidence_is_aggregated_from_text_summary() -> None:
+    audit = _audit([_page("EMPTY_TEXT_LAYER", True), _page("EMPTY_TEXT_LAYER", True, 2)])
+    text = _text(
+        [
+            TextPageSummary(
+                1,
+                "paddleocr",
+                False,
+                True,
+                50,
+                5,
+                0.8,
+                (OcrLineConfidenceSummary(1, 0.8, 50),),
+            ),
+            TextPageSummary(
+                2,
+                "paddleocr",
+                False,
+                True,
+                50,
+                5,
+                0.6,
+                (OcrLineConfidenceSummary(1, 0.6, 50),),
+            ),
+        ],
+        source="paddleocr",
+    )
+    artifacts = DocumentArtifacts(document=_DOC, audit=audit, text=text, pii=None)
+
+    metrics = compute_document_ocr_metrics("doc-1", "Report.pdf", artifacts, None)
+
+    assert metrics.ocr_pages_with_confidence == 2
+    assert metrics.ocr_lines_with_confidence == 2
+    assert metrics.ocr_page_confidence_mean == pytest.approx(0.7)
+    assert metrics.ocr_page_confidence_min == 0.6
+    assert metrics.ocr_page_confidence_max == 0.8
+    aggregate = aggregate_ocr_metrics([metrics])
+    assert aggregate.total_ocr_pages_with_confidence == 2
+    assert aggregate.total_ocr_lines_with_confidence == 2
+    assert aggregate.ocr_page_confidence_mean == pytest.approx(0.7)
 
 
 def test_aggregate_ocr_metrics_sums_page_counts_and_collects_mismatches() -> None:

@@ -18,21 +18,33 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
 from app.main import app
-from app.services.ocr_adapters import OcrUnavailableError
+from app.services.ocr_adapters import OcrExtractionResult, OcrLineMetric, OcrUnavailableError
 from app.services.pdf_renderer import get_pdf_renderer
 
 
 class FakeOcrAdapter:
     def __init__(self) -> None:
         self.outputs: list[str] = []
+        self.confidences: list[float | None] = []
+        self.line_confidences: list[tuple[OcrLineMetric, ...]] = []
         self.calls: list[Path] = []
         self.unavailable = False
 
     def extract_text(self, image_path: Path) -> str:
+        return self.extract_result(image_path).text
+
+    def extract_result(self, image_path: Path) -> OcrExtractionResult:
         self.calls.append(image_path)
         if self.unavailable:
             raise OcrUnavailableError
-        return self.outputs[len(self.calls) - 1]
+        index = len(self.calls) - 1
+        return OcrExtractionResult(
+            text=self.outputs[index],
+            confidence=self.confidences[index] if index < len(self.confidences) else None,
+            line_confidences=(
+                self.line_confidences[index] if index < len(self.line_confidences) else ()
+            ),
+        )
 
     def tool_versions(self) -> dict[str, str]:
         return {"paddleocr": "test"}
@@ -193,6 +205,8 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
             "ocr_used": False,
             "text": "Digital text",
             "text_char_count": len("Digital text"),
+            "ocr_confidence": None,
+            "ocr_line_confidences": [],
         }
     ]
     assert content["tool_versions"]["pypdf"]
@@ -298,6 +312,8 @@ def test_image_uses_ocr_once(
 ) -> None:
     adapter, renderer = ocr_fakes
     adapter.outputs = ["Image text"]
+    adapter.confidences = [0.91]
+    adapter.line_confidences = [(OcrLineMetric(1, 0.91, len("Image text")),)]
     upload, _ = _upload_and_audit(
         client, f"image.{extension}", _image_bytes(image_format), mime_type
     )
@@ -309,6 +325,10 @@ def test_image_uses_ocr_once(
     assert content["source"] == "paddleocr"
     assert content["text"] == "Image text"
     assert content["pages"][0]["page_number"] == 1
+    assert content["pages"][0]["ocr_confidence"] == 0.91
+    assert content["pages"][0]["ocr_line_confidences"] == [
+        {"line_index": 1, "confidence": 0.91, "text_char_count": len("Image text")}
+    ]
     assert len(adapter.calls) == 1
     assert renderer.calls == []
 
@@ -372,6 +392,8 @@ def test_empty_text_layer_page_routes_to_ocr(
 ) -> None:
     adapter, renderer = ocr_fakes
     adapter.outputs = ["Scanned page text"]
+    adapter.confidences = [0.84]
+    adapter.line_confidences = [(OcrLineMetric(1, 0.84, len("Scanned page text")),)]
     upload, _ = _upload_and_audit(
         client, "scan.pdf", _pdf_pages_bytes(None), "application/pdf"
     )
@@ -382,6 +404,11 @@ def test_empty_text_layer_page_routes_to_ocr(
     content = response.json()["content"]
     assert content["source"] == "paddleocr"
     assert content["pages"][0]["ocr_used"] is True
+    assert content["pages"][0]["ocr_confidence"] == 0.84
+    assert content["pages"][0]["ocr_line_confidences"][0]["line_index"] == 1
+    assert "text" not in content["pages"][0]["ocr_line_confidences"][0]
+    assert content["text"] == "Scanned page text"
+    assert content["pages"][0]["text"] == "Scanned page text"
     assert renderer.calls == [1]
     assert len(adapter.calls) == 1
 
@@ -791,7 +818,7 @@ def test_layout_text_result_marks_ocr_pages_and_page_boundaries(
     assert "Scanned page two text" in layout
 
 
-def test_legacy_text_artifact_without_layout_field_remains_valid(
+def test_legacy_text_artifact_without_additive_fields_remains_valid(
     client: TestClient,
     document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
@@ -804,12 +831,18 @@ def test_legacy_text_artifact_without_layout_field_remains_valid(
     payload = json.loads(path.read_text(encoding="utf-8"))
     # Simulate a legacy artifact written before this field existed.
     payload["content"].pop("layout_text_result", None)
+    for page in payload["content"]["pages"]:
+        page.pop("ocr_confidence", None)
+        page.pop("ocr_line_confidences", None)
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     response = client.get(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 200
     assert response.json()["content"]["layout_text_result"] is None
+    page = response.json()["content"]["pages"][0]
+    assert page["ocr_confidence"] is None
+    assert page["ocr_line_confidences"] == []
 
 
 def _pdf_contact_blocks_and_table_bytes() -> bytes:
