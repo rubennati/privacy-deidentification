@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from app.services.ocr_adapters import OcrUnavailableError, PaddleOcrAdapter, extract_ocr_result
 
@@ -69,6 +70,10 @@ def test_local_models_are_loaded_lazily_and_results_are_parsed(
                         "res": {
                             "rec_texts": ["First", "Second"],
                             "rec_scores": [0.8, 0.6],
+                            "rec_polys": [
+                                [[10, 20], [90, 20], [90, 40], [10, 40]],
+                                [[10, 50], [110, 50], [110, 70], [10, 70]],
+                            ],
                         }
                     }
                 )
@@ -84,6 +89,7 @@ def test_local_models_are_loaded_lazily_and_results_are_parsed(
     )
     adapter = PaddleOcrAdapter(tmp_path)
     assert initialization_arguments == []
+    Image.new("RGB", (120, 80), "white").save(tmp_path / "image.png")
 
     result = adapter.extract_result(tmp_path / "image.png")
 
@@ -94,6 +100,15 @@ def test_local_models_are_loaded_lazily_and_results_are_parsed(
         {"line_index": 2, "confidence": 0.6, "text_char_count": 6},
     ]
     assert all("text" not in line.__dict__ for line in result.line_confidences)
+    assert [line.text for line in result.layout_lines] == ["First", "Second"]
+    assert result.layout_lines[0].polygon == (
+        (10.0, 20.0),
+        (90.0, 20.0),
+        (90.0, 40.0),
+        (10.0, 40.0),
+    )
+    assert result.image_width == 120
+    assert result.image_height == 80
     assert initialization_arguments == [
         {
             "device": "cpu",
@@ -159,6 +174,38 @@ def test_absent_scores_produce_null_page_confidence_and_no_line_metrics(
     assert result.text == "Still works"
     assert result.confidence is None
     assert result.line_confidences == ()
+
+
+def test_missing_and_invalid_polygons_do_not_break_text_extraction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "text_detection").mkdir()
+    (tmp_path / "text_recognition").mkdir()
+
+    class FakeEngine:
+        def predict(self, input: str) -> object:
+            return [
+                SimpleNamespace(
+                    json={
+                        "res": {
+                            "rec_texts": ["Invalid polygon", "Missing polygon"],
+                            "rec_scores": [0.8, 0.7],
+                            "rec_polys": [[[0, 0], [0, 0], [0, 0], [0, 0]]],
+                        }
+                    }
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.services.ocr_adapters.import_module",
+        lambda name: SimpleNamespace(PaddleOCR=lambda **kwargs: FakeEngine()),
+    )
+
+    result = PaddleOcrAdapter(tmp_path).extract_result(tmp_path / "missing.png")
+
+    assert result.text == "Invalid polygon\nMissing polygon"
+    assert result.confidence == pytest.approx(0.75)
+    assert result.layout_lines == ()
 
 
 def test_configured_model_names_are_passed_to_paddle(

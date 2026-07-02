@@ -16,6 +16,7 @@ from app.errors import ApiError
 from app.schemas import (
     AuditArtifact,
     AuditPageResult,
+    LayoutBlock,
     OcrLineConfidence,
     OriginalArtifact,
     TextArtifact,
@@ -30,6 +31,11 @@ from app.services.artifact_service import (
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.docx_extraction import extract_docx_text
+from app.services.layout_text import (
+    build_fallback_layout_blocks,
+    build_ocr_layout_blocks,
+    build_pdf_layout_blocks,
+)
 from app.services.ocr_adapters import OcrAdapter, OcrExtractionResult, extract_ocr_result
 from app.services.original_artifact_service import get_verified_original
 from app.services.pdf_renderer import PdfRenderer
@@ -146,6 +152,7 @@ def _extract_pdf(
         raise OcrConflictError("PDF audit page list is inconsistent with the original.")
 
     pages: list[TextPageResult] = []
+    layout_blocks: list[LayoutBlock] = []
     # Per-page (page_number, layout rendering | None, canonical page text). ``None`` marks a page
     # whose layout was not reconstructed (OCR pages, or a text layer that failed layout mode).
     layout_entries: list[tuple[int, str | None, str]] = []
@@ -175,6 +182,7 @@ def _extract_pdf(
                 source = "paddleocr"
                 layout_segment: str | None = None
                 pii_input_segment: str | None = None
+                page_layout_blocks = build_ocr_layout_blocks(ocr_result, page_number)
             else:
                 # Canonical text is the unchanged default extraction — the offset-stable PII input.
                 text = page.extract_text() or ""
@@ -190,6 +198,7 @@ def _extract_pdf(
                 # feeds PII detection and never affects ``text``; returns None rather than raising
                 # when fragment/column detection is not confident for this page.
                 pii_input_segment = build_page_pii_input_text(page)
+                page_layout_blocks = build_pdf_layout_blocks(page, page_number, text)
                 ocr_result = None
             pages.append(
                 TextPageResult(
@@ -209,6 +218,7 @@ def _extract_pdf(
             )
             layout_entries.append((page_number, layout_segment, text))
             pii_input_entries.append((page_number, pii_input_segment, text))
+            layout_blocks.extend(page_layout_blocks)
 
     used_text_layer = any(page.has_text_layer for page in pages)
     used_ocr = any(page.ocr_used for page in pages)
@@ -240,6 +250,7 @@ def _extract_pdf(
         readable_text=readable_text,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
+        layout_blocks=layout_blocks,
     )
 
 
@@ -326,6 +337,7 @@ def _extract_docx(
         {"python-docx": version("python-docx")},
         [],
         readable_text=build_readable_text(text),
+        layout_blocks=build_fallback_layout_blocks(text),
     )
 
 
@@ -358,6 +370,7 @@ def _extract_image(
         ocr_adapter.tool_versions(),
         ["ocr_used"],
         readable_text=build_readable_text(text, [page.text]),
+        layout_blocks=build_ocr_layout_blocks(ocr_result, 1),
     )
 
 
@@ -384,7 +397,9 @@ def _text_content(
     readable_text: str | None = None,
     layout_text_result: str | None = None,
     pii_input_text: str | None = None,
+    layout_blocks: list[LayoutBlock] | None = None,
 ) -> TextContent:
+    blocks = layout_blocks or []
     return TextContent(
         document_id=document_id,
         input_artifact_id=original.id,
@@ -398,6 +413,8 @@ def _text_content(
         readable_text=readable_text,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
+        layout_blocks_version="1" if blocks else None,
+        layout_blocks=blocks,
     )
 
 

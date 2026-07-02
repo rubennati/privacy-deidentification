@@ -29,7 +29,8 @@ input, or report may be committed.
 | `ocr_result` / `text_layer_result` | ◻ conceptual | source-specific page output | yes | folded into `text_result` today |
 | `quality_report` | ✅ OCR L7 | source mix, coverage, audit quality counts, confidence summary, exact input lineage | metrics only | immutable artifact |
 | `readable_text` | ✅ OCR L8 (field on `text_result`) | human-readable normalization of canonical text, with conservative paragraph/whitespace cleanup and visible page boundaries | yes | additive optional field on `text_result` |
-| `layout_text_result` | ✅ v1 (field on `text_result`) | readable layout plain-text for PDF text layer (L9 v1); typed blocks/geometry follow later | yes | additive optional field on `text_result` |
+| `layout_text_result` | ✅ OCR L9 (field on `text_result`) | readable layout plain-text for PDF text layers; Review UI alternative | yes | additive optional field on `text_result` |
+| `layout_blocks` | ✅ OCR L9 (field on `text_result`) | ordered typed review blocks with coarse normalized page bounds and extraction source | yes | additive optional versioned field on `text_result` |
 | `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
 | `structured_document_result` | 🔜 OCR L11 | tables, sections, key-value regions | yes | immutable artifact |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
@@ -41,7 +42,7 @@ only when a later station requires it.
 
 ## Canonical and readable text
 
-Four distinct text layers plus a lineage map, fixed by the
+Four distinct text layers, structured layout blocks, and a lineage map, fixed by the
 [OCR/Layout text contract](ocr-layout-text-contract.md):
 
 - **`best_text_result`** is the **canonical**, correctness-first text represented today by
@@ -60,13 +61,20 @@ Four distinct text layers plus a lineage map, fixed by the
   reconstruction (pages, blocks, columns, tables) for Review/UI, starting at OCR L9. The Review UI
   renders it as an unhighlighted display-only alternative and falls back to canonical text when it
   is absent. No PII-offset guarantee.
+- **`layout_blocks`** (new, optional, additive; `layout_blocks_version = "1"`) records deterministic
+  page/order, conservative type (`heading`/`body`/`caption`/`header`/`footer`/`fallback`), block text,
+  extraction source, and coarse normalized 0..1 bounds. PDF blocks use pypdf positions; OCR blocks
+  use transient PaddleOCR polygons when valid and otherwise degrade to a marked fallback block.
+  These are review/ordering regions only: no canonical offsets, persisted line/word boxes,
+  canonical-offset lookup, lineage-map claim, or redaction-ready geometry.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
   its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.
 
-These layers are additive and never mutate canonical text or shift PII offsets; there are **no two
-unconnected source-of-truth texts** — every layer maps back to canonical (and source) via
-`text_lineage_map`. Older artifacts without the new fields stay valid.
+These layers are additive and never mutate canonical text or shift PII offsets. Canonical remains
+the only source of truth; until `text_lineage_map` exists, non-canonical views remain inactive for
+PII and make no offset guarantee. The future map must connect them back to canonical/source before
+any detection-input switch. Older artifacts without the new fields stay valid.
 
 ## OCR confidence boundary
 

@@ -119,6 +119,33 @@ class OcrLineConfidence(BaseModel):
     text_char_count: int = Field(ge=0)
 
 
+class LayoutBlock(BaseModel):
+    """One additive OCR L9 review block with coarse, page-relative bounds.
+
+    Bounds describe only the block region used for deterministic ordering and display. They are
+    not canonical offsets, reusable line/word geometry, or redaction-ready coordinates.
+    """
+
+    page_number: int = Field(ge=1)
+    order: int = Field(ge=1)
+    block_type: Literal["heading", "body", "caption", "header", "footer", "fallback"]
+    text: str = Field(min_length=1)
+    x0: float = Field(ge=0.0, le=1.0)
+    y0: float = Field(ge=0.0, le=1.0)
+    x1: float = Field(ge=0.0, le=1.0)
+    y1: float = Field(ge=0.0, le=1.0)
+    source: Literal["pdf_text_layer", "paddleocr", "fallback"]
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _validate_bounds_and_confidence(self) -> LayoutBlock:
+        if self.x1 <= self.x0 or self.y1 <= self.y0:
+            raise ValueError("layout block bounds must have positive width and height")
+        if self.confidence is not None and self.source != "paddleocr":
+            raise ValueError("only PaddleOCR layout blocks may carry confidence")
+        return self
+
+
 class TextPageResult(BaseModel):
     """Ordered text extracted from one PDF or image page."""
 
@@ -178,6 +205,26 @@ class TextContent(BaseModel):
     # text-layer pages only; ``None`` when not reconstructed (DOCX, image, all-OCR documents, or a
     # page geometry could not be established). See docs/engine/ocr-layout-text-contract.md.
     pii_input_text: str | None = Field(default=None)
+    # OCR L9 additive review model. These are coarse page regions used only for ordering/typing;
+    # they carry no canonical offsets and are not reusable L10 line/word geometry. Both fields are
+    # optional/defaulted so pre-L9 artifacts remain valid.
+    layout_blocks_version: Literal["1"] | None = None
+    layout_blocks: list[LayoutBlock] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_layout_blocks(self) -> TextContent:
+        if bool(self.layout_blocks) != (self.layout_blocks_version == "1"):
+            raise ValueError("layout blocks and version must be present together")
+        block_keys = [(block.page_number, block.order) for block in self.layout_blocks]
+        if block_keys != sorted(block_keys) or len(block_keys) != len(set(block_keys)):
+            raise ValueError("layout blocks must have unique page/order keys in sorted order")
+        for page_number in sorted({block.page_number for block in self.layout_blocks}):
+            orders = [
+                block.order for block in self.layout_blocks if block.page_number == page_number
+            ]
+            if orders != list(range(1, len(orders) + 1)):
+                raise ValueError("layout block order must be contiguous and start at 1 per page")
+        return self
 
     @model_validator(mode="after")
     def _validate_text_summary(self) -> TextContent:

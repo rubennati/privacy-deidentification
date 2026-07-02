@@ -49,6 +49,19 @@ export interface TextPageResult {
   }>;
 }
 
+export interface LayoutBlock {
+  page_number: number;
+  order: number;
+  block_type: "heading" | "body" | "caption" | "header" | "footer" | "fallback";
+  text: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  source: "pdf_text_layer" | "paddleocr" | "fallback";
+  confidence?: number | null;
+}
+
 export interface TextArtifact {
   id: string;
   document_id: string;
@@ -74,6 +87,11 @@ export interface TextArtifact {
     readable_text?: string | null;
     // Optional display-only reconstruction. Legacy artifacts omit it; PII offsets stay on `text`.
     layout_text_result?: string | null;
+    // Internal/experimental OCR L9 slice. It remains inactive as a PII input.
+    pii_input_text?: string | null;
+    // Additive OCR L9 review blocks with coarse normalized bounds and no offset guarantees.
+    layout_blocks_version?: "1" | null;
+    layout_blocks?: LayoutBlock[];
   };
 }
 
