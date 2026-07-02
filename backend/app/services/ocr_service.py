@@ -35,6 +35,7 @@ from app.services.original_artifact_service import get_verified_original
 from app.services.pdf_renderer import PdfRenderer
 from app.services.pii_input_text import build_page_pii_input_text
 from app.services.quality_report_service import build_quality_report
+from app.services.readable_text import build_readable_text
 
 _OCR_WORKSPACE_ROOT = Path("/tmp")
 
@@ -221,6 +222,7 @@ def _extract_pdf(
     text = "\n\n".join(page.text for page in pages)
     layout_text_result = _combine_layout_segments(layout_entries)
     pii_input_text = _combine_pii_input_segments(pii_input_entries)
+    readable_text = build_readable_text(text, [page.text for page in pages])
     flags = [
         flag
         for flag, used in (("pdf_mixed", source == "pdf_mixed"), ("ocr_used", used_ocr))
@@ -235,6 +237,7 @@ def _extract_pdf(
         pages,
         tool_versions,
         flags,
+        readable_text=readable_text,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
     )
@@ -322,6 +325,7 @@ def _extract_docx(
         [],
         {"python-docx": version("python-docx")},
         [],
+        readable_text=build_readable_text(text),
     )
 
 
@@ -353,6 +357,7 @@ def _extract_image(
         [page],
         ocr_adapter.tool_versions(),
         ["ocr_used"],
+        readable_text=build_readable_text(text, [page.text]),
     )
 
 
@@ -376,6 +381,7 @@ def _text_content(
     pages: list[TextPageResult],
     tool_versions: dict[str, str],
     flags: list[str],
+    readable_text: str | None = None,
     layout_text_result: str | None = None,
     pii_input_text: str | None = None,
 ) -> TextContent:
@@ -389,6 +395,7 @@ def _text_content(
         pages=pages,
         tool_versions=tool_versions,
         flags=flags,
+        readable_text=readable_text,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
     )

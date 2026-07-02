@@ -3,8 +3,9 @@
 Reads only what already exists under ``volumes/document-data`` and ``volumes/uploads``. Never
 writes, deletes, or triggers any processing. Deliberately narrow: every dataclass here keeps
 only counts, types, statuses, and offsets — raw extracted text (``TextContent.text``,
-``TextPageResult.text``, ``PiiEntity.text``) and any ground-truth ``masked_value``/``source``
-strings are never copied into these structures, so they cannot leak into a report downstream.
+``TextContent.readable_text``, ``TextPageResult.text``, ``PiiEntity.text``) and any ground-truth
+``masked_value``/``source`` strings are never copied into these structures, so they cannot leak
+into a report downstream.
 
 Artifact identity follows the same rule as the backend
 (``backend/app/services/artifact_service.py``): the *latest* artifact of a given

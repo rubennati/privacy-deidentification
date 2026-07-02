@@ -212,6 +212,7 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     assert content["source"] == "pdf_text_layer"
     assert content["text"] == "Digital text"
     assert content["text_char_count"] == len(content["text"])
+    assert content["readable_text"] == "Digital text"
     assert content["pages"] == [
         {
             "page_number": 1,
@@ -276,6 +277,9 @@ def test_mixed_pdf_routes_each_page_and_preserves_order(
     content = response.json()["content"]
     assert content["source"] == "pdf_mixed"
     assert content["text"] == "Digital one\n\nScan two\n\nScan three"
+    assert content["readable_text"] == (
+        "Digital one\n\n----- page 2 -----\n\nScan two\n\n----- page 3 -----\n\nScan three"
+    )
     assert [page["source"] for page in content["pages"]] == [
         "pdf_text_layer",
         "paddleocr",
@@ -309,6 +313,7 @@ def test_docx_extracts_paragraphs_without_ocr(
     content = response.json()["content"]
     assert content["source"] == "docx_text"
     assert content["text"] == "First\nSecond"
+    assert content["readable_text"] == "First Second"
     assert content["pages"] == []
     assert adapter.calls == []
     assert renderer.calls == []
@@ -341,6 +346,7 @@ def test_docx_extracts_table_cells_in_document_order(
     # Deterministic order: leading paragraph, table rows (cells tab-joined, rows newline-joined),
     # trailing paragraph. Table cell text must be present — paragraph-only extraction dropped it.
     assert content["text"] == "Intro\nR1C1\tR1C2\nR2C1\tR2C2\nOutro"
+    assert content["readable_text"] == "Intro R1C1 R1C2 R2C1 R2C2 Outro"
     assert content["text_char_count"] == len(content["text"])
     assert content["pages"] == []
     assert adapter.calls == []
@@ -373,6 +379,7 @@ def test_image_uses_ocr_once(
     content = response.json()["content"]
     assert content["source"] == "paddleocr"
     assert content["text"] == "Image text"
+    assert content["readable_text"] == "Image text"
     assert content["pages"][0]["page_number"] == 1
     assert content["pages"][0]["ocr_confidence"] == 0.91
     assert content["pages"][0]["ocr_line_confidences"] == [
@@ -955,6 +962,7 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     path = _artifact_path(document_data_dir, upload["id"], created["id"])
     payload = json.loads(path.read_text(encoding="utf-8"))
     # Simulate a legacy artifact written before this field existed.
+    payload["content"].pop("readable_text", None)
     payload["content"].pop("layout_text_result", None)
     for page in payload["content"]["pages"]:
         page.pop("ocr_confidence", None)
@@ -964,10 +972,27 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     response = client.get(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 200
+    assert response.json()["content"]["readable_text"] is None
     assert response.json()["content"]["layout_text_result"] is None
     page = response.json()["content"]["pages"][0]
     assert page["ocr_confidence"] is None
     assert page["ocr_line_confidences"] == []
+
+
+def test_readable_text_absent_for_empty_text_result(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.outputs = [""]
+    upload, _ = _upload_and_audit(client, "empty.png", _image_bytes("PNG"), "image/png")
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["text"] == ""
+    assert content["readable_text"] is None
 
 
 def _pdf_contact_blocks_and_table_bytes() -> bytes:
