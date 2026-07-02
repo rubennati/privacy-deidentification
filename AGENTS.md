@@ -50,6 +50,9 @@ Run via the `Makefile` (everything runs in Docker — no host toolchain needed):
 
 "Human approval" means a human merging the pull request. Concretely:
 
+- AI agents must target `dev` for feature PRs. `main` is the user-stable branch and only receives
+  curated merges from `dev`; direct feature PRs to `main` are reserved for explicit hotfixes.
+- Windows installer and update scripts must always use `main`.
 - Agents may commit and push to non-`main` branches (e.g. `feat/*`, `fix/*`).
 - Agents must not merge to `main`, force-push, or modify branch protection.
 - Agents must not push directly to `main`, even where branch protection is not configured.
