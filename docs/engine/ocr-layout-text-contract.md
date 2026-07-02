@@ -90,12 +90,23 @@ never shift a canonical PII offset, and no layer becomes an island.
 - **Must:** be deterministic and round-trippable (canonical ↔ pii_input without loss) wherever
   `pii_input_text` diverges from canonical.
 
+### L9 structured layout blocks
+
+- **Fields:** optional `layout_blocks_version = "1"` plus `layout_blocks[]` on `text_result`.
+- **Purpose:** expose deterministic layout reading order and conservative review-oriented types
+  without changing the existing plain-text `layout_text_result` or UI.
+- **Contents:** page number, page-local order, type, text, extraction source, optional natural OCR
+  confidence, and coarse normalized 0..1 page bounds.
+- **Boundary:** bounds are block regions used for ordering/typing only. They are not canonical
+  offsets, reusable line/word geometry, a canonical-offset→box lookup, a `text_lineage_map`, or
+  redaction-ready geometry. Those remain L10/L15 work.
+
 ## Invariants
 
 These hold for any future implementation:
 
 - **Existing `text_result` remains stable** — `text`, `pages[].text`, and `text_char_count` are
-  byte-identical to today; the existing content validators are untouched.
+  byte-identical to today; their existing validation rules remain enforced.
 - **One source of truth.** There must be **no two unconnected source-of-truth texts**. Canonical text
   is the single source of truth and coordinate system; every other layer maps back to it (and to
   source) via `text_lineage_map`.
@@ -108,8 +119,8 @@ These hold for any future implementation:
   `layout_text_result` happens **through** the lineage map, never by re-detecting on the layout text.
 - **PII-input text and layout text must be married via lineage/mapping** — neither is a standalone
   island; both trace to the same source blocks/lines/words as canonical.
-- **`pii_input_text`, `readable_text`, `layout_text_result`, and `text_lineage_map` are additive** —
-  new optional fields/artifacts.
+- **`pii_input_text`, `readable_text`, `layout_text_result`, `layout_blocks`, and
+  `text_lineage_map` are additive** — new optional fields/artifacts.
 - **No existing artifacts are rewritten** — a re-run creates a new artifact; nothing is mutated.
 - **Legacy artifacts remain valid** — older artifacts without the new fields still validate.
 - **Separation gate.** `pii_input_text` may become the **active PII detection input** only when a
@@ -186,16 +197,17 @@ Anchored to the existing 0–19 ladder in [`ocr-engine-levels.md`](ocr-engine-le
 - **OCR L7:** `quality_report`.
 - **OCR L8:** human-readable text output — canonical vs readable split first realised
   (`best_text_result` stays canonical; `readable_text` is the readable rendering).
-- **OCR L9:** `layout_text_result` — layout-aware reading order and block structure.
+- **OCR L9:** `layout_text_result` plus ordered, typed `layout_blocks` with coarse normalized bounds.
 - **OCR L10+:** bounding boxes / per-block source lineage — the structural basis for
   `text_lineage_map` and any real `pii_input_text` divergence.
 - **OCR L11+:** table / form reconstruction.
 - **Higher levels:** document understanding / redaction-ready geometry (the lineage map's long-term
   payoff for bounding boxes and redaction).
 
-`layout_text_result` v1 and `pii_input_text` v1 both target OCR L9 — visible layout and internal
-semantic reading order, respectively, for PDF text-layer pages. A full `text_lineage_map` (and
-`pii_input_text` becoming the active detection input) are **not** v1 — they build on the
+`layout_text_result` v1, `pii_input_text` v1, and the structured layout blocks complete OCR L9 —
+visible layout, internal experimental reading order, and review-oriented typed regions. A full
+`text_lineage_map` (and `pii_input_text` becoming the active detection input) are **not** v1 — they
+build on the
 block/geometry structure from OCR L10 and gate on the separation rule above. See the sequence in
 [`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md).
 
@@ -222,6 +234,11 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   fragment/column detection is not confident, OCR pages, and DOCX/image documents leave the field
   `null` (a marked linear fallback per page on multi-page documents, mirroring
   `layout_text_result`). **It is internal and not displayed in the UI** — a proposed later step.
+- **Delivered:** `layout_blocks_version = "1"` and additive `layout_blocks[]`. PDF text-layer blocks
+  use existing pypdf positions; OCR/image blocks use transient valid PaddleOCR polygons. Ordering is
+  deterministic, bounds are normalized, typing is conservative, and missing/invalid geometry
+  produces an explicit fallback block. DOCX uses one fallback review block. No new dependency was
+  added and benchmark summaries ignore block text.
 - **Unchanged:** `text_result.text` (canonical) is byte-identical to before; PII runs only on it;
   `layout_text_result` v1 generation is unaffected; legacy artifacts without either field stay
   valid. `pii_input_text` is now an additive, internal v1 field — not an alias of canonical — but
@@ -230,7 +247,8 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   canonical view to a display-only monospaced layout view, falling back to canonical text when the
   field is absent. PII highlights and offset links remain bound to canonical text only; layout text
   is never highlighted. `pii_input_text` has no UI in v1 (internal/experimental).
-- **Not in v1:** `text_lineage_map`, block/line geometry, a general table detector, a structured
+- **Not in L9:** `text_lineage_map`, precise/reusable line or word geometry, canonical-offset lookup,
+  a general table detector, a structured
   `pii_input_blocks` schema, semantic role labelling (contractor vs.
   customer) for `pii_input_text` blocks, and active PII use of `pii_input_text`.
 
@@ -240,15 +258,16 @@ Plan for the layers beyond the v1 slice:
 
 - `readable_text` and a UI for either `layout_text_result` or `pii_input_text` can start with
   libraries already present (no new dependency).
-- OCR-box-based layout, `pdfplumber` / `PyMuPDF` geometry, and Docling / PP-Structure remain later
-  spikes (each needs its own PR and dependency review) — candidates for extending `pii_input_text`
-  beyond PDF text-layer pages and beyond the current header-token table heuristic.
+- `pdfplumber` / `PyMuPDF` geometry and Docling / PP-Structure remain later spikes (each needs its
+  own PR and dependency review) — candidates for precise L10 geometry or extending
+  `pii_input_text` beyond the current header-token table heuristic.
 - A `text_lineage_map` is the next step for `pii_input_text`: it is required before `pii_input_text`
   may become the active PII detection input, gated on the [separation rule](#invariants).
 - Any implementation must prove:
   - canonical text remains unchanged;
   - PII tests remain green;
-  - `readable_text`, `layout_text_result`, `pii_input_text`, and `text_lineage_map` are optional;
+  - `readable_text`, `layout_text_result`, `pii_input_text`, `layout_blocks`, and
+    `text_lineage_map` are optional;
   - every non-canonical layer maps back to canonical (and source) — no islands;
   - the UI fallback to canonical text works.
 

@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L8** | embedded text, immutable lineage, local OCR runtime, quality routing, OCR confidence, lineage-bound metrics-only `quality_report`, additive `readable_text` | complete L9 layout-aware text, then PII L11 grouping |
+| OCR / Text | **L9** | L8 foundation plus layout text views and additive ordered/typed layout blocks with coarse normalized bounds | PII L11 grouping, then OCR L10 geometry |
 | PII / Sensitive-Data | **L9; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture | L11 entity grouping, then L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only** | read-only review and lineage-safe highlights; gated review aids, run settings, and per-entity feedback capture | L6 grouped occurrences; L8 `review_result` later |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -17,9 +17,9 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L8: upload, canonical text extraction, lineage, OCR runtime, quality routing/fallback,
+- OCR L0–L9: upload, canonical text extraction, lineage, OCR runtime, quality routing/fallback,
   additive OCR confidence, an immutable metrics-only `quality_report` for every successful run, and
-  a separate additive `readable_text` rendering.
+  additive readable/layout views plus deterministic typed layout blocks for PDF and OCR content.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -88,11 +88,14 @@ documents.
 while canonical `best_text_result` stays byte-stable. PII offsets continue to reference only
 canonical text.
 
-### OCR L9 — complete layout-aware text
+### OCR L9 — layout-aware text — delivered
 
-Extend beyond the delivered additive slices (`layout_text_result` for PDF text layers and internal
-`pii_input_text` v1) toward fuller layout-aware reading order and block structure. Geometry,
-tables, and lineage remain later levels.
+`layout_text_result` remains the Review UI string, while versioned `layout_blocks` add deterministic
+page-local order, conservative types, extraction source, optional OCR confidence, and coarse
+normalized page bounds. PDF positions and transient PaddleOCR polygons are used without adding a
+dependency. Canonical/page text, readable text, quality reporting, and active PII input are
+unchanged. Precise line/word geometry and canonical-offset lookup remain L10; structured tables and
+forms remain L11.
 
 ### PII L11 — entity grouping
 

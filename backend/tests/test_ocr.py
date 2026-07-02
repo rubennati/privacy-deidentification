@@ -19,7 +19,13 @@ from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
 from app.main import app
 from app.services.artifact_service import get_latest_quality_report_artifact
-from app.services.ocr_adapters import OcrExtractionResult, OcrLineMetric, OcrUnavailableError
+from app.services.layout_text import build_pdf_layout_blocks
+from app.services.ocr_adapters import (
+    OcrExtractionResult,
+    OcrLayoutLine,
+    OcrLineMetric,
+    OcrUnavailableError,
+)
 from app.services.pdf_renderer import get_pdf_renderer
 
 
@@ -28,6 +34,8 @@ class FakeOcrAdapter:
         self.outputs: list[str] = []
         self.confidences: list[float | None] = []
         self.line_confidences: list[tuple[OcrLineMetric, ...]] = []
+        self.layout_lines: list[tuple[OcrLayoutLine, ...]] = []
+        self.image_sizes: list[tuple[int, int] | None] = []
         self.calls: list[Path] = []
         self.unavailable = False
 
@@ -44,6 +52,17 @@ class FakeOcrAdapter:
             confidence=self.confidences[index] if index < len(self.confidences) else None,
             line_confidences=(
                 self.line_confidences[index] if index < len(self.line_confidences) else ()
+            ),
+            layout_lines=(self.layout_lines[index] if index < len(self.layout_lines) else ()),
+            image_width=(
+                self.image_sizes[index][0]
+                if index < len(self.image_sizes) and self.image_sizes[index] is not None
+                else None
+            ),
+            image_height=(
+                self.image_sizes[index][1]
+                if index < len(self.image_sizes) and self.image_sizes[index] is not None
+                else None
             ),
         )
 
@@ -822,18 +841,23 @@ def _pdf_two_column_table_bytes() -> bytes:
     columns and table rows; the default extraction linearises them.
     """
     runs = [
-        (40, 770, "KOSTENVORANSCHLAG"),
-        (40, 730, "AUFTRAGNEHMER"), (320, 730, "AUFTRAGGEBER"),
-        (40, 712, "Sanierungsbau Perchtoldsdorf GmbH"),
-        (320, 712, "Herr Dipl.-Ing. Franz Hubermayr"),
-        (40, 694, "Lindenstrasse 42"), (320, 694, "Rosengasse 7/12"),
-        (40, 640, "Angebot Nr.: KV-2026-0417"), (320, 640, "Datum: 01.07.2026"),
-        (40, 590, "Pos."), (90, 590, "Leistung"), (330, 590, "Menge"),
-        (390, 590, "Einheit"), (450, 590, "Einzelpreis"), (530, 590, "Gesamt"),
-        (40, 572, "1"), (90, 572, "Abbrucharbeiten Innenwaende"), (330, 572, "45"),
-        (390, 572, "m2"), (450, 572, "38,00"), (530, 572, "1.710,00"),
-        (40, 554, "2"), (90, 554, "Fassadendaemmung"), (330, 554, "180"),
-        (390, 554, "m2"), (450, 554, "92,00"), (530, 554, "16.560,00"),
+        (40, 792, 8, "Synthetic header"),
+        (40, 770, 18, "KOSTENVORANSCHLAG"),
+        (40, 730, 10, "AUFTRAGNEHMER"), (320, 730, 10, "AUFTRAGGEBER"),
+        (40, 712, 10, "Sanierungsbau Perchtoldsdorf GmbH"),
+        (320, 712, 10, "Herr Dipl.-Ing. Franz Hubermayr"),
+        (40, 694, 10, "Lindenstrasse 42"), (320, 694, 10, "Rosengasse 7/12"),
+        (40, 640, 10, "Angebot Nr.: KV-2026-0417"), (320, 640, 10, "Datum: 01.07.2026"),
+        (40, 590, 10, "Pos."), (90, 590, 10, "Leistung"), (330, 590, 10, "Menge"),
+        (390, 590, 10, "Einheit"), (450, 590, 10, "Einzelpreis"), (530, 590, 10, "Gesamt"),
+        (40, 572, 10, "1"), (90, 572, 10, "Abbrucharbeiten Innenwaende"),
+        (330, 572, 10, "45"), (390, 572, 10, "m2"), (450, 572, 10, "38,00"),
+        (530, 572, 10, "1.710,00"), (40, 554, 10, "2"),
+        (90, 554, 10, "Fassadendaemmung"), (330, 554, 10, "180"),
+        (390, 554, 10, "m2"), (450, 554, 10, "92,00"),
+        (530, 554, 10, "16.560,00"),
+        (40, 100, 8, "Synthetic caption"),
+        (40, 8, 8, "Synthetic footer"),
     ]
     writer = PdfWriter()
     page = writer.add_blank_page(width=600, height=800)
@@ -847,7 +871,10 @@ def _pdf_two_column_table_bytes() -> bytes:
     page[NameObject("/Resources")] = DictionaryObject(
         {NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})}
     )
-    data = "".join(f"BT /F1 10 Tf {x} {y} Td ({text}) Tj ET\n" for x, y, text in runs)
+    data = "".join(
+        f"BT /F1 {font_size} Tf {x} {y} Td ({text}) Tj ET\n"
+        for x, y, font_size, text in runs
+    )
     stream = DecodedStreamObject()
     stream.set_data(data.encode("latin-1"))
     page[NameObject("/Contents")] = writer._add_object(stream)
@@ -869,6 +896,10 @@ def test_pdf_text_layer_produces_layout_text_result(
 ) -> None:
     adapter, renderer = ocr_fakes
     fixture = _pdf_two_column_table_bytes()
+    fixture_page = PdfReader(BytesIO(fixture)).pages[0]
+    first_blocks = build_pdf_layout_blocks(fixture_page, 1, fixture_page.extract_text() or "")
+    second_blocks = build_pdf_layout_blocks(fixture_page, 1, fixture_page.extract_text() or "")
+    assert first_blocks == second_blocks
     upload, _ = _upload_and_audit(client, "offer.pdf", fixture, "application/pdf")
 
     response = client.post(f"/api/documents/{upload['id']}/ocr")
@@ -890,6 +921,20 @@ def test_pdf_text_layer_produces_layout_text_result(
     # collapse of header vs values).
     assert _line_with(layout, "Pos.", "Leistung", "Gesamt") is not None
     assert _line_with(layout, "Abbrucharbeiten Innenwaende", "1.710,00") is not None
+    blocks = content["layout_blocks"]
+    assert content["layout_blocks_version"] == "1"
+    assert [(block["page_number"], block["order"]) for block in blocks] == [
+        (1, order) for order in range(1, len(blocks) + 1)
+    ]
+    assert all(0 <= block[key] <= 1 for block in blocks for key in ("x0", "y0", "x1", "y1"))
+    assert any(block["block_type"] == "heading" for block in blocks)
+    assert any(block["block_type"] == "header" for block in blocks)
+    assert any(block["block_type"] == "caption" for block in blocks)
+    assert any(block["block_type"] == "footer" for block in blocks)
+    contractor = next(block for block in blocks if "Sanierungsbau" in block["text"])
+    customer = next(block for block in blocks if "Franz Hubermayr" in block["text"])
+    assert contractor["order"] < customer["order"]
+    assert contractor["source"] == customer["source"] == "pdf_text_layer"
     # A clean text-layer PDF still never touches OCR.
     assert adapter.calls == []
     assert renderer.calls == []
@@ -909,7 +954,10 @@ def test_layout_text_result_absent_for_docx(
     response = client.post(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 201
-    assert response.json()["content"]["layout_text_result"] is None
+    content = response.json()["content"]
+    assert content["layout_text_result"] is None
+    assert content["layout_blocks_version"] == "1"
+    assert content["layout_blocks"][0]["block_type"] == "fallback"
 
 
 def test_layout_text_result_absent_for_image(
@@ -918,12 +966,39 @@ def test_layout_text_result_absent_for_image(
 ) -> None:
     adapter, _ = ocr_fakes
     adapter.outputs = ["Image text"]
+    adapter.layout_lines = [
+        (
+            OcrLayoutLine(
+                text="Image text",
+                polygon=((10.0, 20.0), (190.0, 20.0), (190.0, 50.0), (10.0, 50.0)),
+                confidence=0.9,
+            ),
+        )
+    ]
+    adapter.image_sizes = [(200, 100)]
     upload, _ = _upload_and_audit(client, "image.png", _image_bytes("PNG"), "image/png")
 
     response = client.post(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 201
-    assert response.json()["content"]["layout_text_result"] is None
+    content = response.json()["content"]
+    assert content["layout_text_result"] is None
+    assert content["text"] == "Image text"
+    assert content["pages"][0]["text"] == "Image text"
+    assert content["layout_blocks"] == [
+        {
+            "page_number": 1,
+            "order": 1,
+            "block_type": "body",
+            "text": "Image text",
+            "x0": 0.05,
+            "y0": 0.2,
+            "x1": 0.95,
+            "y1": 0.5,
+            "source": "paddleocr",
+            "confidence": 0.9,
+        }
+    ]
 
 
 def test_layout_text_result_marks_ocr_pages_and_page_boundaries(
@@ -948,6 +1023,11 @@ def test_layout_text_result_marks_ocr_pages_and_page_boundaries(
     assert "----- page 2 -----" in layout
     assert "[page 2: layout not reconstructed]" in layout
     assert "Scanned page two text" in layout
+    blocks = response.json()["content"]["layout_blocks"]
+    assert {block["page_number"] for block in blocks} == {1, 2}
+    page_two = [block for block in blocks if block["page_number"] == 2]
+    assert page_two[0]["block_type"] == "fallback"
+    assert page_two[0]["source"] == "fallback"
 
 
 def test_legacy_text_artifact_without_additive_fields_remains_valid(
@@ -964,6 +1044,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     # Simulate a legacy artifact written before this field existed.
     payload["content"].pop("readable_text", None)
     payload["content"].pop("layout_text_result", None)
+    payload["content"].pop("layout_blocks_version", None)
+    payload["content"].pop("layout_blocks", None)
     for page in payload["content"]["pages"]:
         page.pop("ocr_confidence", None)
         page.pop("ocr_line_confidences", None)
@@ -974,6 +1056,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     assert response.status_code == 200
     assert response.json()["content"]["readable_text"] is None
     assert response.json()["content"]["layout_text_result"] is None
+    assert response.json()["content"]["layout_blocks_version"] is None
+    assert response.json()["content"]["layout_blocks"] == []
     page = response.json()["content"]["pages"][0]
     assert page["ocr_confidence"] is None
     assert page["ocr_line_confidences"] == []

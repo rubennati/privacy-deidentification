@@ -16,7 +16,7 @@ from pypdf import PdfWriter
 from app.api.pii import provide_pii_analyzer
 from app.config import Settings
 from app.main import app
-from app.schemas import TextArtifact, TextContent, TextPageResult
+from app.schemas import LayoutBlock, TextArtifact, TextContent, TextPageResult
 from app.services.artifact_service import save_text_artifact
 from app.services.pii_adapters import DetectedEntity, PiiUnavailableError
 from app.services.pii_profiles import get_pii_profile
@@ -91,6 +91,10 @@ def _save_text(
     text: str,
     *,
     pages: list[str] | None = None,
+    pii_input_text: str | None = None,
+    layout_text_result: str | None = None,
+    readable_text: str | None = None,
+    layout_blocks: list[LayoutBlock] | None = None,
     created_at: str = "2026-07-01T10:00:00.000001Z",
 ) -> TextArtifact:
     text_pages = [
@@ -119,6 +123,11 @@ def _save_text(
             text=text,
             text_char_count=len(text),
             pages=text_pages,
+            pii_input_text=pii_input_text,
+            layout_text_result=layout_text_result,
+            readable_text=readable_text,
+            layout_blocks_version="1" if layout_blocks else None,
+            layout_blocks=layout_blocks or [],
         ),
     )
     save_text_artifact(settings, artifact)
@@ -211,6 +220,41 @@ def test_pdf_pages_have_local_and_global_offsets(
     assert (second["page_start_offset"], second["page_end_offset"]) == (8, 22)
     assert second["text"] == "max@example.at"
     assert pii_fake.calls == pages
+
+
+def test_pii_ignores_all_non_canonical_text_views(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    canonical = "Canonical Max Mustermann"
+    _save_text(
+        settings,
+        document_id,
+        canonical,
+        pages=[canonical],
+        readable_text="Readable replacement",
+        layout_text_result="Layout replacement",
+        pii_input_text="PII input replacement",
+        layout_blocks=[
+            LayoutBlock(
+                page_number=1,
+                order=1,
+                block_type="body",
+                text="Block replacement",
+                x0=0.1,
+                y0=0.1,
+                x1=0.9,
+                y1=0.2,
+                source="pdf_text_layer",
+            )
+        ],
+    )
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    assert pii_fake.calls == [canonical]
 
 
 def test_docx_has_no_page_mapping(

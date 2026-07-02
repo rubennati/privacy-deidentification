@@ -18,9 +18,10 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L8 reached (L0–L8 done); L9 is next.** Each successful OCR/Text run now
-persists a separate additive `readable_text` beside the canonical text; `quality_report`, routing,
-and PII input remain unchanged.
+**Current standing:** **L9 reached (L0–L9 done); L10 is next.** Each successful OCR/Text run now
+persists additive readable/layout views plus versioned, ordered, typed `layout_blocks` with coarse
+normalized page bounds. Canonical text, routing, active PII input, and `quality_report` remain
+unchanged.
 
 ---
 
@@ -156,17 +157,19 @@ and PII input remain unchanged.
   or page text.
 - **Boundary to L9:** L8 reflows text heuristically; L9 orders text by real block/line geometry.
 
-## Level 9 — Layout-aware text  ⏳ *v1 (PDF text layer)*
+## Level 9 — Layout-aware text  ✅ *done*
 
 - **Description:** preserve reading order and block structure (columns, headings, paragraphs) so text
   reflects the page, not a top-to-bottom character dump.
 - **Engine must:** obtain block/line geometry (e.g. PyMuPDF for PDFs, OCR block boxes for scans) and
   order text by layout; annotate blocks with type (heading/body/caption).
-- **Artifacts:** `layout_text_result` with ordered, typed blocks and coordinates.
+- **Artifacts:** unchanged `layout_text_result` plus `layout_blocks_version = "1"` and additive
+  `layout_blocks` with page/order, conservative type, text, extraction source, and coarse normalized
+  bounds. These bounds are display/ordering regions, not L10 geometry.
 - **Acceptance:** multi-column and header/footer pages produce human-sensible reading order; the
   canonical text remains the PII input.
-- **Status:** two additive v1 slices are delivered out of order on top of cumulative L8, and all
-  of them leave `text_result.text` byte-stable with PII still running on canonical text:
+- **Delivered:** all L9 additions leave `text_result.text` byte-stable with PII still running on
+  canonical text:
   - `readable_text` — an optional field on `text_result`, produced for any non-empty canonical text
     with conservative normalization and visible page boundaries between canonical pages.
   - `layout_text_result` — an optional field on `text_result`, pypdf `extraction_mode="layout"`,
@@ -176,8 +179,12 @@ and PII input remain unchanged.
     grouping, row-wise table rows from a known header line), built from pypdf's own text-position
     data (`visitor_operand_before`, no new dependency). **Not** the active PII input — see
     [`ocr-layout-text-contract.md`](ocr-layout-text-contract.md).
-  Typed blocks/geometry, OCR-page layout, a `text_lineage_map`, and a general table detector remain
-  open; the next cumulative priority is completion of L9 beyond the delivered slices.
+  - `layout_blocks` — optional versioned typed blocks built deterministically from existing pypdf
+    positions or transient PaddleOCR polygons. Blocks use page-relative 0..1 coarse bounds, source,
+    and OCR confidence when available; missing/invalid geometry degrades to an explicit fallback
+    block. Heading/body/caption/header/footer typing is conservative and positional/typographic.
+  A `text_lineage_map`, precise line/word geometry, canonical-offset lookup, and a general table
+  detector remain open at L10/L11. The existing layout string and Review UI behavior are unchanged.
 - **Boundary to L10:** L9 knows block order; L10 persists precise per-line/word coordinates as
   reusable geometry.
 
@@ -321,8 +328,8 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 5 Page-level routing | ✅ done | per-page `needs_ocr` routing, `pdf_mixed`, `503`-not-garbage |
 | 6 OCR confidence | ✅ done | additive page mean + metric-only line scores on `text_result`; benchmark summaries |
 | 7 `quality_report` artifact | ✅ done | immutable metrics-only artifact with original/audit/text lineage; benchmark consumption |
-| 8 Human-readable text | ⛔ open | canonical text only; no readable rendering |
-| 9 Layout-aware text | ⛔ open | — |
+| 8 Human-readable text | ✅ done | additive deterministic `readable_text`; canonical unchanged |
+| 9 Layout-aware text | ✅ done | ordered typed `layout_blocks` with coarse normalized bounds; existing layout string preserved |
 | 10 Bounding boxes / geometry | ⛔ open | — |
 | 11 Table / form reconstruction | ⛔ open | — |
 | 12 Multi-engine selection | ⛔ open | single engine (PaddleOCR) |
@@ -339,10 +346,10 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next level (L8):**
+**What is missing for the next level (L10):**
 
-1. Introduce a deterministic **human-readable** rendering (`readable_text`) that never mutates
-   the canonical `best_text_result` (L8).
+1. Persist precise per-line/word geometry and provide a canonical-offset → page-box lookup without
+   changing the canonical `best_text_result`.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.

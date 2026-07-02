@@ -189,6 +189,21 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
                 "source": "paddleocr",
                 "text": "raw recognized value",
                 "readable_text": "raw recognized value",
+                "layout_text_result": "raw recognized value in layout",
+                "layout_blocks_version": "1",
+                "layout_blocks": [
+                    {
+                        "page_number": 1,
+                        "order": 1,
+                        "block_type": "body",
+                        "text": "private layout block value max@example.at",
+                        "x0": 0.1,
+                        "y0": 0.1,
+                        "x1": 0.9,
+                        "y1": 0.2,
+                        "source": "paddleocr",
+                    }
+                ],
                 "text_char_count": 20,
                 "pages": [
                     {
@@ -221,6 +236,8 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
     assert "text" not in page.__dataclass_fields__
     assert "text" not in OcrLineConfidenceSummary.__dataclass_fields__
     assert "readable_text" not in corpus[0].text.__dataclass_fields__
+    assert "layout_text_result" not in corpus[0].text.__dataclass_fields__
+    assert "layout_blocks" not in corpus[0].text.__dataclass_fields__
     quality_report = corpus[0].quality_report
     assert quality_report is not None
     assert quality_report.input_text_artifact_id == "t1"
