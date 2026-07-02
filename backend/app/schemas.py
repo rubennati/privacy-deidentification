@@ -519,6 +519,30 @@ class PiiFeedbackAck(BaseModel):
     recorded_at: str
 
 
+class PiiFeedbackSummaryItem(BaseModel):
+    """The latest verdict for one entity fingerprint within one artifact.
+
+    Carries only the non-sensitive key (type + offsets + recognizer) and the verdict — never the
+    reviewer's free-text comment or any raw value — so the UI can restore per-entity state.
+    """
+
+    type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    start: int = Field(ge=0)
+    end: int = Field(ge=1)
+    recognizer: str
+    verdict: PiiFeedbackVerdict
+    issue_type: PiiFeedbackIssueType
+    recorded_at: str
+
+
+class PiiFeedbackSummary(BaseModel):
+    """The last-known feedback per entity for one PII artifact (append-only history collapsed)."""
+
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    items: list[PiiFeedbackSummaryItem] = Field(default_factory=list)
+
+
 class DocumentSummary(BaseModel):
     """Public representation of an uploaded document, as returned by the documents API."""
 

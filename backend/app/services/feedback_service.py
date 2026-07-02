@@ -15,10 +15,18 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from app import __version__
 from app.config import Settings
 from app.errors import ApiError
-from app.schemas import PiiFeedbackAck, PiiFeedbackRecord, PiiFeedbackRequest
+from app.schemas import (
+    PiiFeedbackAck,
+    PiiFeedbackRecord,
+    PiiFeedbackRequest,
+    PiiFeedbackSummary,
+    PiiFeedbackSummaryItem,
+)
 from app.services.artifact_service import get_pii_artifact
 from app.services.document_service import DocumentNotFoundError, get_document_record
 
@@ -73,6 +81,58 @@ def record_pii_feedback(
         schema_version=record.schema_version,
         recorded_at=record.recorded_at,
     )
+
+
+def summarize_pii_feedback(
+    settings: Settings, document_id: str, artifact_id: str
+) -> PiiFeedbackSummary:
+    """Return the *latest* verdict per entity fingerprint for one artifact.
+
+    Same gate/validation order as recording. The append-only log is collapsed by entity key
+    (type + start + end + recognizer) with the last line winning, so the UI can restore a stable
+    per-entity review state. Malformed or legacy lines are skipped rather than failing the read.
+    No comment or raw value is returned.
+    """
+    if not settings.enable_dev_engine_settings:
+        raise FeedbackDisabledError
+    if get_document_record(settings, document_id) is None:
+        raise DocumentNotFoundError
+    if get_pii_artifact(settings, document_id, artifact_id) is None:
+        raise FeedbackArtifactNotFoundError
+
+    destination = _feedback_directory(settings, document_id) / _FEEDBACK_FILENAME
+    latest_by_key: dict[tuple[str, int, int, str], PiiFeedbackSummaryItem] = {}
+    if destination.is_file():
+        for line in destination.read_text(encoding="utf-8").splitlines():
+            record = _parse_record(line)
+            if record is None or record.artifact_id != artifact_id:
+                continue
+            entity = record.entity
+            key = (entity.type, entity.start, entity.end, entity.recognizer)
+            latest_by_key[key] = PiiFeedbackSummaryItem(
+                type=entity.type,
+                start=entity.start,
+                end=entity.end,
+                recognizer=entity.recognizer,
+                verdict=record.feedback.verdict,
+                issue_type=record.feedback.issue_type,
+                recorded_at=record.recorded_at,
+            )
+    return PiiFeedbackSummary(
+        document_id=document_id,
+        artifact_id=artifact_id,
+        items=list(latest_by_key.values()),
+    )
+
+
+def _parse_record(line: str) -> PiiFeedbackRecord | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    try:
+        return PiiFeedbackRecord.model_validate_json(stripped)
+    except ValidationError:
+        return None
 
 
 def _append_feedback_line(

@@ -324,3 +324,127 @@ def test_unknown_artifact_returns_404(
         json=_positive_payload("f" * 32),
     )
     assert response.status_code == 404
+
+
+def test_feedback_directory_is_created_on_first_write(
+    gate_on_client: TestClient, gate_on_settings: Settings, document_data_dir: Path
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    feedback_dir = document_data_dir / document_id / "feedback"
+    assert not feedback_dir.exists()
+
+    gate_on_client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=_positive_payload(artifact.id),
+    )
+
+    assert feedback_dir.is_dir()
+    assert (feedback_dir / "pii_feedback.jsonl").is_file()
+
+
+def test_summary_rejected_when_gate_disabled(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    artifact = _save_pii(settings, document_id)
+
+    response = client.get(
+        f"/api/documents/{document_id}/pii/feedback",
+        params={"artifact_id": artifact.id},
+    )
+    assert response.status_code == 403
+
+
+def test_summary_collapses_history_to_latest_status_per_entity(
+    gate_on_client: TestClient, gate_on_settings: Settings
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    url = f"/api/documents/{document_id}/pii/feedback"
+
+    # Same entity, twice: positive then an issue — the issue is the latest status.
+    gate_on_client.post(url, json=_positive_payload(artifact.id))
+    gate_on_client.post(
+        url,
+        json={
+            "artifact_id": artifact.id,
+            "entity": {
+                "type": "LOCATION",
+                "start": 0,
+                "end": 4,
+                "score": 0.9,
+                "recognizer": "FakeRecognizer",
+            },
+            "feedback": {"verdict": "issue", "issue_type": "wrong_type", "comment": "x"},
+        },
+    )
+    # A distinct entity key stays separate.
+    gate_on_client.post(
+        url,
+        json={
+            "artifact_id": artifact.id,
+            "entity": {
+                "type": "PERSON",
+                "start": 10,
+                "end": 20,
+                "score": 0.7,
+                "recognizer": "SpacyRecognizer",
+            },
+            "feedback": {"verdict": "positive", "issue_type": "correct"},
+        },
+    )
+
+    response = gate_on_client.get(url, params={"artifact_id": artifact.id})
+    assert response.status_code == 200
+    items = {
+        (i["type"], i["start"], i["end"], i["recognizer"]): i
+        for i in response.json()["items"]
+    }
+    assert len(items) == 2
+    location = items[("LOCATION", 0, 4, "FakeRecognizer")]
+    assert location["verdict"] == "issue"
+    assert location["issue_type"] == "wrong_type"
+    assert items[("PERSON", 10, 20, "SpacyRecognizer")]["verdict"] == "positive"
+
+
+def test_summary_returns_no_comment_or_raw_text(
+    gate_on_client: TestClient, gate_on_settings: Settings
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    url = f"/api/documents/{document_id}/pii/feedback"
+    gate_on_client.post(
+        url,
+        json={
+            "artifact_id": artifact.id,
+            "entity": {
+                "type": "LOCATION",
+                "start": 0,
+                "end": 4,
+                "score": 0.9,
+                "recognizer": "FakeRecognizer",
+            },
+            "feedback": {"verdict": "issue", "issue_type": "other", "comment": "SENSITIVE_NOTE"},
+        },
+    )
+
+    response = gate_on_client.get(url, params={"artifact_id": artifact.id})
+    assert response.status_code == 200
+    assert "SENSITIVE_NOTE" not in response.text
+    item = response.json()["items"][0]
+    assert "comment" not in item
+    assert "text" not in item
+
+
+def test_summary_unknown_artifact_returns_404(
+    gate_on_client: TestClient, gate_on_settings: Settings
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    _save_pii(gate_on_settings, document_id)
+
+    response = gate_on_client.get(
+        f"/api/documents/{document_id}/pii/feedback",
+        params={"artifact_id": "f" * 32},
+    )
+    assert response.status_code == 404

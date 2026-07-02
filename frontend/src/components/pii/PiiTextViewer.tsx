@@ -26,7 +26,8 @@ export function PiiTextViewer({ text, entities }: PiiTextViewerProps) {
         ) : (
           <mark
             key={`entity-${segment.entity.id}`}
-            className={`rounded px-0.5 ${ENTITY_STYLES[segment.entity.entity_type] ?? "bg-gray-200 text-gray-950"}`}
+            id={`pii-mark-${segment.entity.id}`}
+            className={`scroll-mt-16 rounded px-0.5 ${ENTITY_STYLES[segment.entity.entity_type] ?? "bg-gray-200 text-gray-950"}`}
             title={`${segment.entity.entity_type} · ${(segment.entity.score * 100).toFixed(0)} %`}
           >
             {segment.text}

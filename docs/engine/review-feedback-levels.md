@@ -41,15 +41,60 @@ recurring detection errors can be analysed later. It is deliberately **not** the
 the immutable `pii_result`, and applies no rules.
 
 - **Gated:** available only when `ENABLE_DEV_ENGINE_SETTINGS=true` (same dev gate as per-run engine
-  overrides). With the gate off, the UI hides the controls and `POST …/pii/feedback` returns `403`.
-- **Persisted:** append-only JSONL at `document-data/{document_id}/feedback/pii_feedback.jsonl`
-  (under the git-ignored `volumes/` mount; removed with the document). Each line carries a
-  timestamp, document/artifact ids, the entity fingerprint (type + offsets + recognizer + score),
-  the verdict/issue_type/optional comment, the artifact's engine settings, and app/schema version.
+  overrides). With the gate off, the UI hides the controls and both `POST …/pii/feedback` and
+  `GET …/pii/feedback?artifact_id=…` return `403`.
+- **Per-entity review state:** each entity card shows a "Passt" (correct) button next to the
+  confidence plus an issue picker (with a short explanation per reason) and optional comment.
+  After feedback is recorded the card locks to a status line ("Feedback gespeichert: …") so the
+  same feedback cannot be submitted twice for the same entity in one artifact. On load, the UI
+  calls `GET …/pii/feedback?artifact_id=…`, which collapses the append-only log to the **latest
+  verdict per entity key** (type + start + end + recognizer) and returns counts/verdicts only —
+  never the comment or any raw value.
+- **Review aids:** offset ranges are clickable and scroll/flash the corresponding span in the
+  extracted-text view; a small collapsible legend explains the entity types, confidence, and
+  recognizer.
+- **Persisted:** append-only JSONL at `document-data/{document_id}/feedback/pii_feedback.jsonl`.
+  Each line carries a timestamp, document/artifact ids, the entity fingerprint (type + offsets +
+  recognizer + score), the verdict/issue_type/optional comment, the artifact's engine settings
+  (server-authoritative; `unknown` for legacy artifacts), and app/schema version.
 - **Privacy:** no document text, OCR full text, or raw entity value is stored — offsets and types
   are enough for analysis; an optional opaque `text_hash` field exists but the UI does not send it.
 - **Not a level:** production stays gated off; promoting this into the auditable L2 `review_result`
   overlay (below) is separate, future work.
+
+#### Feedback storage (local dev)
+
+- Feedback is stored locally as append-only JSONL.
+- Path: `volumes/document-data/<document_id>/feedback/pii_feedback.jsonl` — the host side of the
+  existing `./volumes/document-data:/data/document-data` bind mount in `docker-compose.yml`
+  (inside the container: `/data/document-data/<document_id>/feedback/…`). No separate Docker
+  volume is needed; the `feedback/` directory is created on first write.
+- It survives `docker compose down` (it is a host bind mount, not an anonymous volume) and is
+  removed together with the document when the document's `document-data/<id>` directory is
+  deleted.
+- It is local development/review data: it is **not** committed (`volumes/` is git-ignored) and
+  must never be committed.
+- It can later be inspected or provided to an AI for **aggregate** analysis.
+- It does **not** contain full document text or OCR text.
+
+#### Follow-up TODOs surfaced by this dev feature (not built here)
+
+- **Clickable offsets / jump-to-text:** implemented for the flat list above. When entity grouping
+  lands, jump-to-text must work per occurrence.
+- **Entity grouping (next review level):** show each distinct entity once and collect its
+  occurrences/offsets beneath it, e.g. `PERSON Max Mustermann → 0–14, 220–234, 540–554`, with
+  clickable offsets per occurrence and feedback per occurrence or per group. Purely a UI grouping;
+  it must not change detection.
+- **Entity resolution / overlap precedence (separate follow-up PR):** deterministic precedence so
+  overlapping candidates stop competing — `ADDRESS` should suppress or flag an overlapping
+  `LOCATION`; `EMAIL_ADDRESS` should suppress URL/domain fragments inside the e-mail; structured
+  ids (`IBAN`/`UID`/`FN`/…) should beat generic ids on overlap; unresolved conflicts should be
+  visible in review or resolved by engine-level resolution. Tracked as a follow-up PR: "Entity
+  Resolution / Overlap Precedence Rules". Not implemented here.
+- **Display ordering:** consider ordering the entity list by precise/deterministic types first
+  (EMAIL, PHONE, IBAN, UID, FN, ADDRESS, CONTACT_LINE …) then broader NER (PERSON, ORGANIZATION,
+  LOCATION), or at least a stable position-based order with conflict awareness. Deferred (no engine
+  change in this PR); the list currently uses the artifact's stored order.
 
 ## Level 2 — Confirm / reject a candidate  ⛔ *open (next)*
 
