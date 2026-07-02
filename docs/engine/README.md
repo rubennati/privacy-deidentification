@@ -45,11 +45,18 @@ right, and making both human-reviewable, comes first.
 | [`tool-strategy.md`](tool-strategy.md) | Which tools are core, which are spikes, which are deferred? |
 | [`target-architecture.md`](target-architecture.md) | Target architecture, the DB question, and the optional local-AI question. |
 | [`roadmap.md`](roadmap.md) | Which PRs come next, in which order, with scope and acceptance criteria. |
+| [`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md) | Operative OCR/PII PR sequence, cadence, and the checkpoint loop that re-validates the plan after each PR. |
+
+**OCR/Text and PII/Sensitive-Data are the core engines**; the other engines (Review, Feedback,
+Benchmark, Audit, Redaction) support and measure them. The operative plan that keeps OCR/Text ahead
+of PII/Redaction and re-validates after every PR is
+[`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md).
 
 The architecture decision behind this model is
 [ADR-0011](../adr/0011-engine-capability-model.md); the migration to the 0–19 maturity scale is
 [ADR-0016](../adr/0016-engine-maturity-levels-0-19.md); the entity taxonomy and P0–P5 risk classes
-are [ADR-0017](../adr/0017-entity-taxonomy-and-risk-classes.md).
+are [ADR-0017](../adr/0017-entity-taxonomy-and-risk-classes.md); the OCR/PII implementation plan and
+checkpoint loop are [ADR-0018](../adr/0018-ocr-pii-implementation-plan.md).
 
 ## Guiding principles (carried over, not invented here)
 

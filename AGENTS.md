@@ -31,6 +31,12 @@ The central engines are planned on a **0–19 maturity scale** (see
   **P0–P5**, and detection strategies — use [`docs/engine/entity-taxonomy.md`](docs/engine/entity-taxonomy.md)
   ([ADR-0017](docs/adr/0017-entity-taxonomy-and-risk-classes.md)). New recognizer/entity-type work
   should name its category, risk class, and detection strategy.
+- **Check the OCR/PII implementation plan before starting engine work**
+  ([`docs/engine/ocr-pii-implementation-plan.md`](docs/engine/ocr-pii-implementation-plan.md),
+  [ADR-0018](docs/adr/0018-ocr-pii-implementation-plan.md)). OCR/Text and PII/Sensitive-Data are the
+  core engines; **do not let PII/Redaction outrun OCR/Text prerequisites** (OCR/Text stays 2–3 levels
+  ahead). Every engine PR must state which 0–19 level it advances. After every engine PR, run the
+  plan's checkpoint loop and update `.ai/state.md`/docs if the level or the next plan changed.
 - Feature and documentation PRs target `dev`, not `main` (see [Approval](#approval)).
 
 ## Product principle: tool-first / adapter-bound

@@ -57,11 +57,21 @@ See [`docs/engine/`](../docs/engine/README.md),
 
 ## Immediate next steps
 
-1. Finish this documentation cleanup.
-2. Fix feedback integrity as a focused bugfix.
-3. Prepare the next OCR/PII implementation plan.
-4. Advance OCR/Text to **L6 — OCR confidence**.
-5. Advance OCR/Text to **L7 — `quality_report`**.
+The binding OCR/PII sequence, cadence, and next-12-PR list live in
+[`docs/engine/ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md)
+([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority: OCR/Text
+confidence (L6) + `quality_report` (L7) before further deep PII work**, so the core text engine stays
+2–3 levels ahead of the PII/review frontier.
+
+1. Fix feedback integrity as a focused bugfix (finish dev-only PII L10 / Review L5 operational use).
+2. Advance OCR/Text to **L6 — OCR confidence**.
+3. Advance OCR/Text to **L7 — `quality_report`**.
+4. Then interleave PII **L11 grouping** / **L12 overlap** per the plan's cadence.
+
+**Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
+sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
+config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
+three PRs (see the plan's checkpoint loop).
 
 ## Active constraints
 
