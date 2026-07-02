@@ -25,6 +25,7 @@ services:
       PII_PROFILE: ${PII_PROFILE:-structured-only}
       PII_ENTITY_TYPES: ${PII_ENTITY_TYPES:-}
       PII_CANDIDATE_VALIDATION_ENABLED: ${PII_CANDIDATE_VALIDATION_ENABLED:-true}
+      ENABLE_DEV_ENGINE_SETTINGS: ${ENABLE_DEV_ENGINE_SETTINGS:-false}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./volumes/uploads:${UPLOAD_STORAGE_DIR:-/data/uploads}

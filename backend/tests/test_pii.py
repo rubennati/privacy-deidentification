@@ -325,8 +325,35 @@ def test_post_rejects_dev_override_when_disabled(
     assert response.status_code == 403
 
 
-def test_post_accepts_dev_profile_override_when_enabled(
+def test_post_without_body_continues_to_work_when_dev_gate_is_enabled(
     client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.enable_dev_engine_settings = True
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+    pii_fake.results["Kontakt max@example.at"] = [_entity("EMAIL_ADDRESS", 8, 22, 1.0)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    assert response.json()["content"]["engine_settings"] == {
+        "pii_profile": "custom",
+        "candidate_validation_enabled": True,
+        "score_threshold": 0.5,
+        "source": "server-default",
+    }
+
+
+@pytest.mark.parametrize(
+    "profile",
+    ["structured-only", "insurance-at-de", "broad-review", "review-heavy"],
+)
+def test_post_accepts_dev_profile_override_when_enabled_for_all_profiles(
+    profile: str,
+    client: TestClient,
+    settings: Settings,
+    pii_fake: FakePiiAnalyzer,
 ) -> None:
     settings.enable_dev_engine_settings = True
     upload = _upload_document(client)
@@ -336,13 +363,13 @@ def test_post_accepts_dev_profile_override_when_enabled(
 
     response = client.post(
         f"/api/documents/{document_id}/pii",
-        json={"pii_profile": "insurance-at-de"},
+        json={"pii_profile": profile},
     )
 
     assert response.status_code == 201
-    assert pii_fake.entity_types_seen == [get_pii_profile("insurance-at-de").entity_types]
+    assert pii_fake.entity_types_seen == [get_pii_profile(profile).entity_types]
     assert response.json()["content"]["engine_settings"] == {
-        "pii_profile": "insurance-at-de",
+        "pii_profile": profile,
         "candidate_validation_enabled": True,
         "score_threshold": 0.5,
         "source": "dev-ui-override",

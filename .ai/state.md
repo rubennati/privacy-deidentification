@@ -76,6 +76,8 @@
   `ENABLE_DEV_ENGINE_SETTINGS` gate. The gate defaults to off; when enabled, the document detail
   UI may override the named PII profile for one local PII run only. `.env`/backend defaults remain
   authoritative and are never written from the UI.
+- `docker-compose.yml` now forwards `ENABLE_DEV_ENGINE_SETTINGS` explicitly to the backend
+  container, still defaulting to `false` unless local `.env` opts in.
 - New `pii_result` artifacts record effective non-sensitive engine settings under
   `content.engine_settings` (`pii_profile`, candidate validation, score threshold, source) so
   dev-mode runs remain traceable without storing extra text or raw PII.

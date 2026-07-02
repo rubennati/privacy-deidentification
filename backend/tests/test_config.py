@@ -8,7 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.services.pii_profiles import DOMAIN_SENSITIVE_TYPES, PII_PROFILES, STRUCTURED_TYPES
+from app.services.pii_profiles import (
+    ADDRESS_CONTACT_TYPES,
+    DOMAIN_SENSITIVE_TYPES,
+    PII_PROFILES,
+    STRUCTURED_TYPES,
+)
 
 
 def test_storage_configuration_uses_clear_names_and_accepts_legacy_upload_dir() -> None:
@@ -130,6 +135,8 @@ def test_default_pii_entity_types_are_structured_recognizers_only(
     # The noisy spaCy NER types and DATE_TIME are opt-in, not default.
     for opt_in in ("PERSON", "ORGANIZATION", "LOCATION", "DATE_TIME"):
         assert opt_in not in settings.pii_entity_types
+    for address_contact_type in ADDRESS_CONTACT_TYPES:
+        assert address_contact_type not in settings.pii_entity_types
 
 
 def test_spacy_ner_types_remain_supported_and_opt_in() -> None:
