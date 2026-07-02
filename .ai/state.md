@@ -97,6 +97,12 @@ sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prio
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
 three PRs (see the plan's checkpoint loop).
 
+## Dev maintenance
+
+- Safe Docker cleanup targets exist: `make docker-df`, `make docker-prune`,
+  `make docker-prune-project`, `make dev-rebuild`. None of them delete volumes, uploads, or
+  document data.
+
 ## Active constraints
 
 - Docker-first; no host-local application toolchain is required.

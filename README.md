@@ -115,6 +115,12 @@ by the make target (not by `.env`), so `make up` is always slim:
 them. Text PDFs and DOCX (including tables) are extracted **without** OCR; only image documents
 and scanned PDF pages need the OCR runtime plus provisioned models.
 
+`INSTALL_OCR=true` pulls in PaddleOCR/PaddlePaddle/MKL and makes backend images significantly
+larger on disk. For PDF-text-layer development (`layout_text_result`, `pii_input_text`), the slim
+`make up`/`make up-pii` profiles are usually enough; real scanned-document OCR needs
+`INSTALL_OCR=true` (`make up-ocr`/`make up-full`) plus provisioned models. See
+[Docker disk cleanup](#docker-disk-cleanup) if repeated OCR/full builds accumulate old images.
+
 ## API
 
 | Method | Path                   | Description                                                |
@@ -481,6 +487,29 @@ make down        # stop the stack
 make benchmark-private   # private local OCR/PII benchmark report (see above)
 make benchmark-test      # synthetic-data unit tests for the benchmark runner
 ```
+
+### Docker disk cleanup
+
+Repeated local `--build --force-recreate` cycles leave behind dangling (`<none>:<none>`) images
+and build cache that can grow to tens of GB over time. Safe cleanup targets:
+
+```bash
+make docker-df              # show current Docker disk usage
+make docker-prune           # remove dangling images/containers/networks + build cache
+make docker-prune-project   # same, filtered to this project's labeled images (best-effort)
+make dev-rebuild            # down + up --build --force-recreate + docker-prune (safe default)
+```
+
+These never delete volumes, uploads, or document data, and never stop running containers other
+than during `dev-rebuild`'s `docker compose down`. `make docker-prune-project` is best-effort:
+Docker's dangling-image filter does not reliably match unlabeled build-stage layers, so
+`make docker-prune` remains the reliable default.
+
+If you want to reclaim disk space more aggressively and are fine affecting *other* local Docker
+projects too, you can manually run `docker image prune -af`. This is **not** wired into any make
+target — run it explicitly, and never combine it with `--volumes` (that would delete Docker
+volumes, which is unrelated to and unnecessary for cleaning up this project's `./volumes/`
+bind-mounted directories, but destroys any named volumes from other projects on the machine).
 
 ## Repository structure
 
