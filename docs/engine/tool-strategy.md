@@ -10,6 +10,9 @@ adapter-only** principle ([`AGENTS.md`](../../AGENTS.md)): we integrate proven o
 behind ports/adapters and write orchestration, not bespoke OCR/NER/redaction intelligence. Every
 tool must run **locally** — nothing sends document bytes, text, or PII to an external service.
 
+For a tool ↔ detection-strategy ↔ entity-category view (what each tool actually *covers*), see
+[`entity-taxonomy.md`](entity-taxonomy.md#tool--strategy-mapping).
+
 ## Classification
 
 - **Core** — in the pipeline now, load-bearing.

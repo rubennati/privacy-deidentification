@@ -38,6 +38,7 @@ right, and making both human-reviewable, comes first.
 | [`review-feedback-levels.md`](review-feedback-levels.md) | What should the review/human-in-the-loop engine do at level 0…19? |
 | [`benchmark-engine-levels.md`](benchmark-engine-levels.md) | What should the benchmark/regression engine do at level 0…19? |
 | [`redaction-engine-levels.md`](redaction-engine-levels.md) | What should the redaction/de-identification engine do at level 0…19? |
+| [`entity-taxonomy.md`](entity-taxonomy.md) | What do we detect — business categories, entity types, risk classes P0–P5, detection strategies, and coverage? |
 | [`engine-settings.md`](engine-settings.md) | How do runtime settings map to engine maturity, artifacts, and dev/prod sourcing? |
 | [`engine-artifacts.md`](engine-artifacts.md) | Which artifacts flow between the engines, and their privacy rules? |
 | [`quality-metrics.md`](quality-metrics.md) | Which metrics measure quality, and which are measured today? |
@@ -47,7 +48,8 @@ right, and making both human-reviewable, comes first.
 
 The architecture decision behind this model is
 [ADR-0011](../adr/0011-engine-capability-model.md); the migration to the 0–19 maturity scale is
-[ADR-0016](../adr/0016-engine-maturity-levels-0-19.md).
+[ADR-0016](../adr/0016-engine-maturity-levels-0-19.md); the entity taxonomy and P0–P5 risk classes
+are [ADR-0017](../adr/0017-entity-taxonomy-and-risk-classes.md).
 
 ## Guiding principles (carried over, not invented here)
 

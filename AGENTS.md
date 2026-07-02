@@ -27,6 +27,10 @@ The central engines are planned on a **0–19 maturity scale** (see
   affected engine level where relevant.
 - Do **not** mix the older 0–10/0–14 numbering without a migration note; each engine document has a
   *Legacy scale mapping* table to translate old citations.
+- For *what* is detected and *how sensitive* it is — business categories, entity types, risk classes
+  **P0–P5**, and detection strategies — use [`docs/engine/entity-taxonomy.md`](docs/engine/entity-taxonomy.md)
+  ([ADR-0017](docs/adr/0017-entity-taxonomy-and-risk-classes.md)). New recognizer/entity-type work
+  should name its category, risk class, and detection strategy.
 - Feature and documentation PRs target `dev`, not `main` (see [Approval](#approval)).
 
 ## Product principle: tool-first / adapter-only

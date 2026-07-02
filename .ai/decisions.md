@@ -49,6 +49,16 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   0–10/0–14 scales without a migration note. Docs-only, no behaviour/dependency change. Current
   standing: OCR/Text **L5**, PII **L9 / L10 partial**, Review **L2 (dev-only through L5)**, Benchmark
   **L8**, Redaction **L0**.
+- [ADR-0017](../docs/adr/0017-entity-taxonomy-and-risk-classes.md) — Entity taxonomy & risk /
+  protection classes (complements ADR-0011/0016). Adds `docs/engine/entity-taxonomy.md`: a
+  classification model on four orthogonal axes — business **category** (19: PERSON…DOMAIN_SPECIFIC),
+  **entity type** (grounded in `pii_profiles.py`), **risk class P0–P5** (P0–P4 GDPR-gradient, **P5 =
+  Geheimschutz/secrets, not GDPR-only**; `effective_risk = max(default, context)`), and **detection
+  strategy** (`structured_regex`/`checksum_validated`/`dictionary_gazetteer`/`ner_model`/
+  `context_rule`/`layout_rule`/`domain_recognizer`/`secret_scanner`/`vision_ocr`/`human_feedback`/
+  `hybrid`), plus a `Coverage` status (implemented/partial/planned/out-of-scope) and an OCR+PII
+  tool↔strategy mapping. Docs-only, no behaviour/recognizer/profile/dependency change; redaction/
+  policy columns are targets for future engines.
 - [ADR-0012](../docs/adr/0012-insurance-at-de-pii-recognizers.md) — Presidio-based AT/DE and
   insurance/legal/business identifier pack, stable structured/domain/NER type groups, four named
   coverage profiles with a precision-first default, and immediate-label context for generic domain
