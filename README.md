@@ -1,5 +1,30 @@
 # Privacy De-Identification
 
+## Windows Quick Start
+
+PowerShell oeffnen und ausfuehren:
+
+```powershell
+irm https://raw.githubusercontent.com/rubennati/privacy-deidentification/main/scripts/windows/install.ps1 | iex
+```
+
+Danach stehen diese Befehle bereit:
+
+```powershell
+& "$HOME\PrivacyDeID\deid.ps1" start
+& "$HOME\PrivacyDeID\deid.ps1" update
+& "$HOME\PrivacyDeID\deid.ps1" stop
+& "$HOME\PrivacyDeID\deid.ps1" status
+```
+
+Die App laeuft unter <http://localhost:8080>. Details: [Windows Local App](docs/windows-local-app.md).
+
+## Branch workflow
+
+Feature-PRs zielen auf `dev`. `main` ist der bewusst freigegebene lokale App-Stand und erhaelt nur
+kuratierte Merges aus `dev` oder explizite Hotfixes. Windows-Installation und Updates verwenden
+immer `main`.
+
 A Docker-first application foundation for privacy-focused document preparation and de-identification workflows.
 
 Users can upload documents through a web interface. The backend validates each upload, stores
