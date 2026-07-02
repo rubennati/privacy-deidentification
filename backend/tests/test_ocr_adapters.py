@@ -7,7 +7,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.ocr_adapters import OcrUnavailableError, PaddleOcrAdapter
+from app.services.ocr_adapters import OcrUnavailableError, PaddleOcrAdapter, extract_ocr_result
+
+
+def test_legacy_text_only_adapter_remains_compatible(tmp_path: Path) -> None:
+    class LegacyAdapter:
+        def extract_text(self, image_path: Path) -> str:
+            return "Legacy text"
+
+        def tool_versions(self) -> dict[str, str]:
+            return {"legacy": "test"}
+
+    result = extract_ocr_result(LegacyAdapter(), tmp_path / "image.png")
+
+    assert result.text == "Legacy text"
+    assert result.confidence is None
+    assert result.line_confidences == ()
 
 
 def test_unconfigured_models_fail_before_paddle_import(
@@ -48,7 +63,16 @@ def test_local_models_are_loaded_lazily_and_results_are_parsed(
     class FakeEngine:
         def predict(self, input: str) -> object:
             assert input.endswith("image.png")
-            return [SimpleNamespace(json={"res": {"rec_texts": ["First", "Second"]}})]
+            return [
+                SimpleNamespace(
+                    json={
+                        "res": {
+                            "rec_texts": ["First", "Second"],
+                            "rec_scores": [0.8, 0.6],
+                        }
+                    }
+                )
+            ]
 
     def paddle_ocr(**kwargs: object) -> FakeEngine:
         initialization_arguments.append(kwargs)
@@ -61,9 +85,15 @@ def test_local_models_are_loaded_lazily_and_results_are_parsed(
     adapter = PaddleOcrAdapter(tmp_path)
     assert initialization_arguments == []
 
-    text = adapter.extract_text(tmp_path / "image.png")
+    result = adapter.extract_result(tmp_path / "image.png")
 
-    assert text == "First\nSecond"
+    assert result.text == "First\nSecond"
+    assert result.confidence == pytest.approx(0.7)
+    assert [line.__dict__ for line in result.line_confidences] == [
+        {"line_index": 1, "confidence": 0.8, "text_char_count": 5},
+        {"line_index": 2, "confidence": 0.6, "text_char_count": 6},
+    ]
+    assert all("text" not in line.__dict__ for line in result.line_confidences)
     assert initialization_arguments == [
         {
             "device": "cpu",
@@ -75,6 +105,60 @@ def test_local_models_are_loaded_lazily_and_results_are_parsed(
             "use_textline_orientation": False,
         }
     ]
+
+
+def test_missing_and_invalid_scores_do_not_break_text_extraction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "text_detection").mkdir()
+    (tmp_path / "text_recognition").mkdir()
+
+    class FakeEngine:
+        def predict(self, input: str) -> object:
+            return [
+                SimpleNamespace(
+                    json={
+                        "res": {
+                            "rec_texts": ["First", "Second", "Third", "Fourth"],
+                            "rec_scores": ["invalid", 0.75, 2.0],
+                        }
+                    }
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.services.ocr_adapters.import_module",
+        lambda name: SimpleNamespace(PaddleOCR=lambda **kwargs: FakeEngine()),
+    )
+
+    result = PaddleOcrAdapter(tmp_path).extract_result(tmp_path / "image.png")
+
+    assert result.text == "First\nSecond\nThird\nFourth"
+    assert result.confidence == 0.75
+    assert len(result.line_confidences) == 1
+    assert result.line_confidences[0].line_index == 2
+
+
+def test_absent_scores_produce_null_page_confidence_and_no_line_metrics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "text_detection").mkdir()
+    (tmp_path / "text_recognition").mkdir()
+
+    class FakeEngine:
+        def predict(self, input: str) -> object:
+            return [SimpleNamespace(json={"res": {"rec_texts": ["Still works"]}})]
+
+    monkeypatch.setattr(
+        "app.services.ocr_adapters.import_module",
+        lambda name: SimpleNamespace(PaddleOCR=lambda **kwargs: FakeEngine()),
+    )
+
+    result = PaddleOcrAdapter(tmp_path).extract_result(tmp_path / "image.png")
+
+    assert result.text == "Still works"
+    assert result.confidence is None
+    assert result.line_confidences == ()
 
 
 def test_configured_model_names_are_passed_to_paddle(

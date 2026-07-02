@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,15 @@ class AuditSummary:
 
 
 @dataclass(frozen=True)
+class OcrLineConfidenceSummary:
+    """Metric-only OCR line summary; intentionally contains no recognized text."""
+
+    line_index: int
+    confidence: float
+    text_char_count: int
+
+
+@dataclass(frozen=True)
 class TextPageSummary:
     page_number: int
     source: str | None
@@ -69,6 +79,8 @@ class TextPageSummary:
     ocr_used: bool
     text_char_count: int
     word_count: int
+    ocr_confidence: float | None = None
+    ocr_line_confidences: tuple[OcrLineConfidenceSummary, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -262,6 +274,10 @@ def _parse_text(raw: dict[str, Any]) -> TextSummary:
             # Word count only: the raw page text is read transiently here to derive a count and
             # is never assigned to a field, so it cannot propagate into a report.
             word_count=_word_count(page.get("text")),
+            ocr_confidence=_as_confidence(page.get("ocr_confidence")),
+            ocr_line_confidences=_parse_ocr_line_confidences(
+                page.get("ocr_line_confidences")
+            ),
         )
         for page in content.get("pages") or ()
     )
@@ -279,6 +295,34 @@ def _parse_text(raw: dict[str, Any]) -> TextSummary:
 
 def _word_count(text: Any) -> int:
     return len(text.split()) if isinstance(text, str) else 0
+
+
+def _parse_ocr_line_confidences(raw: Any) -> tuple[OcrLineConfidenceSummary, ...]:
+    if not isinstance(raw, list):
+        return ()
+    summaries: list[OcrLineConfidenceSummary] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        line_index = _as_int(item.get("line_index"))
+        confidence = _as_confidence(item.get("confidence"))
+        text_char_count = _as_int(item.get("text_char_count"))
+        if (
+            line_index is None
+            or line_index < 1
+            or confidence is None
+            or text_char_count is None
+            or text_char_count < 0
+        ):
+            continue
+        summaries.append(
+            OcrLineConfidenceSummary(
+                line_index=line_index,
+                confidence=confidence,
+                text_char_count=text_char_count,
+            )
+        )
+    return tuple(summaries)
 
 
 def _parse_pii(raw: dict[str, Any]) -> PiiSummary:
@@ -350,4 +394,11 @@ def _as_str(value: Any) -> str | None:
 
 
 def _as_int(value: Any) -> int | None:
-    return value if isinstance(value, int) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _as_confidence(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    confidence = float(value)
+    return confidence if isfinite(confidence) and 0.0 <= confidence <= 1.0 else None

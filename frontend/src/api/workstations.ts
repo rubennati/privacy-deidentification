@@ -40,6 +40,13 @@ export interface TextPageResult {
   ocr_used: boolean;
   text: string;
   text_char_count: number;
+  // Additive OCR L6 metrics. Legacy/text-layer pages may omit them or return null/empty values.
+  ocr_confidence?: number | null;
+  ocr_line_confidences?: Array<{
+    line_index: number;
+    confidence: number;
+    text_char_count: number;
+  }>;
 }
 
 export interface TextArtifact {

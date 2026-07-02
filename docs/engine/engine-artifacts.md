@@ -25,7 +25,7 @@ input, or report may be committed.
 | `document.json` | ✅ today | document metadata and embedded `original_artifact` | filename may be sensitive | local file |
 | `original_artifact` | ✅ today | byte-identical source pointer and digest | source bytes live in upload storage | embedded in `document.json` |
 | `audit_result` | ✅ today | per-page structure, quality verdict, and routing metrics | no page text | immutable artifact |
-| `best_text_result` | ✅ today as `text_result` | canonical text used by PII and review | yes | immutable artifact |
+| `best_text_result` | ✅ today as `text_result` | canonical text used by PII/review plus additive OCR-page confidence metrics | yes | immutable artifact |
 | `ocr_result` / `text_layer_result` | ◻ conceptual | source-specific page output | yes | folded into `text_result` today |
 | `quality_report` | 🔜 OCR L7 | source mix, coverage, confidence summary | metrics only | immutable artifact |
 | `layout_text_result` | ✅ v1 (field on `text_result`) | readable layout plain-text for PDF text layer (L9 v1); readable text (L8) and typed blocks/geometry (L9+) later | yes | additive optional field on `text_result` |
@@ -66,6 +66,18 @@ These layers are additive and never mutate canonical text or shift PII offsets; 
 unconnected source-of-truth texts** — every layer maps back to canonical (and source) via
 `text_lineage_map`. Older artifacts without the new fields stay valid.
 
+## OCR confidence boundary
+
+OCR L6 stores confidence additively on OCR-produced `text_result.pages[]` as
+`ocr_confidence` (the arithmetic mean of valid PaddleOCR line scores) and
+`ocr_line_confidences` (line index, confidence, and character count only). The metric structure does
+not duplicate raw OCR line text. Text-layer pages use `null`/an empty list, DOCX remains pageless,
+and legacy text artifacts without these fields remain valid.
+
+`audit_result` stays the immutable pre-OCR routing/quality input and is never rewritten after OCR.
+OCR L7 will introduce a separate immutable `quality_report` that combines audit routing/quality
+data with the confidence stored on the exact lineage-bound `text_result`.
+
 ## Dev feedback side-channel
 
 `volumes/document-data/<document_id>/feedback/pii_feedback.jsonl` is an append-only, dev-only log,
@@ -83,7 +95,7 @@ is suitable only for controlled local or aggregate analysis.
 
 ## Privacy rules
 
-- **Metrics-only artifacts** (`audit_result`, `quality_report`) contain counts, statuses, reasons,
+- **Metrics-only artifacts** (`audit_result`, future `quality_report`) contain counts, statuses, reasons,
   coverage, and confidence; they contain no page text or raw entity values.
 - **Text artifacts** contain extracted text and therefore may contain PII. They remain under the
   local document-data root and are never logged or committed.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from artifact_loader import DetectedEntity, load_local_corpus
+from artifact_loader import DetectedEntity, OcrLineConfidenceSummary, load_local_corpus
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -128,6 +128,52 @@ def test_detected_entity_has_no_raw_text_field() -> None:
     field_names = {f for f in DetectedEntity.__dataclass_fields__}
     assert "text" not in field_names
     assert "entity_text" not in field_names
+
+
+def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> None:
+    document_data_dir = tmp_path / "document-data"
+    document_id = "7" * 32
+    _write_json(
+        document_data_dir / document_id / "document.json",
+        _document_json(document_id, "Scan.pdf", f"{document_id}.pdf", 100),
+    )
+    _write_json(
+        document_data_dir / document_id / "artifacts" / "text.json",
+        {
+            "id": "text1",
+            "document_id": document_id,
+            "artifact_type": "text_result",
+            "created_at": "2026-07-01T10:02:00Z",
+            "content": {
+                "source": "paddleocr",
+                "text": "raw recognized value",
+                "text_char_count": 20,
+                "pages": [
+                    {
+                        "page_number": 1,
+                        "source": "paddleocr",
+                        "has_text_layer": False,
+                        "ocr_used": True,
+                        "text": "raw recognized value",
+                        "text_char_count": 20,
+                        "ocr_confidence": 0.85,
+                        "ocr_line_confidences": [
+                            {"line_index": 1, "confidence": 0.85, "text_char_count": 20}
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+
+    corpus = load_local_corpus(tmp_path / "uploads", document_data_dir)
+
+    assert corpus[0].text is not None
+    page = corpus[0].text.pages[0]
+    assert page.ocr_confidence == 0.85
+    assert page.ocr_line_confidences == (OcrLineConfidenceSummary(1, 0.85, 20),)
+    assert "text" not in page.__dataclass_fields__
+    assert "text" not in OcrLineConfidenceSummary.__dataclass_fields__
 
 
 def _pii_artifact_with_validation(artifact_id: str, document_id: str, created_at: str) -> dict:

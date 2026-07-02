@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L5** | embedded text, immutable lineage, local OCR runtime, text-layer quality gate, per-page routing | L6 confidence, then L7 `quality_report` |
+| OCR / Text | **L6** | embedded text, immutable lineage, local OCR runtime, text-layer quality gate, per-page routing, engine-reported OCR confidence | L7 `quality_report`, then L8 readable text |
 | PII / Sensitive-Data | **L9; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture | L11 entity grouping, then L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only** | read-only review and lineage-safe highlights; gated review aids, run settings, and per-entity feedback capture | L6 grouped occurrences; L8 `review_result` later |
 | Benchmark / Regression | **L8** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts | L9 per-profile metrics |
@@ -17,7 +17,8 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L5: upload, canonical text extraction, lineage, OCR runtime, quality routing, and fallback.
+- OCR L0–L6: upload, canonical text extraction, lineage, OCR runtime, quality routing/fallback, and
+  additive page/line OCR confidence on `text_result`.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -52,7 +53,7 @@ documents.
   and tests for each level.
 - **Maturity change:** none.
 
-### 4. OCR L6 — confidence capture
+### 4. OCR L6 — confidence capture — delivered
 
 - **Goal:** capture engine-reported OCR confidence per OCR page and, where available, per line.
 - **Scope:** PaddleOCR adapter output, additive text-page metrics, benchmark consumption, and
@@ -61,8 +62,11 @@ documents.
 - **Dependency:** none; confidence is already present in the PaddleOCR payload.
 - **Acceptance:** every OCR page carries a documented confidence value; canonical text and routing
   remain unchanged; benchmark output can aggregate the metric without reading raw text.
+- **Delivered:** valid PaddleOCR `rec_scores` are stored as metric-only line entries and an
+  arithmetic page mean on `text_result.pages[]`; missing scores are tolerated and `audit_result`
+  remains immutable.
 
-### 5. OCR L7 — `quality_report`
+### 5. OCR L7 — `quality_report` — next
 
 - **Goal:** persist a metrics-only document summary for OCR/text quality.
 - **Scope:** source mix, page coverage, low-confidence counts, confidence summary, explicit lineage,
@@ -96,8 +100,9 @@ authoritative. Dev feedback JSONL remains a separate analysis input.
 
 ### Benchmark L9–L10
 
-Add per-profile PII metrics in one invocation at L9. Add OCR confidence/coverage columns at L10 only
-after OCR L6 and L7 provide the source metrics.
+Add per-profile PII metrics in one invocation at L9. OCR L6 confidence summaries are already
+available in the benchmark; fuller confidence/coverage reporting at L10 follows after L7 provides
+the cross-artifact quality source.
 
 ### Redaction remains blocked
 

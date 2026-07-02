@@ -16,9 +16,9 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L5 reached (L0–L5 done); L6–L7 are the next levels.** Per-page routing over a
-text-layer quality gate is complete; per-page OCR **confidence** and a first-class `quality_report`
-artifact are not yet built.
+**Current standing:** **L6 reached (L0–L6 done); L7 is next.** Per-page routing over a text-layer
+quality gate and additive OCR **confidence** on `text_result` are complete; a first-class
+`quality_report` artifact is not yet built.
 
 ---
 
@@ -105,17 +105,22 @@ artifact are not yet built.
   broken/empty pages; a broken layer with no OCR runtime returns `503`.
 - **Boundary to L6:** L5 chooses a source but does not report *how confident* the OCR of a page is.
 
-## Level 6 — OCR confidence capture  ⏳ *next*
+## Level 6 — OCR confidence capture  ✅ *done*
 
 - **Description:** report per-page OCR confidence so quality is measurable and regressions are
   visible.
-- **Engine must:** capture the per-page (and, where available, per-line) OCR confidence from the
-  PaddleOCR payload and surface it additively on the audit/text metrics — no raw text.
-- **Artifacts:** confidence fields on `audit_result`/`text_result` page metrics.
-- **Acceptance:** every OCR page carries a numeric confidence; the value feeds the benchmark runner;
-  no page text is stored alongside it.
+- **Engine must:** capture valid `rec_scores` from the PaddleOCR payload, preserve the recognized
+  text byte-for-byte, and surface an arithmetic mean per OCR page plus per-line metrics where
+  reported. Missing or invalid scores degrade to `null`/an empty list rather than failing OCR.
+- **Artifacts:** additive `ocr_confidence` and `ocr_line_confidences` fields on
+  `text_result.pages[]`. Line metrics contain only line index, confidence, and character count — no
+  duplicate raw line text. Existing immutable `audit_result` artifacts are not mutated or extended
+  after routing.
+- **Acceptance:** OCR-routed PDF pages and image pages carry numeric confidence when PaddleOCR
+  reports valid scores; text-layer pages carry no invented confidence; the benchmark reads and
+  aggregates the metrics without copying raw text.
 - **Boundary to L7:** L6 produces per-page confidence numbers; L7 aggregates them into a
-  document-level quality artifact.
+  document-level `quality_report` that combines audit routing/quality data with text OCR confidence.
 
 ## Level 7 — `quality_report` artifact  ⏳ *next*
 
@@ -151,7 +156,7 @@ artifact are not yet built.
 - **Artifacts:** `layout_text_result` with ordered, typed blocks and coordinates.
 - **Acceptance:** multi-column and header/footer pages produce human-sensible reading order; the
   canonical text remains the PII input.
-- **Status:** two additive v1 slices are delivered, both out-of-order ahead of the cumulative L6/L7
+- **Status:** two additive v1 slices are delivered, both out-of-order ahead of cumulative L7
   work, and both leave `text_result.text` byte-stable with PII still running on canonical text:
   - `layout_text_result` — an optional field on `text_result`, pypdf `extraction_mode="layout"`,
     PDF text-layer pages only; OCR/DOCX/image → `null`.
@@ -161,7 +166,7 @@ artifact are not yet built.
     data (`visitor_operand_before`, no new dependency). **Not** the active PII input — see
     [`ocr-layout-text-contract.md`](ocr-layout-text-contract.md).
   Typed blocks/geometry, OCR-page layout, a `text_lineage_map`, and a general table detector remain
-  open; the cumulative L6 confidence / L7 `quality_report` are still the prioritised next steps.
+  open; the cumulative L7 `quality_report` is still the prioritised next step.
 - **Boundary to L10:** L9 knows block order; L10 persists precise per-line/word coordinates as
   reusable geometry.
 
@@ -303,7 +308,7 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 3 Basic OCR runtime | ✅ done | PaddleOCR adapter, model provisioning, `ocr-smoke` |
 | 4 Text-layer quality gate | ✅ done | `text_quality.py` GOOD/LOW/BROKEN/EMPTY verdicts |
 | 5 Page-level routing | ✅ done | per-page `needs_ocr` routing, `pdf_mixed`, `503`-not-garbage |
-| 6 OCR confidence | ⏳ next | **not captured** from the PaddleOCR payload yet |
+| 6 OCR confidence | ✅ done | additive page mean + metric-only line scores on `text_result`; benchmark summaries |
 | 7 `quality_report` artifact | ⏳ next | no distinct per-document quality artifact yet |
 | 8 Human-readable text | ⛔ open | canonical text only; no readable rendering |
 | 9 Layout-aware text | ⛔ open | — |
@@ -323,11 +328,11 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next levels (L6 → L7):**
+**What is missing for the next levels (L7 → L8):**
 
-1. Capture per-page OCR **confidence** from PaddleOCR and surface it in the audit/text metrics (L6).
-2. Introduce a first-class `quality_report` artifact (counts/coverage/confidence, no text) (L7).
-3. Then a deterministic **human-readable** rendering (`layout_text_result` seed) that never mutates
+1. Introduce a first-class `quality_report` artifact that combines audit routing/quality metrics
+   with OCR confidence from `text_result` (counts/coverage/confidence, no text) (L7).
+2. Then a deterministic **human-readable** rendering (`layout_text_result` seed) that never mutates
    the canonical `best_text_result` (L8).
 
 See the [current sequence](roadmap.md#current-sequence) and
