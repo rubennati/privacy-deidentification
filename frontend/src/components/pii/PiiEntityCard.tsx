@@ -11,6 +11,7 @@ import {
   type PiiFeedbackStatus,
   type PiiIssueOnly,
 } from "../../api/piiFeedback";
+import { scrollAndFlash } from "../../lib/scrollAndFlash";
 
 interface PiiEntityCardProps {
   entity: PiiEntity;
@@ -29,15 +30,7 @@ const RECOGNIZER_HELP = "Modul/Regel/Modell, das diese Entity erkannt hat.";
 
 /** Briefly scroll to and flash the highlighted span for this entity in the extracted-text view. */
 function jumpToEntity(entityId: string): void {
-  const target = document.getElementById(`pii-mark-${entityId}`);
-  if (!target) {
-    return;
-  }
-  target.scrollIntoView({ behavior: "smooth", block: "center" });
-  target.classList.remove("pii-jump-flash");
-  // Force a reflow so re-adding the class restarts the animation on repeated clicks.
-  void target.offsetWidth;
-  target.classList.add("pii-jump-flash");
+  scrollAndFlash(`pii-mark-${entityId}`);
 }
 
 /**

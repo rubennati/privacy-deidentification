@@ -11,6 +11,7 @@ import {
   type PiiReviewResult,
   type PiiReviewStatus,
 } from "../../api/piiReview";
+import { scrollAndFlash } from "../../lib/scrollAndFlash";
 
 interface PiiReviewGroupListProps {
   documentId: string;
@@ -37,15 +38,9 @@ function groupElementId(entityGroupId: string): string {
   return `pii-group-${entityGroupId}`;
 }
 
-function flashGroup(entityGroupId: string): void {
-  const target = document.getElementById(groupElementId(entityGroupId));
-  if (!target) {
-    return;
-  }
-  target.scrollIntoView({ behavior: "smooth", block: "center" });
-  target.classList.remove("pii-jump-flash");
-  void target.offsetWidth;
-  target.classList.add("pii-jump-flash");
+/** Briefly scroll to and flash the highlighted span for this occurrence in the text view. */
+function jumpToOccurrence(occurrenceId: string): void {
+  scrollAndFlash(`pii-mark-${occurrenceId}`);
 }
 
 /**
@@ -74,7 +69,7 @@ export function PiiReviewGroupList({
       return;
     }
     setExpandedGroupId(occurrence.entity_group_id);
-    flashGroup(occurrence.entity_group_id);
+    scrollAndFlash(groupElementId(occurrence.entity_group_id));
   }, [selectedOccurrenceId, review]);
 
   if (!review || review.groups.length === 0) {
@@ -193,7 +188,14 @@ export function PiiReviewGroupList({
                       className="scroll-mt-16 flex flex-wrap items-center justify-between gap-2 text-xs"
                     >
                       <span className="text-muted">
-                        Offset {occurrence.raw_start}–{occurrence.raw_end}
+                        <button
+                          type="button"
+                          onClick={() => jumpToOccurrence(occurrence.occurrence_id)}
+                          title="Im extrahierten Text zu dieser Stelle springen"
+                          className="font-medium text-accent-dark underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                        >
+                          Offset {occurrence.raw_start}–{occurrence.raw_end}
+                        </button>
                         {occurrence.decision_scope === "occurrence" ? " · individuell" : ""}
                       </span>
                       <div className="flex items-center gap-2">

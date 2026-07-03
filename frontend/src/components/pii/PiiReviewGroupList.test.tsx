@@ -139,6 +139,13 @@ describe("PiiReviewGroupList", () => {
     expect(html).toContain("Override …");
   });
 
+  it("renders each occurrence's offset as a clickable jump-to-text control", () => {
+    const html = render(baseReview());
+    expect(html).toContain('title="Im extrahierten Text zu dieser Stelle springen"');
+    // The offset text sits inside a <button>, not a plain <span>, so it is keyboard/click reachable.
+    expect(html).toMatch(/<button[^>]*>Offset 0–4<\/button>/);
+  });
+
   it("marks an occurrence-level override distinctly from the inherited group decision", () => {
     const review = baseReview();
     review.occurrences[0] = {
