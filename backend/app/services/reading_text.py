@@ -26,7 +26,32 @@ from app.schemas import LayoutBlock, TextGeometry, TextGeometryPage, TextPageRes
 from app.services.layout_text import _PdfTextState, _transform_point
 
 _SPACE_RUN_RE = re.compile(r"[ \t]+")
-_TABLE_HEADER_TOKENS = ("Pos.", "Leistung", "Menge", "Einheit", "Einzelpreis", "Gesamt")
+_TABLE_HEADER_LEADERS = ("pos", "position", "vorlage", "gewerk", "bezeichnung")
+_TABLE_HEADER_MARKERS = (
+    "pos",
+    "position",
+    "vorlage",
+    "gewerk",
+    "beschreibung",
+    "bezeichnung",
+    "leistung",
+    "menge",
+    "einheit",
+    "einzelpreis",
+    "gesamtpreis",
+    "gesamt",
+    "betrag",
+    "forderung",
+    "ergebnis",
+    "differenz",
+    "diff.",
+    "neuwert",
+    "zeitwert",
+    "abloese",
+    "ablöse",
+    "steuer",
+    "ersteller",
+)
 _PARTY_HEADING_MARKERS = (
     "AUFTRAGNEHMER",
     "AUFTRAGGEBER",
@@ -34,6 +59,8 @@ _PARTY_HEADING_MARKERS = (
     "RECHNUNGSEMPFÄNGER",
     "KUNDE",
     "LIEFERANT",
+    "RECHNUNG AN",
+    "RECHNUNGSDETAILS",
 )
 _METADATA_PREFIXES = (
     "angebot nr.",
@@ -58,17 +85,30 @@ _STANDALONE_METADATA_PREFIXES = (
 _TOTAL_PREFIXES = (
     "zwischensumme",
     "nettosumme",
+    "nettobetrag",
     "ust ",
     "mwst ",
+    "20% mwst",
+    "+ 20% mwst",
+    "gesamt",
     "gesamtbetrag",
     "gesamtsumme",
+    "bruttosumme",
+    "schadenzeitwert",
 )
 _PARAGRAPH_PREFIXES = ("zahlungsbedingungen:", "zahlbar ", "dieses angebot")
 _PAIRED_LABEL_RE = re.compile(
     r"(?=\s+(?:Datum|Bauvorhaben|Projekt|Angebot\s+Nr\.|Angebotsnummer|Rechnungsnummer)\s*:)",
     re.IGNORECASE,
 )
-_NUMERIC_ROW_RE = re.compile(r"^\d+[.)]?$|^\d+(?:[.,]\d+)?$")
+_LABEL_VALUE_RE = re.compile(r"^[^:]{1,40}:\s*\S")
+_PAGE_NUMBER_SUFFIX_RE = re.compile(
+    r"(?:^|\s+)(?:seite|page)\s*:?[ ]*\d+(?:\s*(?:von|of|/)\s*\d+)?\s*$",
+    re.IGNORECASE,
+)
+_SEPARATOR_LINE_RE = re.compile(r"^[_\-=\u2013\u2014]{8,}$")
+_INLINE_SEPARATOR_RE = re.compile(r"[_=]{8,}")
+_MARGIN_LINE_COUNT = 3
 
 
 @dataclass(frozen=True)
@@ -183,6 +223,10 @@ def build_reading_text(
             page_blocks.append(rendered)
             flags.extend(page_flags)
         used_heuristic_source = used_heuristic_source or used_heuristic
+
+    page_blocks, filtered_margins = _filter_repeated_page_margins(page_blocks)
+    flags.extend(["repeated_page_margins_filtered"] if filtered_margins else [])
+    used_heuristic_source = used_heuristic_source or filtered_margins
 
     # A document-level layout rendering is only safe to use whole when no page already contributed
     # a higher-priority geometric/block reconstruction; otherwise it would duplicate those pages.
@@ -328,6 +372,10 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
             ),
             body_end,
         )
+        metadata_index = min(
+            metadata_index,
+            _party_gap_end(ordered, party_index, metadata_index),
+        )
         left, right = _party_columns(ordered[party_index:metadata_index])
         if left and right:
             blocks.extend((left, right))
@@ -355,8 +403,11 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
     if table_index is not None:
         table_block, table_end = _render_table(ordered, table_index)
         if table_block:
-            blocks.append(["LEISTUNGEN", *table_block])
-            flags.extend(("table_row_reconstruction", "document_sections"))
+            section_heading = _table_section_heading(ordered[table_index])
+            blocks.append([*([section_heading] if section_heading else []), *table_block])
+            flags.append("table_row_reconstruction")
+            if section_heading:
+                flags.append("document_sections")
         else:
             blocks.extend(_plain_blocks(ordered[table_index : table_index + 1]))
             table_end = table_index + 1
@@ -404,6 +455,18 @@ def _party_columns(rows: Sequence[ReadingRow]) -> tuple[list[str], list[str]]:
     return left, right
 
 
+def _party_gap_end(rows: Sequence[ReadingRow], start: int, limit: int) -> int:
+    candidate_rows = rows[start:limit]
+    if len(candidate_rows) < 2:
+        return limit
+    heights = [max(0.001, row.y1 - row.y0) for row in candidate_rows]
+    gap_limit = median(heights) * 2.2
+    for index in range(start + 1, limit):
+        if rows[index].y0 - rows[index - 1].y1 > gap_limit:
+            return index
+    return limit
+
+
 def _render_metadata(rows: Sequence[ReadingRow]) -> list[list[str]]:
     lines = [part for row in rows for part in _split_paired_labels(_row_text(row))]
     if not lines:
@@ -418,32 +481,67 @@ def _render_metadata(rows: Sequence[ReadingRow]) -> list[list[str]]:
 
 
 def _is_table_header(cells: Sequence[ReadingCell]) -> bool:
-    texts = {cell.text.strip() for cell in cells}
-    return sum(token in texts for token in _TABLE_HEADER_TOKENS) >= 4
+    if len(cells) < 3:
+        return False
+    texts = [_normalized_header_text(cell.text) for cell in cells]
+    if not texts[0].startswith(_TABLE_HEADER_LEADERS):
+        return False
+    marker_count = sum(any(marker in text for marker in _TABLE_HEADER_MARKERS) for text in texts)
+    return marker_count >= min(3, len(texts))
+
+
+def _normalized_header_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.casefold().strip().rstrip(":"))
+
+
+def _table_section_heading(header: ReadingRow) -> str | None:
+    first = _normalized_header_text(header.cells[0].text)
+    return "LEISTUNGEN" if first.startswith("pos") and len(header.cells) >= 5 else None
 
 
 def _render_table(rows: Sequence[ReadingRow], start: int) -> tuple[list[str], int]:
     header = rows[start]
-    if len(header.cells) < 4:
+    if len(header.cells) < 3:
         return [], start
     column_x = [cell.x0 for cell in header.cells]
-    rendered = [_align_table_row(header, column_x)]
+    aligned_rows = [_align_table_cells(header, column_x)]
     end = start + 1
     while end < len(rows):
-        first_text = rows[end].cells[0].text.strip() if rows[end].cells else ""
-        if not _NUMERIC_ROW_RE.fullmatch(first_text):
-            break
-        rendered.append(_align_table_row(rows[end], column_x))
-        end += 1
-    return rendered, end
+        aligned, occupied = _align_table_cells_with_occupied(rows[end], column_x)
+        if len(occupied) >= min(3, len(column_x)):
+            aligned_rows.append(aligned)
+            end += 1
+            continue
+        if aligned_rows and len(rows[end].cells) == 1 and len(occupied) == 1:
+            continuation_column = next(iter(occupied))
+            if continuation_column > 0:
+                continuation = aligned[continuation_column]
+                aligned_rows[-1][continuation_column] = (
+                    f"{aligned_rows[-1][continuation_column]} {continuation}".strip()
+                )
+                end += 1
+                continue
+        break
+    return [" | ".join(cells) for cells in aligned_rows], end
 
 
-def _align_table_row(row: ReadingRow, column_x: Sequence[float]) -> str:
+def _align_table_cells(row: ReadingRow, column_x: Sequence[float]) -> list[str]:
+    cells, _ = _align_table_cells_with_occupied(row, column_x)
+    return cells
+
+
+def _align_table_cells_with_occupied(
+    row: ReadingRow, column_x: Sequence[float]
+) -> tuple[list[str], set[int]]:
+    if len(row.cells) == len(column_x):
+        return [fragment.text for fragment in row.cells], set(range(len(column_x)))
     cells = [""] * len(column_x)
+    occupied: set[int] = set()
     for fragment in row.cells:
         nearest = min(range(len(column_x)), key=lambda index: abs(column_x[index] - fragment.x0))
         cells[nearest] = f"{cells[nearest]} {fragment.text}".strip()
-    return " | ".join(cells)
+        occupied.add(nearest)
+    return cells, occupied
 
 
 def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
@@ -481,7 +579,9 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
 
 def _starts_new_post_block(line: str) -> bool:
     folded = line.casefold()
-    return folded.startswith(("sachbearbeiter:", "ansprechpartner:", *_TOTAL_PREFIXES))
+    return bool(_LABEL_VALUE_RE.match(line)) or folded.startswith(
+        ("sachbearbeiter:", "ansprechpartner:", *_TOTAL_PREFIXES)
+    )
 
 
 def _row_has_prefix(row: ReadingRow, prefixes: Sequence[str]) -> bool:
@@ -519,6 +619,97 @@ def _render_fallback_text(text: str) -> str:
     if current:
         blocks.append(current)
     return _join_blocks(blocks)
+
+
+def _filter_repeated_page_margins(page_blocks: Sequence[str]) -> tuple[list[str], bool]:
+    if len(page_blocks) <= 1:
+        return list(page_blocks), False
+    cleaned_pages, cleaned_changed = _clean_page_blocks(page_blocks)
+    occurrences = _margin_occurrences(cleaned_pages)
+    removals = _repeated_margin_removals(occurrences)
+    filtered_pages = [
+        "\n".join(
+            line
+            for line_index, line in enumerate(lines)
+            if (page_index, line_index) not in removals
+        ).strip()
+        for page_index, lines in enumerate(cleaned_pages)
+    ]
+    return [page for page in filtered_pages if page], cleaned_changed or bool(removals)
+
+
+def _clean_page_blocks(page_blocks: Sequence[str]) -> tuple[list[list[str]], bool]:
+    cleaned_pages: list[list[str]] = []
+    changed = False
+    for block in page_blocks:
+        cleaned_lines: list[str] = []
+        for line in block.splitlines():
+            if not line.strip():
+                cleaned_lines.append("")
+                continue
+            cleaned = _clean_page_margin_line(line)
+            if cleaned != line:
+                changed = True
+            if cleaned is not None:
+                cleaned_lines.append(cleaned)
+        cleaned_pages.append(cleaned_lines)
+    return cleaned_pages, changed
+
+
+def _margin_occurrences(
+    cleaned_pages: Sequence[Sequence[str]],
+) -> dict[str, list[tuple[int, int, Literal["top", "bottom"]]]]:
+    occurrences: dict[str, list[tuple[int, int, Literal["top", "bottom"]]]] = {}
+    for page_index, lines in enumerate(cleaned_pages):
+        content_indices = [index for index, line in enumerate(lines) if line]
+        top_indices = set(content_indices[:_MARGIN_LINE_COUNT])
+        bottom_indices = set(content_indices[-_MARGIN_LINE_COUNT:])
+        for line_index in top_indices | bottom_indices:
+            key = _normalize_line(lines[line_index]).casefold()
+            if not key:
+                continue
+            if line_index in top_indices and line_index in bottom_indices:
+                position: Literal["top", "bottom"] = (
+                    "top" if line_index < len(lines) / 2 else "bottom"
+                )
+            else:
+                position = "top" if line_index in top_indices else "bottom"
+            occurrences.setdefault(key, []).append((page_index, line_index, position))
+    return occurrences
+
+
+def _repeated_margin_removals(
+    occurrences: dict[str, list[tuple[int, int, Literal["top", "bottom"]]]],
+) -> set[tuple[int, int]]:
+    removals: set[tuple[int, int]] = set()
+    for repeated in occurrences.values():
+        page_indices = {page_index for page_index, _, _ in repeated}
+        if len(page_indices) < 2:
+            continue
+        positions = {position for _, _, position in repeated}
+        preferred_page = max(page_indices) if positions == {"bottom"} else min(page_indices)
+        kept = False
+        for page_index, line_index, _ in repeated:
+            occurrence = (page_index, line_index)
+            if page_index == preferred_page and not kept:
+                kept = True
+                continue
+            removals.add(occurrence)
+    return removals
+
+
+def _clean_page_margin_line(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or _SEPARATOR_LINE_RE.fullmatch(stripped):
+        return None
+    stripped = _normalize_line(_INLINE_SEPARATOR_RE.sub(" ", stripped))
+    if not stripped:
+        return None
+    match = _PAGE_NUMBER_SUFFIX_RE.search(stripped)
+    if match is None:
+        return stripped
+    prefix = stripped[: match.start()].rstrip(" |,;-")
+    return prefix if len(prefix) > 40 else None
 
 
 def _split_paired_labels(line: str) -> list[str]:

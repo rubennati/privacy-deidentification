@@ -156,6 +156,14 @@ spans, benchmark loaders ignore the payload, and placeholder generation, pseudon
 redaction, export, word-level/pixel-perfect geometry, and `text_lineage_map` remain open. The next
 three steps are PII L11, PII L12, then the Review L8 artifact foundation.
 
+**Latest reading-text regression checkpoint:** OCR/Text remains at L11. Canonical reading-text
+heuristics now recognize conservative 3+ column tables, keep multiline descriptions with their
+rows, preserve ordinal right-aligned values, separate bounded invoice party/detail columns, and
+filter repeated page-margin/page-number rules. Synthetic positive and must-not-trigger regressions
+cover flat facts, offer metadata, party columns, tables/totals, paragraph boundaries, and repeated
+margins. Raw text, PII input, routing, dependencies, artifact versions, and the next engine cadence
+are unchanged.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
