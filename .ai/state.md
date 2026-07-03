@@ -3,8 +3,9 @@
 > If this file conflicts with the current branch or commits, trust git.
 
 - Current phase: **OCR structured-content foundation / PII grouping**.
-- Current objective: complete OCR/Text L11 table/form reconstruction while preserving canonical
-  text and the canonical-only PII boundary; PII L11 grouping remains the next planned engine step.
+- Current objective: complete OCR/Text L11 table/form reconstruction while preserving the completed
+  L10.5 canonical-reading foundation and the raw-text-only PII boundary; PII L11 entity grouping
+  remains the next planned engine step.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -26,21 +27,21 @@
 
 ## Engine maturity snapshot (0–19)
 
-- **OCR/Text: L11 done.** Each successful PDF/image/DOCX OCR/Text run now stores three additive,
-  non-canonical text views beside the immutable canonical text: `readable_text` (L8),
-  `layout_text_result` (L9 slice), and `pii_input_text` (internal L9 slice). The existing
+- **OCR/Text: L11 done (built on the required L10.5 step).** Each successful PDF/image/DOCX OCR/Text
+  run now stores additive views beside immutable technical raw `text_result.text`: canonical
+  `reading_text` (L10.5), `readable_text` (L8), `layout_text_result` (L9 slice), and
+  `pii_input_text` (internal L9 slice). The existing
   metrics-only `quality_report` continues to carry source mix, audit-quality counts, confidence,
   coverage, and exact original/audit/text lineage. Reruns preserve old artifacts; the benchmark
-  prefers a lineage-matching report and falls back for legacy data. Canonical text, routing, and
-  active PII input remain unchanged. OCR L9/L10 additionally deliver:
+  prefers a lineage-matching report and falls back for legacy data. Technical raw text, routing, and
+  active PII input remain unchanged. OCR L9/L10/L10.5 additionally deliver:
   - `readable_text` — optional field on `text_result`; deterministic human-readable normalization
     (line-ending cleanup, conservative paragraph joining, simple de-hyphenation, visible page
     boundaries between canonical pages) for any non-empty canonical text. Display-only; no offset
     or lineage claims; PII still ignores it.
   - `layout_text_result` — optional field on `text_result`; pypdf layout mode, PDF text-layer pages;
     OCR/DOCX/image → `null`. Display-only; the Review UI can optionally show it as unhighlighted
-    plain text, with canonical text remaining the default and the only highlighted/offset-bearing
-    view.
+    plain text, with technical raw text remaining the only highlighted/offset-bearing view.
   - `pii_input_text` — a second optional field on `text_result`; internal/experimental semantic
     reading-order text (left/right block grouping, row-wise table reconstruction) for PDF
     text-layer pages, built from pypdf text-position data. **Not** the active PII input; no UI.
@@ -59,6 +60,12 @@
     traceability for review/debug, and a foundation for future placeholder mapping toward AI-ready
     pseudonymized document generation — it does **not** perform pseudonymization, placeholder
     mapping, document export, or pixel-perfect visual redaction, and is **not** the PII input.
+  - `reading_text` (L10.5) — optional versioned canonical reading text with explicit
+    `heuristic`/`fallback` status and non-sensitive strategy flags. It prefers transient/L10
+    geometry, then L9 blocks, layout text, and safe raw order; simple party columns, offer metadata,
+    line-item rows, totals, and split prose render deterministically. User View defaults to
+    **Kanonischer Lesetext**; Dev View exposes it beside **Technischer Rohtext** and **Layout-Text**.
+    Technical raw/page text and counts remain byte-stable, and PII still uses raw text only.
   - `structured_content` (L11) — optional versioned per-page tables/cells, label/value fields, and
     heading-bound sections. Table cells and field values reference canonical/page spans rather than
     duplicating raw content; short labels/headings, source, confidence, flags, and optional L10 line
@@ -106,39 +113,48 @@ See [`docs/engine/`](../docs/engine/README.md),
 The binding OCR/PII sequence, cadence, and next-12-PR list live in
 [`docs/engine/ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md)
 ([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after OCR L11:
-PII/Sensitive-Data L11 entity grouping**, now that structured content builds on L10 span geometry,
-L9 layout-aware blocks, readable text (L8), confidence capture (L6), and `quality_report` (L7).
+PII/Sensitive-Data L11 entity grouping**, now that structured content builds on the L10.5
+canonical-reading/raw-text contract, L10 span geometry, L9 layout-aware blocks, readable text (L8),
+confidence capture (L6), and `quality_report` (L7).
 
 The OCR L8/L9 text-layer work is contract-first: the output model and invariants are fixed in
-[`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Four layers
-— canonical `best_text_result` (source of truth, offset-stable), an internal detection-optimised
-`pii_input_text`, `readable_text`, and `layout_text_result` — tied by a `text_lineage_map`.
+[`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Technical raw
+`text_result.text` remains the offset authority and active PII input; canonical `reading_text` is
+the product-facing main view beside internal `pii_input_text`, legacy `readable_text`, and
+`layout_text_result`, all to be tied by a future `text_lineage_map`.
 `readable_text`, `layout_text_result`, `pii_input_text`, `layout_blocks`, `text_geometry`, and
 `structured_content` are delivered additively (see above); `text_lineage_map` remains open. There
-must be **no two unconnected
-source-of-truth texts**: canonical remains the only source of truth, current blocks carry extraction
-source labels only, and the future map must connect every view back to canonical/source before any
+must be **no two unconnected source-of-truth texts**: reading text is a derived view, current
+blocks carry extraction source labels only, and the future map must connect every view back to raw
+offsets/source before any
 detection-input switch. `pii_input_text` may become the
 **active PII detection input** only with a tested `text_lineage_map` (the separation gate) — PII
-runs exclusively on canonical text today, regardless of `pii_input_text`'s v1 content. The readable/
+runs exclusively on technical raw text today, regardless of other views. The reading/readable/
 layout/PII-input layers are additive and never a standalone PII input.
 
-The checkpoint leaves OCR/Text at L11, PII L10 partial, and Redaction L0; after reconfirming the
-next-three cadence, the plan is:
+The checkpoint leaves OCR/Text at L11 (built on the L10.5 prerequisite), PII L10 partial, and
+Redaction L0; after reconfirming the next-three cadence, the plan is:
 
 1. Interleave PII **L11 — entity grouping + occurrences** without changing detection.
 2. Advance PII **L12 — overlap resolution** once grouping is in place.
 3. Add the immutable, lineage-bound **Review L8 `review_result`** foundation before binding review
    decisions; keep `pii_result` immutable.
 
-**Latest checkpoint (OCR L11):** OCR/Text advanced from L10 to L11 with additive, optional
+**Previous checkpoint (OCR L10.5 intermediate):** OCR/Text retained formal L10 maturity and completed
+the canonical-reading-text/raw-text prerequisite before L11. Versioned `reading_text` is additive
+and deterministic, while `text_result.text` remains technical raw and the active PII input. The
+reading layer introduced no routing, raw/page-text, active-PII-input, dependency, quality-report, or
+benchmark-privacy drift, and legacy artifacts stayed valid. Line geometry stopped at the L10
+source-anchoring/traceability boundary.
+
+**Latest checkpoint (OCR L11):** OCR/Text advanced from L10.5 to L11 with additive, optional
 span-backed tables, fields, and sections. OCR remains sufficiently ahead of PII/Redaction; no
 benchmark or feedback signal changes the priority. The PR introduces no dependency, engine setting,
-routing, canonical/page-text, active-PII-input, `quality_report`, or benchmark-report drift; schema
-change is versioned and legacy compatible. Structured values/table contents remain canonical spans,
-benchmark loaders ignore the payload, and placeholder generation, pseudonymization, redaction,
-export, word-level/redaction-ready geometry, and `text_lineage_map` remain open. The next three steps
-are PII L11, PII L12, then the Review L8 artifact foundation.
+routing, raw/page-text, active-PII-input, `quality_report`, or benchmark-report drift; schema
+change is versioned and legacy compatible. Structured values/table contents remain canonical/raw
+spans, benchmark loaders ignore the payload, and placeholder generation, pseudonymization,
+redaction, export, word-level/pixel-perfect geometry, and `text_lineage_map` remain open. The next
+three steps are PII L11, PII L12, then the Review L8 artifact foundation.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

@@ -1,7 +1,7 @@
 """Deterministic OCR L8 readable-text normalization.
 
-Produces an additive human-readable rendering from the canonical OCR/Text output without changing
-the canonical text or claiming any offset/lineage mapping. The algorithm is intentionally small and
+Produces an additive human-readable rendering from the legacy technical raw OCR/Text output without
+changing raw text or claiming any offset/lineage mapping. The algorithm is intentionally small and
 conservative: line ending normalization, whitespace cleanup, paragraph joining, simple
 line-break hyphen repair, and optional visible page boundaries between canonical pages.
 """
@@ -20,7 +20,7 @@ _READABLE_PAGE_MARKER = "----- page {page_number} -----"
 def build_readable_text(text: str, pages: Sequence[str] | None = None) -> str | None:
     """Return a readable normalization, or ``None`` when no useful text exists.
 
-    ``text`` is the canonical document text and remains unchanged elsewhere. When ``pages`` are
+    ``text`` is the technical raw document text and remains unchanged elsewhere. When ``pages`` are
     available, each page is normalized independently and later pages receive a visible separator so
     human readers do not lose the original page transitions.
     """

@@ -52,7 +52,7 @@ central engine should do on a **0–19 maturity scale**, the artifacts and metri
 settings, the tool strategy, the target architecture (including the database and optional-local-AI
 questions), and the roadmap. See [ADR-0011](docs/adr/0011-engine-capability-model.md) and
 [ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md). Current standing (summary): OCR/Text
-**L5**, PII **L9** (L10 dev-only feedback capture partial), Review **L2** (dev-only through L5),
+**L10 plus the required L10.5 canonical-reading-text step**, PII **L9** (L10 dev-only feedback capture partial), Review **L2** (dev-only through L5),
 Benchmark **L8**, Redaction **L0**.
 
 ## Architecture
@@ -411,6 +411,11 @@ and PII are started explicitly and never trigger the next station automatically.
 artifact lineage visible, marks stale downstream results, and only overlays PII whose input text
 artifact matches the displayed text. PII highlighting uses Unicode codepoint offsets and renders
 plain React text nodes—no HTML injection or source-text logging.
+
+The default User View shows **Kanonischer Lesetext** when a new OCR/Text artifact provides it.
+Dev View keeps separate **Technischer Rohtext**, **Kanonischer Lesetext**, and **Layout-Text** modes.
+Current PII detection and highlights still use the byte-stable technical raw text; reading text is a
+future input candidate only after a tested lineage map exists.
 
 With `ENABLE_DEV_ENGINE_SETTINGS=true`, the detail page also exposes one-run PII profile selection
 and per-entity feedback. Feedback is restored from the local side-channel described above; it does

@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L11** | L10 geometry plus additive span-backed `structured_content` tables, fields, and sections | PII L11 grouping, then PII L12 overlap resolution |
+| OCR / Text | **L11 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L11 grouping, then PII L12 overlap resolution |
 | PII / Sensitive-Data | **L9; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture | L11 entity grouping, then L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only** | read-only review and lineage-safe highlights; gated review aids, run settings, and per-entity feedback capture | L6 grouped occurrences; L8 `review_result` later |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -17,14 +17,16 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L11: upload, canonical text extraction, lineage, OCR runtime, quality routing/fallback,
-  additive OCR confidence, an immutable metrics-only `quality_report` for every successful run,
-  additive readable/layout views plus deterministic typed layout blocks for PDF and OCR content, and
-  additive `text_geometry` line boxes mapping canonical spans to page-local geometry (source
-  anchoring and traceability for review/debug, and a foundation for future placeholder mapping
-  toward AI-ready pseudonymized document generation — it does not perform pseudonymization,
-  placeholder mapping, document export, or pixel-perfect visual redaction), plus conservative
-  span-backed tables, label/value fields, and sections in optional `structured_content`.
+- OCR L0–L11 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
+  runtime, quality routing/fallback, additive OCR confidence, an immutable metrics-only
+  `quality_report` for every successful run, additive readable/layout views plus deterministic typed
+  layout blocks for PDF and OCR content, and additive `text_geometry` line boxes mapping raw offset
+  spans to page-local geometry (source anchoring and traceability for review/debug, and a foundation
+  for future placeholder mapping toward AI-ready pseudonymized document generation — it does not
+  perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
+  redaction), plus canonical `reading_text` as the deterministic block-aware main document view and
+  conservative span-backed tables, label/value fields, and sections in optional
+  `structured_content`. PII still uses raw text.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -115,6 +117,17 @@ raw text. This provides line-level source anchoring and traceability for review/
 foundation for future placeholder mapping toward AI-ready pseudonymized document generation — it does
 not perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
 redaction. Word-level/redaction-ready geometry remains open at later levels.
+
+### OCR L10.5 — canonical reading text / raw-text contract — delivered prerequisite
+
+New text artifacts retain `text_result.text`, `text_char_count`, and `pages[].text` unchanged as
+technical raw extraction and the current PII offset coordinate system. Optional versioned
+`reading_text` is the product-facing canonical reading text. Its deterministic builder prefers
+position/geometry, then layout blocks, layout text, and raw-order fallback; it groups simple party
+columns, offer metadata, line-item rows, totals, and conservatively split prose. Status and flags
+make heuristic/fallback output explicit without copying text into metrics. User View defaults to
+reading text; Dev View can inspect reading, raw, and layout separately. No PII switch, lineage map,
+structured-content JSON, placeholder mapping, pseudonymization, redaction, or export is included.
 
 ### OCR L11 — table/form reconstruction — delivered
 

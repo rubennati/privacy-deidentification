@@ -189,6 +189,10 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
                 "source": "paddleocr",
                 "text": "raw recognized value",
                 "readable_text": "raw recognized value",
+                "reading_text_version": "1",
+                "reading_text": "private canonical reading value max@example.at",
+                "reading_text_status": "heuristic",
+                "reading_text_flags": ["geometry_ordering"],
                 "layout_text_result": "raw recognized value in layout",
                 "layout_blocks_version": "1",
                 "layout_blocks": [
@@ -279,6 +283,8 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
     assert "text" not in page.__dataclass_fields__
     assert "text" not in OcrLineConfidenceSummary.__dataclass_fields__
     assert "readable_text" not in corpus[0].text.__dataclass_fields__
+    assert "reading_text" not in corpus[0].text.__dataclass_fields__
+    assert "reading_text_flags" not in corpus[0].text.__dataclass_fields__
     assert "layout_text_result" not in corpus[0].text.__dataclass_fields__
     assert "layout_blocks" not in corpus[0].text.__dataclass_fields__
     assert "structured_content" not in corpus[0].text.__dataclass_fields__
@@ -287,7 +293,14 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
     assert quality_report.input_text_artifact_id == "t1"
     assert quality_report.ocr_page_confidence_mean == 0.85
     assert quality_report.final_word_count == 3
-    forbidden_fields = {"text", "readable_text", "page_text", "ocr_text", "entity_text"}
+    forbidden_fields = {
+        "text",
+        "readable_text",
+        "reading_text",
+        "page_text",
+        "ocr_text",
+        "entity_text",
+    }
     assert forbidden_fields.isdisjoint(QualityReportSummary.__dataclass_fields__)
 
 

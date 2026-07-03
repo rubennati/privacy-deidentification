@@ -45,6 +45,11 @@ from app.services.pdf_renderer import PdfRenderer
 from app.services.pii_input_text import build_page_pii_input_text
 from app.services.quality_report_service import build_quality_report
 from app.services.readable_text import build_readable_text
+from app.services.reading_text import (
+    ReadingRow,
+    build_reading_text,
+    collect_pdf_reading_rows,
+)
 from app.services.structured_content import build_structured_content
 from app.services.text_geometry import (
     build_ocr_page_geometry,
@@ -165,6 +170,9 @@ def _extract_pdf(
     # Per-page L10 span geometry (line boxes mapped to canonical/page offsets). Pages without usable
     # geometry are skipped here; the assembled geometry reflects that as partial coverage.
     geometry_pages: list[TextGeometryPage] = []
+    # Transient fine-grained PDF rows for the L10.5 reading-text builder. They are derived from the
+    # same pypdf position callbacks as L10 geometry but are never persisted as word/cell geometry.
+    reading_rows: list[ReadingRow] = []
     # Running start offset of the current page's text inside the canonical ``text`` (pages are
     # joined with the two-character "\n\n" separator), so each page's geometry can map page-local
     # offsets back to canonical offsets without regenerating any text.
@@ -203,7 +211,7 @@ def _extract_pdf(
                     ocr_result, page_number, text, canonical_base
                 )
             else:
-                # Canonical text is the unchanged default extraction — the offset-stable PII input.
+                # Technical raw text is the unchanged extraction — the offset-stable PII input.
                 text = page.extract_text() or ""
                 source = "pdf_text_layer"
                 # Additive layout rendering via pypdf's layout mode (no new dependency). It never
@@ -221,6 +229,7 @@ def _extract_pdf(
                 page_geometry = build_pdf_page_geometry(
                     page, page_number, text, canonical_base
                 )
+                reading_rows.extend(collect_pdf_reading_rows(page, page_number))
                 ocr_result = None
             pages.append(
                 TextPageResult(
@@ -282,6 +291,7 @@ def _extract_pdf(
         layout_blocks=layout_blocks,
         text_geometry=text_geometry,
         structured_content=structured_content,
+        reading_rows=reading_rows,
     )
 
 
@@ -446,8 +456,17 @@ def _text_content(
     layout_blocks: list[LayoutBlock] | None = None,
     text_geometry: TextGeometry | None = None,
     structured_content: StructuredContent | None = None,
+    reading_rows: list[ReadingRow] | None = None,
 ) -> TextContent:
     blocks = layout_blocks or []
+    reading = build_reading_text(
+        text,
+        pages,
+        text_geometry,
+        blocks,
+        layout_text_result,
+        positioned_rows=reading_rows or [],
+    )
     return TextContent(
         document_id=document_id,
         input_artifact_id=original.id,
@@ -459,6 +478,10 @@ def _text_content(
         tool_versions=tool_versions,
         flags=flags,
         readable_text=readable_text,
+        reading_text_version="1" if reading is not None else None,
+        reading_text=reading.text if reading is not None else None,
+        reading_text_status=reading.status if reading is not None else None,
+        reading_text_flags=list(reading.flags) if reading is not None else [],
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
         layout_blocks_version="1" if blocks else None,

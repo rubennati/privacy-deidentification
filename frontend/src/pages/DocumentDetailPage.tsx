@@ -62,7 +62,7 @@ export default function DocumentDetailPage() {
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
-  const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("canonical");
+  const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
   const [analysisStep, setAnalysisStep] = useState<AnalysisStep>("idle");
   const [analysisError, setAnalysisError] = useState<UiError | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("user");
@@ -90,7 +90,7 @@ export default function DocumentDetailPage() {
       };
     }
     setSelectedPiiProfile("");
-    setReviewTextMode("canonical");
+    setReviewTextMode("reading");
     setAnalysisStep("idle");
     setAnalysisError(null);
 
@@ -240,7 +240,7 @@ export default function DocumentDetailPage() {
         onAudit: setAudit,
         onText: (result) => {
           setText(result);
-          setReviewTextMode("canonical");
+          setReviewTextMode("reading");
         },
         onPii: setPii,
       });
@@ -257,7 +257,15 @@ export default function DocumentDetailPage() {
           <Link to="/documents" className="text-sm font-medium text-accent-dark hover:underline">
             ← Zurück zu Dokumenten
           </Link>
-          {devGateEnabled && <ViewModeToggle mode={viewMode} onChange={setViewMode} />}
+          {devGateEnabled && (
+            <ViewModeToggle
+              mode={viewMode}
+              onChange={(mode) => {
+                setViewMode(mode);
+                if (mode === "user") setReviewTextMode("reading");
+              }}
+            />
+          )}
         </div>
 
         <section className="mt-5 rounded-2xl border border-card-border bg-card p-6 shadow-[0_2px_12px_rgba(31,79,67,0.05)]">
@@ -314,7 +322,7 @@ export default function DocumentDetailPage() {
             onAction={() =>
               void execute("ocr", () => runOcr(documentId), (result) => {
                 setText(result);
-                setReviewTextMode("canonical");
+                setReviewTextMode("reading");
               })
             }
           >
@@ -391,11 +399,13 @@ export default function DocumentDetailPage() {
             >
               <div>
                 <ReviewTextViewer
-                  canonicalText={text.content.text}
+                  rawText={text.content.text}
+                  readingText={text.content.reading_text}
                   layoutText={text.content.layout_text_result}
                   entities={currentPiiEntities}
                   mode={reviewTextMode}
                   onModeChange={setReviewTextMode}
+                  devMode={isDevView}
                   showEntityMeta={isDevView}
                 />
                 {isDevView && !pii && (
@@ -451,7 +461,7 @@ function TextSummary({ artifact }: { artifact: TextArtifact }) {
   return (
     <dl className="space-y-1">
       <SummaryRow label="Quelle" value={artifact.content.source} />
-      <SummaryRow label="Zeichen" value={String(artifact.content.text_char_count)} />
+      <SummaryRow label="Rohtext-Zeichen" value={String(artifact.content.text_char_count)} />
       <SummaryRow label="Seiten" value={String(artifact.content.pages.length)} />
     </dl>
   );

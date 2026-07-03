@@ -40,3 +40,6 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   the core engines; OCR/Text stays 2–3 levels ahead of PII/Redaction; a checkpoint loop re-validates
   the plan after each engine PR. Operative sequence in
   [`ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md).
+- [ADR-0019](../docs/adr/0019-canonical-reading-text-and-technical-raw-contract.md) — Preserve
+  `text_result.text` as technical raw/PII offset text and add versioned canonical `reading_text` as
+  the product-facing main document view; any future PII switch remains lineage-gated.
