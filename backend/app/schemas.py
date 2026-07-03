@@ -874,6 +874,7 @@ class PiiEntity(BaseModel):
     reading_start_offset: int | None = Field(default=None, ge=0)
     reading_end_offset: int | None = Field(default=None, ge=1)
     projection_status: Literal["exact", "partial", "unmapped"] | None = None
+    projection_method: Literal["offset_map", "text_match"] | None = None
 
     @model_validator(mode="after")
     def _validate_offsets(self) -> PiiEntity:
@@ -906,6 +907,8 @@ class PiiEntity(BaseModel):
             or self.reading_end_offset <= self.reading_start_offset
         ):
             raise ValueError("exact reading projection offsets must be non-empty and ordered")
+        if self.projection_status != "exact" and self.projection_method is not None:
+            raise ValueError("only exact reading projections may identify a projection method")
         return self
 
 

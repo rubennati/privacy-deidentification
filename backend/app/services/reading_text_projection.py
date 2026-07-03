@@ -11,6 +11,29 @@ from app.schemas import PiiEntity, ReadingTextMapSegment, TextPageResult
 
 _TOKEN_RE = re.compile(r"\S+")
 _SYNTHETIC_HEADINGS = frozenset({"ANGEBOT", "LEISTUNGEN", "SUMMEN"})
+_PHONE_FORMAT_RE = re.compile(r"^[+\d\s()./\-]+$")
+_FORMAT_SEPARATOR_RE = r"[\s./:\-]*"
+_ID_ENTITY_TYPES = frozenset(
+    {
+        "IBAN_CODE",
+        "CREDIT_CARD",
+        "UID_AT",
+        "FN_AT",
+        "SVNR_AT",
+        "TAX_ID_AT",
+        "ID_CARD_NUMBER",
+        "LICENSE_PLATE_AT",
+        "POLICY_NUMBER",
+        "CLAIM_NUMBER",
+        "CONTRACT_NUMBER",
+        "OFFER_NUMBER",
+        "INVOICE_NUMBER",
+        "CUSTOMER_NUMBER",
+        "TRANSACTION_ID",
+        "CASE_NUMBER",
+        "USER_ID",
+    }
+)
 
 
 def build_reading_text_map(
@@ -98,10 +121,20 @@ def _reading_token_spans(text: str) -> dict[str, list[tuple[int, int]]]:
 
 
 def project_pii_entities_to_reading_text(
-    entities: Sequence[PiiEntity], segments: Sequence[ReadingTextMapSegment]
+    entities: Sequence[PiiEntity],
+    segments: Sequence[ReadingTextMapSegment],
+    *,
+    reading_text: str | None = None,
 ) -> list[PiiEntity]:
     """Return copies with safe reading offsets; raw offsets and text remain untouched."""
-    return [_project_entity(entity, segments) for entity in entities]
+    projected: list[PiiEntity] = []
+    for entity in entities:
+        map_projection = _project_entity(entity, segments)
+        if map_projection.projection_status == "unmapped" and reading_text:
+            projected.append(_project_entity_by_unique_text_match(entity, reading_text))
+        else:
+            projected.append(map_projection)
+    return projected
 
 
 def _project_entity(entity: PiiEntity, segments: Sequence[ReadingTextMapSegment]) -> PiiEntity:
@@ -141,8 +174,65 @@ def _project_entity(entity: PiiEntity, segments: Sequence[ReadingTextMapSegment]
             "reading_start_offset": start,
             "reading_end_offset": end,
             "projection_status": "exact",
+            "projection_method": "offset_map",
         }
     )
+
+
+def _project_entity_by_unique_text_match(entity: PiiEntity, reading_text: str) -> PiiEntity:
+    pattern = _fallback_pattern(entity)
+    if pattern is None:
+        return entity.model_copy(update={"projection_status": "unmapped"})
+    matches = list(pattern.finditer(reading_text))
+    if len(matches) != 1:
+        return entity.model_copy(update={"projection_status": "unmapped"})
+    match = matches[0]
+    return entity.model_copy(
+        update={
+            "reading_start_offset": match.start(),
+            "reading_end_offset": match.end(),
+            "projection_status": "exact",
+            "projection_method": "text_match",
+        }
+    )
+
+
+def _fallback_pattern(entity: PiiEntity) -> re.Pattern[str] | None:
+    if entity.entity_type == "PHONE_NUMBER":
+        return _phone_pattern(entity.text)
+    if entity.entity_type in _ID_ENTITY_TYPES:
+        return _identifier_pattern(entity.text)
+    return _whitespace_or_exact_pattern(entity.text)
+
+
+def _phone_pattern(value: str) -> re.Pattern[str] | None:
+    if not _PHONE_FORMAT_RE.fullmatch(value):
+        return None
+    normalized = "".join(
+        character for character in value if character == "+" or character.isdigit()
+    )
+    if len([character for character in normalized if character.isdigit()]) < 7:
+        return None
+    body = _FORMAT_SEPARATOR_RE.join(re.escape(character) for character in normalized)
+    return re.compile(rf"(?<!\d){body}(?!\d)")
+
+
+def _identifier_pattern(value: str) -> re.Pattern[str] | None:
+    normalized = "".join(character for character in value if character.isalnum())
+    if len(normalized) < 5 or not any(character.isdigit() for character in normalized):
+        return None
+    body = _FORMAT_SEPARATOR_RE.join(re.escape(character) for character in normalized)
+    return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
+
+
+def _whitespace_or_exact_pattern(value: str) -> re.Pattern[str] | None:
+    chunks = value.split()
+    if not chunks:
+        return None
+    body = r"\s+".join(re.escape(chunk) for chunk in chunks)
+    prefix = r"(?<!\w)" if chunks[0][0].isalnum() else ""
+    suffix = r"(?!\w)" if chunks[-1][-1].isalnum() else ""
+    return re.compile(f"{prefix}{body}{suffix}")
 
 
 def _map_boundary(offset: int, segment: ReadingTextMapSegment, *, end: bool) -> int | None:

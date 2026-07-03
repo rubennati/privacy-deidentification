@@ -229,6 +229,8 @@ Canonical Reading Text. Detection still runs exclusively on `text_result.text`; 
 ambiguous, and legacy cases stay raw-only. This does not complete the full `text_lineage_map`, does
 not advance PII L11 grouping, and does not change the next-three sequence: PII L11 grouping, PII
 L12 overlap resolution, then Review L8.
+Coverage hardening adds a unique in-memory value-match fallback for otherwise-unmapped entities;
+it does not re-run detection on reading text and persists only offsets plus a method enum.
 
 ## References
 

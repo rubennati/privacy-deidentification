@@ -206,6 +206,7 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
         "reading_start_offset": None,
         "reading_end_offset": None,
         "projection_status": "unmapped",
+        "projection_method": None,
     }
     assert pii_fake.calls == ["Max Mustermann"]
     artifact_path = document_data_dir / document_id / "artifacts" / f"{artifact['id']}.json"
@@ -257,6 +258,35 @@ def test_post_projects_pii_into_reading_text_without_changing_detection_input(
     assert (entity["start_offset"], entity["end_offset"], entity["text"]) == (0, 14, raw)
     assert (entity["reading_start_offset"], entity["reading_end_offset"]) == (0, 14)
     assert entity["projection_status"] == "exact"
+    assert entity["projection_method"] == "offset_map"
+
+
+def test_post_uses_unique_text_match_fallback_without_changing_detection_input(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    raw = "Telefon +43 (1) 234-5678"
+    value = "+43 (1) 234-5678"
+    _save_text(
+        settings,
+        document_id,
+        raw,
+        reading_text="Telefon: +43 1 234 5678",
+    )
+    pii_fake.results[raw] = [
+        _entity("PHONE_NUMBER", raw.index(value), raw.index(value) + len(value), 0.86)
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    entity = response.json()["content"]["entities"][0]
+    assert pii_fake.calls == [raw]
+    assert entity["text"] == value
+    assert entity["start_offset"] == raw.index(value)
+    assert entity["projection_status"] == "exact"
+    assert entity["projection_method"] == "text_match"
 
 
 def test_pdf_pages_have_local_and_global_offsets(

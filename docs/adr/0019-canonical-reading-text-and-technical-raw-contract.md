@@ -22,7 +22,9 @@ OCR L11 structured content must not be built before the plain-text layers have e
    line-item rows, totals, and split prose, but must not invent or change values.
 4. User View defaults to reading text when available. Dev View retains reading, raw, and layout
    modes. An optional offset-only `reading_text_map` may safely project existing raw PII findings
-   into reading mode; ambiguous, partial, or missing mappings remain raw-only.
+   into reading mode. Entities still unmapped may use their existing raw entity value in memory for
+   one unique exact or conservative format-normalized reading-text match; ambiguous matches remain
+   raw-only. Projection metadata stores offsets and a method enum, never another text copy.
 5. Reading text is an intended future PII/typed-placeholder candidate, but no input switch is
    permitted until a tested lineage map translates reading spans to raw/source coordinates.
 
