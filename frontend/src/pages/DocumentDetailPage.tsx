@@ -40,6 +40,7 @@ import {
   type AnalysisStep,
 } from "../lib/documentAnalysis";
 import { toStationError, type StationName } from "../lib/stationErrors";
+import { buildRuntimeNotice, buildStationRuntimeNotice } from "../lib/runtimeNotice";
 import { formatBytes, formatTimestamp } from "../lib/format";
 
 interface UiError {
@@ -190,6 +191,11 @@ export default function DocumentDetailPage() {
   const currentPiiEntities = piiStatus === "current" ? (pii?.content.entities ?? []) : [];
   // A full, current analysis exists once both OCR and PII match the latest upstream inputs.
   const hasCurrentAnalysis = ocrStatus === "current" && piiStatus === "current";
+  // Proactive hint when a station's runtime is not installed on this server (see
+  // runtimeNotice.ts) — surfaces the same signal a run would otherwise only discover via a 503.
+  const analysisRuntimeNotice = buildRuntimeNotice(appConfig);
+  const ocrRuntimeNotice = buildStationRuntimeNotice(appConfig, "ocr");
+  const piiRuntimeNotice = buildStationRuntimeNotice(appConfig, "pii");
   const devPiiSettingsEnabled = appConfig?.devEngineSettingsEnabled ?? false;
   // The dev view (and its toggle) exists only where dev engine settings are enabled; everywhere
   // else the user view is the sole, default experience.
@@ -318,6 +324,7 @@ export default function DocumentDetailPage() {
             pending={pending.ocr}
             disabled={!audit || pending.audit || pending.ocr || pending.pii}
             disabledReason={!audit ? "Zuerst ein Audit erstellen." : undefined}
+            runtimeNotice={ocrRuntimeNotice}
             error={stationErrors.ocr}
             onAction={() =>
               void execute("ocr", () => runOcr(documentId), (result) => {
@@ -344,6 +351,7 @@ export default function DocumentDetailPage() {
             pending={pending.pii}
             disabled={!text || pending.ocr || pending.pii}
             disabledReason={!text ? "Zuerst OCR/Text erzeugen." : undefined}
+            runtimeNotice={piiRuntimeNotice}
             error={stationErrors.pii}
             onAction={() => void execute("pii", () => runPii(documentId, piiRunRequest), setPii)}
           >
@@ -374,6 +382,7 @@ export default function DocumentDetailPage() {
                 step={analysisStep}
                 hasCurrentAnalysis={hasCurrentAnalysis}
                 error={analysisError}
+                runtimeNotice={analysisRuntimeNotice}
                 onRun={() => void runUserAnalysis()}
               />
             </div>

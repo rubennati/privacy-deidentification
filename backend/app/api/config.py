@@ -10,7 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
-from app.schemas import ConfigResponse, PiiConfigResponse
+from app.schemas import ConfigResponse, PiiConfigResponse, RuntimeCapabilitiesResponse
+from app.services.runtime_capabilities import ocr_runtime_available, pii_runtime_available
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -27,5 +28,9 @@ def get_config(settings: Settings = Depends(get_settings)) -> ConfigResponse:
             available_profiles=list(settings.supported_pii_profiles),
             candidate_validation_enabled=settings.pii_candidate_validation_enabled,
             score_threshold=settings.pii_score_threshold,
+        ),
+        runtime=RuntimeCapabilitiesResponse(
+            ocr_available=ocr_runtime_available(settings),
+            pii_available=pii_runtime_available(settings),
         ),
     )

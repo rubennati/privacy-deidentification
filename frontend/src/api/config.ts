@@ -14,9 +14,18 @@ export interface PiiRuntimeConfig {
   scoreThreshold: number;
 }
 
+// Whether the optional OCR/PII runtimes are actually installed on this server (not whether a
+// given document has been analyzed). A read-only signal only — it never gates a request; it lets
+// the UI show a proactive hint instead of only discovering "not installed" via a 503.
+export interface RuntimeCapabilities {
+  ocrAvailable: boolean;
+  piiAvailable: boolean;
+}
+
 export interface AppConfig extends UploadConfig {
   devEngineSettingsEnabled: boolean;
   pii: PiiRuntimeConfig;
+  runtime: RuntimeCapabilities;
 }
 
 interface ConfigResponse {
@@ -28,6 +37,10 @@ interface ConfigResponse {
     available_profiles: string[];
     candidate_validation_enabled: boolean;
     score_threshold: number;
+  };
+  runtime: {
+    ocr_available: boolean;
+    pii_available: boolean;
   };
 }
 
@@ -47,6 +60,10 @@ export async function fetchAppConfig(): Promise<AppConfig | null> {
         availableProfiles: data.pii.available_profiles,
         candidateValidationEnabled: data.pii.candidate_validation_enabled,
         scoreThreshold: data.pii.score_threshold,
+      },
+      runtime: {
+        ocrAvailable: data.runtime.ocr_available,
+        piiAvailable: data.runtime.pii_available,
       },
     };
   } catch {

@@ -991,6 +991,21 @@ class PiiConfigResponse(BaseModel):
     score_threshold: float = Field(ge=0, le=1)
 
 
+class RuntimeCapabilitiesResponse(BaseModel):
+    """Whether the optional OCR/PII runtimes are actually installed and usable on this server.
+
+    A read-only signal only — it never gates a request. It lets the frontend distinguish "this
+    station's runtime isn't installed on this deployment" from a real per-document station error.
+    """
+
+    ocr_available: bool = Field(
+        description="PaddleOCR/PaddlePaddle are installed and the local models are provisioned."
+    )
+    pii_available: bool = Field(
+        description="Presidio, spaCy, and the configured spaCy model package are installed."
+    )
+
+
 class ConfigResponse(BaseModel):
     """Public app configuration, so the frontend can mirror backend-owned defaults safely."""
 
@@ -1001,6 +1016,9 @@ class ConfigResponse(BaseModel):
     )
     pii: PiiConfigResponse = Field(
         description="Effective backend defaults and available named PII profiles."
+    )
+    runtime: RuntimeCapabilitiesResponse = Field(
+        description="Whether the optional OCR/PII runtimes are installed on this server."
     )
 
 

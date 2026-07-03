@@ -12,6 +12,8 @@ interface DocumentAnalysisPanelProps {
   hasCurrentAnalysis: boolean;
   /** Safe, already-mapped error message (never raw document text or raw PII). */
   error: AnalysisError | null;
+  /** Proactive hint when a station's runtime is not installed on this server (see buildRuntimeNotice). */
+  runtimeNotice?: string | null;
   onRun: () => void;
 }
 
@@ -31,6 +33,7 @@ export function DocumentAnalysisPanel({
   step,
   hasCurrentAnalysis,
   error,
+  runtimeNotice,
   onRun,
 }: DocumentAnalysisPanelProps) {
   const running = isAnalysisRunning(step);
@@ -54,6 +57,11 @@ export function DocumentAnalysisPanel({
       )}
       {!running && error && (
         <StatusNotice status="error" message={error.message} correlationId={error.correlationId} />
+      )}
+      {!running && !error && runtimeNotice && (
+        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {runtimeNotice}
+        </p>
       )}
     </div>
   );

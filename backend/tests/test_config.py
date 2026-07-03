@@ -60,6 +60,9 @@ def test_config_returns_effective_upload_constraints(client: TestClient) -> None
         "candidate_validation_enabled": True,
         "score_threshold": 0.5,
     }
+    # The pytest/CI backend image installs no OCR/PII extras, so both are correctly unavailable;
+    # see test_runtime_capabilities.py for the true/false branches of the underlying checks.
+    assert body["runtime"] == {"ocr_available": False, "pii_available": False}
 
 
 def test_dev_engine_settings_default_to_disabled(
