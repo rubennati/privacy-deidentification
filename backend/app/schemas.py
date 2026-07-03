@@ -1038,6 +1038,153 @@ class PiiArtifact(BaseModel):
         return self
 
 
+class PiiEntityGroupProjectionSummary(BaseModel):
+    """Aggregate reading-text projection coverage across one entity group's occurrences."""
+
+    exact_count: int = Field(ge=0)
+    partial_count: int = Field(ge=0)
+    unmapped_count: int = Field(ge=0)
+
+
+class PiiEntityGroup(BaseModel):
+    """A conservative grouping of PII occurrences sharing one entity type and normalized value.
+
+    Derived on demand from ``PiiContent.entities`` (see ``pii_grouping.py``) and never persisted
+    inside the immutable ``pii_result`` artifact — detection is unchanged. ``entity_group_id`` is a
+    deterministic hash of the entity type and normalized value, so it stays stable across repeated
+    requests for the same PII artifact without ever storing the raw value itself.
+    """
+
+    entity_group_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    occurrence_ids: list[str] = Field(min_length=1)
+    occurrence_count: int = Field(ge=1)
+    normalized_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    projection_summary: PiiEntityGroupProjectionSummary
+
+    @model_validator(mode="after")
+    def _validate_counts(self) -> PiiEntityGroup:
+        if self.occurrence_count != len(self.occurrence_ids):
+            raise ValueError("occurrence count does not match occurrence ids")
+        if len(self.occurrence_ids) != len(set(self.occurrence_ids)):
+            raise ValueError("occurrence ids must be unique")
+        summary = self.projection_summary
+        if (
+            summary.exact_count + summary.partial_count + summary.unmapped_count
+            != self.occurrence_count
+        ):
+            raise ValueError("projection summary does not cover every occurrence")
+        return self
+
+
+PiiReviewDecisionScope = Literal["entity_group", "occurrence"]
+PiiReviewDecisionValue = Literal["pseudonymize", "keep", "ignore", "false_positive"]
+PiiReviewDecisionSource = Literal["user", "default", "imported"]
+PiiReviewStatus = Literal["pending", "accepted", "rejected", "ignored"]
+
+
+class PiiReviewDecisionRequest(BaseModel):
+    """Request body to set a review decision for one entity group or occurrence."""
+
+    target_type: PiiReviewDecisionScope
+    target_id: str = Field(min_length=1, max_length=64)
+    decision: PiiReviewDecisionValue
+    note: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _normalize_note(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class PiiReviewDecisionRecord(BaseModel):
+    """One persisted review-decision line (append-only; the latest line per target wins on read).
+
+    Mirrors the existing ``PiiFeedbackRecord`` append-only pattern, but this is the binding review
+    overlay consumed by future pseudonymization — not the dev-only feedback side-channel. Bound to
+    the PII artifact it was recorded against so a re-run (new artifact id) never silently reapplies
+    a stale decision.
+    """
+
+    schema_version: Literal["1"] = "1"
+    app_version: str
+    recorded_at: str
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    target_type: PiiReviewDecisionScope
+    target_id: str = Field(min_length=1, max_length=64)
+    decision: PiiReviewDecisionValue
+    note: str | None = Field(default=None, max_length=1000)
+    source: PiiReviewDecisionSource = "user"
+
+
+class PiiReviewDecisionAck(BaseModel):
+    """Confirmation returned after a review decision is recorded."""
+
+    recorded: bool
+    target_type: PiiReviewDecisionScope
+    target_id: str
+    decision: PiiReviewDecisionValue
+    review_status: PiiReviewStatus
+    updated_at: str
+
+
+class PiiReviewOccurrence(BaseModel):
+    """One reviewable occurrence: the authoritative raw span plus its resolved review state.
+
+    Derived at request time from ``PiiContent.entities`` and the persisted decision overlay; never
+    mutates raw or projected offsets. ``occurrence_id`` is the referenced ``PiiEntity.id``.
+    """
+
+    occurrence_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    entity_group_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    raw_start: int = Field(ge=0)
+    raw_end: int = Field(ge=1)
+    score: float = Field(ge=0, le=1)
+    recognizer: str
+    projection_status: Literal["exact", "partial", "unmapped"] | None = None
+    projection_method: Literal["offset_map", "text_match"] | None = None
+    reading_start_offset: int | None = Field(default=None, ge=0)
+    reading_end_offset: int | None = Field(default=None, ge=1)
+    review_status: PiiReviewStatus = "pending"
+    review_decision: PiiReviewDecisionValue | None = None
+    decision_scope: PiiReviewDecisionScope | None = Field(
+        default=None,
+        description="Which scope the effective decision came from; None while pending.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_span(self) -> PiiReviewOccurrence:
+        if self.raw_end <= self.raw_start:
+            raise ValueError("occurrence end offset must be after start offset")
+        return self
+
+
+class PiiEntityGroupReview(PiiEntityGroup):
+    """An entity group enriched with its resolved review decision."""
+
+    review_status: PiiReviewStatus = "pending"
+    review_decision: PiiReviewDecisionValue | None = None
+    updated_at: str | None = None
+
+
+class PiiReviewResult(BaseModel):
+    """The reviewable PII view for one document: groups and occurrences with resolved decisions.
+
+    Computed on demand from the latest ``pii_result`` and the persisted decision overlay; the
+    ``pii_result`` artifact and its entities/offsets are never mutated by review decisions.
+    """
+
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    groups: list[PiiEntityGroupReview] = Field(default_factory=list)
+    occurrences: list[PiiReviewOccurrence] = Field(default_factory=list)
+
+
 class UploadAccepted(BaseModel):
     """Returned when an upload passes validation and is stored."""
 

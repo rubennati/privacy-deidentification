@@ -41,15 +41,17 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 
 | Engine | Current level | Next |
 | --- | --- | --- |
-| OCR / Text | **L11 done (built on the L10.5 contract step)** | PII L11 grouping → PII L12 overlap |
-| PII / Sensitive-Data | **L9 done; L10 partial** (dev-only feedback capture) | L11 grouping → L12 overlap |
-| Review / Human-Feedback | **L2 production; L3–L5 dev-only** | L6 grouping → L8 `review_result` |
+| OCR / Text | **L11 done (built on the L10.5 contract step)** | PII L12 overlap resolution |
+| PII / Sensitive-Data | **L11 done; L10 partial** (dev-only feedback capture) | L12 overlap resolution |
+| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | formal `review_result` artifact |
 | Benchmark / Regression | **L8 done; L10 slice out of order** | L9 per-profile metrics |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 
 OCR/Text (L11, built on the L10.5 contract step) is currently ahead of the *binding* PII/review
 frontier (PII L10 partial,
-Review L2 prod). The 2–3-levels-ahead rule is comfortably satisfied today; the risk is PII deep work
+Review L2 prod, with L11 grouping and a partial L6–L9 decision overlay layered on top — see
+[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)). The 2–3-levels-ahead rule is
+comfortably satisfied today; the risk is PII deep work
 (grouping/overlap/review) outrunning the OCR text-quality/geometry it will eventually need.
 
 ## OCR / Text roadmap
@@ -122,9 +124,11 @@ Priority order, authoritative levels from [`pii-engine-levels.md`](pii-engine-le
    feedback reliable (fingerprint/lineage validation, restore/lock correctness) before anything is
    built on its data. No new level; a hardening step (this is roadmap.md's "feedback integrity
    hardening").
-2. **PII L11 — entity grouping + occurrences.** Present each distinct entity once with its
-   occurrences/offsets grouped beneath it, with clickable per-occurrence jump-to-text. Grouping only;
-   detection is unchanged.
+2. **PII L11 — entity grouping + occurrences — delivered.** Presents each distinct entity once
+   with its occurrences/offsets grouped beneath it, with clickable per-occurrence jump-to-text, as a
+   pure derived view (`pii_grouping.py`) that changes nothing about detection or the `pii_result`
+   schema. Paired with a lineage-bound review-decision overlay covering much of Review L6/L8/L9's
+   practical intent (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)).
 3. **PII L12 — overlap / entity resolution.** Deterministic, auditable engine-level precedence for
    duplicate/nested/overlapping candidates (not the display-only highlight resolver).
 4. **PII validation transparency report.** Surface the *already-stored* candidate-validation summary
@@ -200,13 +204,13 @@ hardening + OCR L6/L7 here).
 | 2 | OCR confidence foundation (delivered) | OCR/Text | **OCR L6** | capture per-page (and per-line where available) OCR confidence, additively | routing changes, `quality_report`, geometry, tables, new OCR tool | OCR pages carry confidence when reported; canonical text + routing unchanged; benchmark reads the metric without raw text |
 | 3 | OCR `quality_report` (delivered) | OCR/Text | **OCR L7** | metrics-only per-document quality summary with lineage | page text, layout, geometry, redaction | each OCR/Text run has an immutable `quality_report` with no page text or raw PII |
 | 4 | OCR `best_text_result` v1 (delivered) | OCR/Text | **OCR L8** | readable rendering seed; canonical `best_text_result` unchanged | layout order, geometry, tables, AI rewriting | a readable rendering exists beside a byte-stable canonical text; PII offsets still reference canonical text |
-| 5 | PII entity grouping + occurrences | PII | **PII L11** | group repeated same-type occurrences with clickable offsets | detection changes, overlap resolution, review persistence | repeated mentions render as one group with correct per-occurrence offsets; no detection dropped/invented |
+| 5 | PII entity grouping + occurrences (delivered) | PII | **PII L11** | group repeated same-type occurrences with clickable offsets | detection changes, overlap resolution, review persistence | repeated mentions render as one group with correct per-occurrence offsets; no detection dropped/invented |
 | 6 | OCR layout-aware blocks (delivered) | OCR/Text | **OCR L9** | layout-aware reading order + typed blocks; coarse normalized bounds; page boundaries/headers/footers | precise line/word geometry (L10), tables (L11), lineage map, redaction | multi-column/header-footer pages produce deterministic review blocks; canonical text remains the PII input |
 | 7 | PII overlap / entity resolution | PII | **PII L12** | deterministic engine-level precedence (ADDRESS>LOCATION, EMAIL>URL-fragment, structured>NER) | new detection, NER retuning, AI | overlapping candidates resolve deterministically without dropping distinct entities; decisions are auditable |
 | 8 | PII validation transparency report | PII | none (surfaces L6 data) | readable view of stored validation counts/reason codes | new detection, benchmark-logic change, DB | a transparency view reflects `pii_result` validation summary; no raw candidate text; no new metrics computed |
 | 9 | OCR span geometry (delivered) | OCR/Text | **OCR L10** | additive `text_geometry` mapping canonical line spans to page-local line boxes + `resolve_span_geometry` lookup | word-level geometry, tables, lineage map, pseudonymization/placeholder mapping/export | line geometry maps to canonical coordinates; per-page lineage and canonical text remain unchanged |
 | 9a | OCR canonical reading text (delivered prerequisite) | OCR/Text | **L10.5 intermediate** | versioned block-aware `reading_text`; relabel legacy `text` as technical raw; exact synthetic quote fixture | PII input switch, lineage map, structured content, pseudonymization/export | User View defaults to useful reading text; raw/page text and PII behavior remain unchanged |
-| 10 | Review result artifact | Review / PII | **Review L8 (→ PII L13)** | immutable, lineage-bound `review_result` overlay | confirm/reject UI actions (next), rules, DB migration | a `review_result` persists bound to `pii_result`+`text_result` and re-renders; `pii_result` immutable; re-extraction marks it stale |
+| 10 | Review result artifact (partially delivered as a JSONL decision overlay) | Review / PII | **Review L8 (→ PII L13)** | immutable, lineage-bound `review_result` overlay | confirm/reject UI actions (next), rules, DB migration | a `review_result` persists bound to `pii_result`+`text_result` and re-renders; `pii_result` immutable; re-extraction marks it stale — delivered: bound to `pii_result.id` (not yet `text_result.id`), persists/re-renders, `pii_result` immutable; not yet delivered: an explicit stale flag and the formal single-artifact model (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
 | 11 | OCR table/form reconstruction (delivered) | OCR/Text | **OCR L11** | additive span-backed tables, fields, and sections with conservative confidence/flags | PII-input switch, pseudonymization/placeholder mapping/export, UI | representative PDF/OCR/DOCX structures resolve to raw/reading spans; raw text and PII input remain unchanged |
 | 12 | Feedback-to-regression workflow | PII / Review | **PII L15 / Review L14** | promote reviewed corrections into private benchmark ground truth | exporting PII outside `volumes/`, benchmark scoring changes | corrections become private benchmark data without leaving `volumes/`; ground truth improves |
 
@@ -220,17 +224,35 @@ on their own — Redaction stays L0 until the full prerequisite set is met.
 text change, PII-input switch, quality-report change, or benchmark-report payload. Its versioned
 structured-content schema is legacy compatible and the benchmark loader ignores raw structured
 data. OCR L11 remains sufficiently ahead of PII L10 partial/Redaction L0; no benchmark or feedback
-signal changes priority. After this third OCR structure PR (L9–L11), the next three remain PII L11
+signal changes priority. After this third OCR structure PR (L9–L11), the next three were PII L11
 grouping, PII L12 overlap resolution, and the lineage-bound Review L8 artifact foundation.
 
 **Reading-text projection checkpoint (non-level review bridge):** An optional offset-only
 `reading_text_map` and additive PII projection metadata now allow exact raw findings to highlight in
 Canonical Reading Text. Detection still runs exclusively on `text_result.text`; partial,
 ambiguous, and legacy cases stay raw-only. This does not complete the full `text_lineage_map`, does
-not advance PII L11 grouping, and does not change the next-three sequence: PII L11 grouping, PII
-L12 overlap resolution, then Review L8.
+not advance PII L11 grouping, and does not change the next-three sequence at the time: PII L11
+grouping, PII L12 overlap resolution, then Review L8.
 Coverage hardening adds a unique in-memory value-match fallback for otherwise-unmapped entities;
 it does not re-run detection on reading text and persists only offsets plus a method enum.
+
+**Latest checkpoint (PII L11 entity grouping + review-decision overlay):** PII/Sensitive-Data
+advances from L9 done/L10 partial to **L11 done**. Conservative, derived entity grouping
+(`pii_grouping.py`) presents repeated same-type occurrences as one group without changing detection
+or the `pii_result` schema; a paired, lineage-bound review-decision overlay
+(`GET/POST …/pii/review[/decisions]`, JSONL under `document-data/<id>/review/`) lets a reviewer set
+`pseudonymize/keep/ignore/false_positive` at group or occurrence scope, satisfying much of Review
+L6/L8/L9's practical intent (grouped occurrences; decisions persist, restore on reload, and are
+never silently reapplied across a re-run) without yet being the formal single-artifact
+`review_result` model or an explicit stale-decision flag — see
+[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md) for the exact scope. This PR
+introduces no new dependency, recognizer, detection change, routing change, or benchmark-payload
+change; the benchmark loader is unaffected since it never reads review/grouping data. OCR/Text (L11)
+remains sufficiently ahead of PII (now L11)/Redaction (L0) — the two engines are level-equal today,
+which is acceptable since PII L11 is explicitly one of the interleaving-eligible steps that does not
+depend on missing OCR maturity. The next three steps are **PII L12 overlap resolution**, the formal
+**Review L8 `review_result` artifact model** (formalizing today's JSONL overlay, ideally with a
+stale-decision flag), and **PII validation transparency report**.
 
 ## References
 

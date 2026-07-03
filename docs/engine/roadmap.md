@@ -9,9 +9,9 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L11 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L11 grouping, then PII L12 overlap resolution |
-| PII / Sensitive-Data | **L9; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture | L11 entity grouping, then L12 overlap resolution |
-| Review / Human-Feedback | **L2 production; L3–L5 dev-only** | read-only review and lineage-safe highlights; gated review aids, run settings, and per-entity feedback capture | L6 grouped occurrences; L8 `review_result` later |
+| OCR / Text | **L11 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L12 overlap resolution |
+| PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution |
+| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
 
@@ -32,6 +32,11 @@ documents.
   and reproducible run settings.
 - PII L10 / Review L5 partial: gated, append-only per-entity feedback capture for local analysis.
   This is not a binding `review_result` and does not alter detection.
+- PII L11 / Review L6: conservative, derived entity grouping (`pii_grouping.py`, no schema change to
+  `pii_result`) plus a lineage-bound review-decision overlay (`pseudonymize/keep/ignore/false_positive`
+  at group or occurrence scope), covering much of Review L8/L9's practical intent without yet being
+  the formal `review_result` artifact model. See
+  [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 - Benchmark L0–L8 plus an out-of-order L10 slice: private inputs, artifact matching, routing and PII
   metrics, privacy guarding, deterministic output, validation-stage aggregates, and safe
   lineage-matched OCR confidence/coverage columns.
@@ -140,20 +145,35 @@ new dependency. Canonical/page text, active PII input, `quality_report`, benchma
 remain unchanged. This supports future context-preserving pseudonymization but does not implement
 placeholders, mappings, pseudonymized output, redaction, or export.
 
-### PII L11 — entity grouping
+### PII L11 — entity grouping — delivered
 
-Group repeated same-type occurrences under a stable presentation key without changing or dropping
-detections. Preserve each occurrence's offsets and jump-to-text behaviour.
+Groups repeated same-type occurrences under a stable presentation key without changing or dropping
+detections; each occurrence keeps its offsets and jump-to-text behaviour. Delivered as a pure,
+derived view (`pii_grouping.group_pii_entities`) recomputed from the latest `pii_result` on every
+request — `pii_result`'s schema is unchanged. See
+[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 
 ### PII L12 — overlap resolution
 
 Define and apply auditable engine-level precedence for duplicate, nested, and overlapping candidates.
 The current display-only highlight resolver is not engine-level entity resolution.
 
-### Review L8–L9 — binding review
+### Review L6 — grouped occurrences — delivered
 
-Introduce an immutable, lineage-bound `review_result` before confirm/reject decisions become
-authoritative. Dev feedback JSONL remains a separate analysis input.
+Mirrors PII L11: the `PiiReviewGroupList` panel shows one row per entity group (type, occurrence
+count, reading-text projection coverage, current decision) with an expandable per-occurrence list.
+
+### Review L8–L9 — binding review — partially delivered
+
+A lineage-bound, file-based decision overlay now exists (`GET/POST …/pii/review[/decisions]`,
+append-only JSONL under `document-data/<id>/review/`, scoped to the exact current `pii_result.id` so
+a re-run never silently reapplies a stale decision) with a broader
+`pseudonymize/keep/ignore/false_positive` vocabulary than plain confirm/reject, at group or
+occurrence scope with occurrence-level override. This is a lighter persistence shape than the
+formal single-artifact `review_result` model L8 originally described — that remains open, along
+with an explicit stale-decision indicator (L7), manual add (L10), and reason/comment metadata (L11).
+Dev feedback JSONL remains a separate, dev-gated analysis input. See
+[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 
 ### Benchmark L9–L10
 

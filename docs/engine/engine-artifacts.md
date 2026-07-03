@@ -12,7 +12,8 @@ volumes/
 └── document-data/<document_id>/
     ├── document.json                               # metadata + original artifact
     ├── artifacts/<artifact_id>.json                # audit/text/quality/PII artifacts
-    └── feedback/pii_feedback.jsonl                 # dev-only feedback side-channel
+    ├── feedback/pii_feedback.jsonl                 # dev-only feedback side-channel
+    └── review/pii_review_decisions.jsonl           # review-decision overlay (see below)
 ```
 
 Everything under `volumes/` is local and git-ignored. No artifact, feedback log, private benchmark
@@ -36,7 +37,9 @@ input, or report may be committed.
 | `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping technical raw spans (persisted `canonical_*` compatibility names) to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; source-anchoring/traceability only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
 | `structured_content` | ✅ OCR L11 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
-| `review_result` | 🔜 Review L8 | lineage-bound human decision overlay on `pii_result` | yes | immutable artifact |
+| entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
+| review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize/keep/ignore/false_positive` decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
+| `review_result` | 🔜 Review L8 (formal model) | the single-artifact-per-run shape this level originally described; today's decision overlay above covers much of its practical intent | yes | immutable artifact |
 | `benchmark_result` | ✅ today as private reports | routing and PII quality metrics | guarded report metadata and metrics | local report files |
 
 `◻ conceptual` means the concept is currently embedded in another artifact and may be separated
@@ -143,6 +146,32 @@ are short reviewer notes and must not contain copied document text, OCR text, or
 must still be treated as sensitive local data; it remains under `volumes/`, is never committed, and
 is suitable only for controlled local or aggregate analysis.
 
+## PII entity grouping and the review-decision overlay
+
+See [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md) for the full design. In
+short:
+
+- **Entity grouping (PII L11)** is a pure, derived view computed from the latest `pii_result` on
+  every `GET …/pii/review` request (`pii_grouping.py`). It stores nothing on `PiiEntity`,
+  `PiiContent`, or `PiiArtifact` — detection and the existing `pii_result` schema are unchanged.
+  `entity_group_id` and `normalized_fingerprint` are SHA-256 hashes of entity type + a conservative
+  per-type normalized value; the normalized value itself is never persisted or logged.
+- **The review-decision overlay** (unlike the dev-only feedback side-channel above) is **not**
+  gated behind `ENABLE_DEV_ENGINE_SETTINGS` — it is the binding handoff layer a future
+  pseudonymization engine will consume, so it must be available whenever a PII result exists.
+  `volumes/document-data/<document_id>/review/pii_review_decisions.jsonl` is an append-only log of
+  one decision per line (`target_type`, `target_id`, `decision`, optional `note`, the exact
+  `pii_result.id` it was recorded against); reading collapses it to the **latest line per target**.
+  A decision never mutates `pii_result` or any raw/projected offset, and a re-run producing a new
+  PII artifact id makes prior decisions invisible rather than silently reapplying them.
+- Group-level decisions apply to every occurrence in the group unless an occurrence-level decision
+  overrides it for that one occurrence. A decision resolves to a coarse
+  `pending/accepted/rejected/ignored` status for display; `rejected` (false positive) suppresses the
+  Review UI highlight entirely, while `accepted`/`ignored` stay highlighted but visually
+  distinguishable.
+- This is not pseudonymization, placeholder generation, text replacement, or export — only a
+  reviewer's recorded intent for later stages to consume.
+
 ## Privacy rules
 
 - **Metrics-only artifacts** (`audit_result`, `quality_report`) contain counts, statuses, reasons,
@@ -160,6 +189,10 @@ is suitable only for controlled local or aggregate analysis.
   writing. Published documentation uses aggregate figures only.
 - **Feedback JSONL** follows the separate boundary above; it must not be described as a hard
   privacy-by-construction guarantee because optional free text is accepted.
+- **Entity groups** store only a SHA-256 fingerprint (never the raw normalized value) plus
+  occurrence ids and projection counts. **Review-decision JSONL** stores offsets/ids/decision/scope
+  plus an optional free-text `note` (same policy as feedback `comment`: no copied document text, OCR
+  text, or raw PII); it is not dev-gated, so it must never be logged either.
 
 ## Versioning and lineage
 
@@ -167,8 +200,9 @@ is suitable only for controlled local or aggregate analysis.
   `quality_report_version`, `pii_version`). New artifact types follow the same convention.
 - Artifacts are append-only: a rerun creates a new artifact id and never mutates the prior result.
 - `text_result` references the original and audit artifacts; `quality_report` references that exact
-  original/audit/text triple; `pii_result` references its exact text artifact. Future
-  `review_result` artifacts extend this chain explicitly.
+  original/audit/text triple; `pii_result` references its exact text artifact. The review-decision
+  overlay references the exact `pii_result.id` it was recorded against (not yet `text_result.id`); a
+  future formal `review_result` artifact would extend this chain explicitly.
 - Downstream results whose input changes are stale and are never silently reused.
 - Additive optional fields preserve legacy artifact readability. Audits written before OCR L4 have
   no `needs_ocr`; routing falls back to `has_text_layer`.

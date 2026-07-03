@@ -177,3 +177,58 @@ describe("ReviewTextViewer", () => {
     expect(html).not.toContain("<mark");
   });
 });
+
+describe("ReviewTextViewer review-decision awareness", () => {
+  function renderWithReview(
+    mode: "reading" | "raw",
+    reviewStatusByOccurrenceId?: Record<string, "pending" | "accepted" | "rejected" | "ignored">,
+    onSelectEntity?: (entityId: string) => void,
+  ): string {
+    return renderToStaticMarkup(
+      <ReviewTextViewer
+        rawText="Hallo Wien"
+        readingText="Lesefreundliches Wien"
+        layoutText={null}
+        entities={[entity]}
+        mode={mode}
+        onModeChange={vi.fn()}
+        devMode
+        showEntityMeta
+        reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
+        onSelectEntity={onSelectEntity}
+      />,
+    );
+  }
+
+  it("does not highlight a rejected (false-positive) entity in raw mode", () => {
+    const html = renderWithReview("raw", { [entity.id]: "rejected" });
+    expect(html).not.toContain("<mark");
+  });
+
+  it("does not highlight a rejected (false-positive) entity in reading mode either", () => {
+    const html = renderWithReview("reading", { [entity.id]: "rejected" });
+    expect(html).not.toContain("<mark");
+  });
+
+  it("keeps highlighting an ignored/accepted entity distinguishably in both modes", () => {
+    const raw = renderWithReview("raw", { [entity.id]: "ignored" });
+    const reading = renderWithReview("reading", { [entity.id]: "ignored" });
+    expect(raw).toContain(`<mark id="pii-mark-${entity.id}"`);
+    expect(reading).toContain(`<mark id="pii-mark-${entity.id}"`);
+    expect(raw).toContain("opacity-60");
+    expect(reading).toContain("opacity-60");
+  });
+
+  it("renders exactly as before when no review data has loaded (legacy/missing)", () => {
+    const withoutMap = renderWithReview("raw", undefined);
+    expect(withoutMap).toContain(`<mark id="pii-mark-${entity.id}"`);
+    expect(withoutMap).not.toContain("opacity-60");
+  });
+
+  it("makes a highlight clickable only when a selection handler is provided", () => {
+    const withHandler = renderWithReview("raw", undefined, vi.fn());
+    const withoutHandler = renderWithReview("raw", undefined);
+    expect(withHandler).toContain("cursor-pointer");
+    expect(withoutHandler).not.toContain("cursor-pointer");
+  });
+});

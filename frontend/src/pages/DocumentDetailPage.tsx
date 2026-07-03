@@ -21,7 +21,13 @@ import {
   fetchPiiFeedbackSummary,
   type PiiFeedbackStatus,
 } from "../api/piiFeedback";
+import {
+  buildReviewStatusMap,
+  fetchPiiReview,
+  type PiiReviewResult,
+} from "../api/piiReview";
 import { PiiEntityList } from "../components/pii/PiiEntityList";
+import { PiiReviewGroupList } from "../components/pii/PiiReviewGroupList";
 import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
 import {
   ReviewTextViewer,
@@ -63,6 +69,8 @@ export default function DocumentDetailPage() {
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
+  const [reviewResult, setReviewResult] = useState<PiiReviewResult | null>(null);
+  const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
   const [analysisStep, setAnalysisStep] = useState<AnalysisStep>("idle");
   const [analysisError, setAnalysisError] = useState<UiError | null>(null);
@@ -148,6 +156,23 @@ export default function DocumentDetailPage() {
     };
   }, [documentId, piiArtifactId, devGateEnabled]);
 
+  // The review-entity overlay (groups + decisions) is not dev-gated; restore it whenever the
+  // current PII artifact changes so highlight suppression stays correct after a re-run.
+  useEffect(() => {
+    setSelectedOccurrenceId(null);
+    if (!documentId || !piiArtifactId) {
+      setReviewResult(null);
+      return;
+    }
+    let active = true;
+    void fetchPiiReview(documentId).then((result) => {
+      if (active) setReviewResult(result);
+    });
+    return () => {
+      active = false;
+    };
+  }, [documentId, piiArtifactId]);
+
   if (loading) {
     return (
       <main className="min-h-screen bg-page px-4 py-12">
@@ -189,6 +214,7 @@ export default function DocumentDetailPage() {
       ? "current"
       : "stale";
   const currentPiiEntities = piiStatus === "current" ? (pii?.content.entities ?? []) : [];
+  const reviewStatusByOccurrenceId = buildReviewStatusMap(reviewResult);
   // A full, current analysis exists once both OCR and PII match the latest upstream inputs.
   const hasCurrentAnalysis = ocrStatus === "current" && piiStatus === "current";
   // Proactive hint when a station's runtime is not installed on this server (see
@@ -416,6 +442,8 @@ export default function DocumentDetailPage() {
                   onModeChange={setReviewTextMode}
                   devMode={isDevView}
                   showEntityMeta={isDevView}
+                  reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
+                  onSelectEntity={isDevView ? setSelectedOccurrenceId : undefined}
                 />
                 {isDevView && !pii && (
                   <p className="mt-3 text-xs text-muted">PII-Erkennung noch nicht ausgeführt.</p>
@@ -423,14 +451,24 @@ export default function DocumentDetailPage() {
               </div>
               {isDevView &&
                 (pii ? (
-                  <PiiEntityList
-                    entities={pii.content.entities}
-                    stale={piiStatus === "stale"}
-                    documentId={documentId}
-                    artifactId={pii.id}
-                    feedbackEnabled={devPiiSettingsEnabled}
-                    feedbackStatuses={feedbackStatuses}
-                  />
+                  <div>
+                    <PiiEntityList
+                      entities={pii.content.entities}
+                      stale={piiStatus === "stale"}
+                      documentId={documentId}
+                      artifactId={pii.id}
+                      feedbackEnabled={devPiiSettingsEnabled}
+                      feedbackStatuses={feedbackStatuses}
+                    />
+                    {piiStatus === "current" && (
+                      <PiiReviewGroupList
+                        documentId={documentId}
+                        review={reviewResult}
+                        onReviewChanged={setReviewResult}
+                        selectedOccurrenceId={selectedOccurrenceId}
+                      />
+                    )}
+                  </div>
                 ) : (
                   <section>
                     <h2 className="font-semibold text-ink">Erkannte Entities</h2>

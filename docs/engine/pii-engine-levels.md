@@ -27,12 +27,15 @@ protection class (P0–P5), and the fitting detection strategy — is modelled i
 [`entity-taxonomy.md`](entity-taxonomy.md). This ladder is the *maturity* axis; the taxonomy is the
 *coverage/sensitivity* axis.
 
-**Current standing:** **L9 done (L0–L9); L10 partial (dev-only human feedback capture).** Structured
-+ AT/DE + insurance/legal recognizers, named profiles, benchmark, candidate validation, context
-hardening, address/contact-line coverage, and reproducible artifact `engine_settings` are all
-shipped. A **dev-only** per-entity feedback-capture side-channel exists (behind
-`ENABLE_DEV_ENGINE_SETTINGS`); the binding review overlay, entity grouping, and overlap resolution
-are open.
+**Current standing:** **L11 done (L0–L9, L11); L10 partial (dev-only human feedback capture).**
+Structured + AT/DE + insurance/legal recognizers, named profiles, benchmark, candidate validation,
+context hardening, address/contact-line coverage, and reproducible artifact `engine_settings` are
+all shipped. A **dev-only** per-entity feedback-capture side-channel exists (behind
+`ENABLE_DEV_ENGINE_SETTINGS`). Conservative entity grouping (L11) is now delivered as a derived
+view over `pii_result`, paired with a lineage-bound review-decision overlay that covers much of the
+*practical* intent of the later L13 review-confirm/reject step without yet being that formal
+artifact model (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md) for the
+precise scope). Engine-level overlap resolution (L12) remains open.
 
 The pipeline this ladder describes:
 
@@ -225,15 +228,27 @@ stage that runs after detection**. This stage is a first-class part of the engin
 - **Boundary to L11:** L10 captures feedback on a *flat list*; L11 groups repeated occurrences of the
   same entity.
 
-## Level 11 — Entity grouping / repeated occurrences  ⛔ *open (next)*
+## Level 11 — Entity grouping / repeated occurrences  ✅ *done*
 
 - **Description:** present each distinct entity once and collect its occurrences/offsets beneath it
   (`PERSON Max Mustermann → 0–14, 220–234, 540–554`), with clickable offsets and feedback per
   occurrence or per group.
+- **Delivered:** `pii_grouping.group_pii_entities()` groups `pii_result` entities by entity type +
+  a conservative per-type normalized-value fingerprint (exact lowercase email, whitespace/case
+  IBAN normalization, digit/`+`-only phone normalization, whitespace-stripped ID-like types, exact
+  whitespace-normalized text for names/organizations/addresses/dates/everything else). Grouping is
+  a **pure, derived view** — it is recomputed from the latest `pii_result` on every
+  `GET …/pii/review` request and stores nothing on `PiiEntity`/`PiiContent`/`PiiArtifact`, so
+  detection and the existing `pii_result` schema are unchanged. `entity_group_id` and
+  `normalized_fingerprint` are SHA-256 hashes of type + normalized value (never the raw value
+  itself); each group also carries a reading-text projection coverage summary
+  (exact/partial/unmapped counts). See
+  [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 - **Engine/UI must:** group by a stable entity key without changing detection; keep jump-to-text per
   occurrence.
 - **Acceptance:** repeated mentions of one entity render as a single group with correct per-occurrence
-  offsets; grouping never drops or invents a detection.
+  offsets; grouping never drops or invents a detection. Different entity types, fuzzy name
+  variants, and proximity alone never merge into one group.
 - **Boundary to L12:** L11 groups *same-type* mentions; L12 resolves *conflicts between overlapping*
   candidates.
 
@@ -359,7 +374,7 @@ must account for that boundary explicitly.
 | 8 Address / contact-line | ✅ done | [ADR-0015](../adr/0015-structured-address-contact-line-recognizers.md) |
 | 9 Reproducible + dev settings | ✅ done | `content.engine_settings`, `ENABLE_DEV_ENGINE_SETTINGS` |
 | 10 Human feedback capture | ⏳ partial | dev-only per-entity feedback JSONL; not the binding overlay |
-| 11 Entity grouping | ⛔ open | documented follow-up; flat list today |
+| 11 Entity grouping | ✅ done | derived `pii_grouping.py` view + review-decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
 | 12 Overlap / conflict resolution | ⛔ open | display-only resolver exists; no engine-level rules |
 | 13 Review confirm / reject | ⛔ open | review UI is display + dev-feedback only |
 | 14 Manual add | ⛔ open | — |
@@ -413,12 +428,16 @@ reports (timestamps aside).
 
 **What is missing next:**
 
-1. **Human feedback capture (L10)** beyond the dev-only side-channel, then **entity grouping (L11)**
-   and engine-level **overlap resolution (L12)** — the documented follow-ups.
+1. **Human feedback capture (L10)** beyond the dev-only side-channel remains partial; **entity
+   grouping (L11)** is now delivered (with a review-decision overlay, see
+   [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)). Engine-level **overlap
+   resolution (L12)** is the next documented follow-up.
 2. The four remaining unsupported semantic labels (`BIRTH_DATE`, `BIRTH_PLACE`, `FAMILY_NAME`,
    `GIVEN_NAME`) and per-profile benchmark runs in one invocation.
-3. The binding review overlay (L13–L14) so a human can confirm/reject/add against
-   validation-surviving candidates.
+3. Formalizing the review-decision overlay into the full `review_result` artifact model (L13) with
+   actor/reason metadata (L11 on the Review ladder), scoped suppression rules (L12), and manual add
+   (L14) so a human can confirm/reject/add against validation-surviving candidates with a durable,
+   database-backed history.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the next steps.

@@ -1,4 +1,5 @@
 import type { PiiEntity } from "../../api/workstations";
+import type { PiiReviewStatus } from "../../api/piiReview";
 import { PiiTextViewer } from "./PiiTextViewer";
 
 export type ReviewTextMode = "reading" | "raw" | "layout";
@@ -13,6 +14,10 @@ interface ReviewTextViewerProps {
   devMode?: boolean;
   /** Forwarded to the highlighted text view: when false, hover metadata is suppressed. */
   showEntityMeta?: boolean;
+  /** Resolved review status per occurrence id, respected in both raw and reading mode. */
+  reviewStatusByOccurrenceId?: Record<string, PiiReviewStatus>;
+  /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
+  onSelectEntity?: (entityId: string) => void;
 }
 
 const MODE_BUTTON_BASE = "rounded-md px-3 py-1.5 text-xs font-medium transition-colors";
@@ -26,6 +31,8 @@ export function ReviewTextViewer({
   onModeChange,
   devMode = false,
   showEntityMeta = true,
+  reviewStatusByOccurrenceId,
+  onSelectEntity,
 }: ReviewTextViewerProps) {
   const hasReadingText = readingText != null;
   const hasLayoutText = layoutText != null;
@@ -154,12 +161,20 @@ export function ReviewTextViewer({
                 text={readingText}
                 entities={projectedEntities}
                 showEntityMeta={showEntityMeta}
+                reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
+                onSelectEntity={onSelectEntity}
               />
             ) : (
               <p className="text-sm text-muted">Der kanonische Lesetext ist leer.</p>
             )
           ) : rawText ? (
-            <PiiTextViewer text={rawText} entities={entities} showEntityMeta={showEntityMeta} />
+            <PiiTextViewer
+              text={rawText}
+              entities={entities}
+              showEntityMeta={showEntityMeta}
+              reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
+              onSelectEntity={onSelectEntity}
+            />
           ) : (
             <p className="text-sm text-muted">Der technische Rohtext ist leer.</p>
           )}

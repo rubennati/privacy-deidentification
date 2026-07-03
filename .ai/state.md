@@ -2,10 +2,11 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **OCR structured-content foundation / PII grouping**.
-- Current objective: complete OCR/Text L11 table/form reconstruction while preserving the completed
-  L10.5 canonical-reading foundation and the raw-text-only PII boundary; PII L11 entity grouping
-  remains the next planned engine step.
+- Current phase: **PII entity grouping / review-decision overlay**.
+- Current objective: PII L11 entity grouping and a lineage-bound review-decision overlay are now
+  delivered (see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md)) on top of
+  the completed OCR/Text L11 structured-content foundation and the raw-text-only PII boundary; PII
+  L12 overlap resolution is the next planned engine step.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -80,10 +81,17 @@
     DOCX page. Partial structures are flagged rather than invented. It supports future
     context-preserving pseudonymization but does not perform placeholder generation, mapping,
     pseudonymization, redaction, export, or any PII-input switch. Benchmark loaders ignore it.
-- **PII/Sensitive-Data: L9 done; L10 partial.** Dev-only human-feedback capture exists; grouping
-  (L11), overlap resolution (L12), and binding review (L13) remain open.
-- **Review/Human-Feedback: L2 production; L3–L5 dev-only.** Grouping (L6) and a lineage-bound
-  `review_result` overlay (L8) remain open.
+- **PII/Sensitive-Data: L11 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
+  entity grouping (L11) is delivered as a derived view (`pii_grouping.py`) over `pii_result`, paired
+  with a lineage-bound review-decision overlay (`pseudonymize/keep/ignore/false_positive` at group
+  or occurrence scope) — see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md).
+  Overlap resolution (L12) and the formal binding-review artifact model (L13) remain open.
+- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6 done; L7–L9 partial.** Grouped
+  occurrences (L6) are delivered, and a file-based (JSONL, not yet a single artifact-per-run)
+  decision overlay covers much of L7–L9's practical intent (decisions persist, restore on reload,
+  and are scoped to the exact current PII artifact so a re-run never silently reapplies a stale one)
+  without an explicit stale-decision flag or the formal `review_result` artifact model — both remain
+  open.
 - **Benchmark/Regression: L8 done; out-of-order L10 OCR confidence/coverage slice delivered.** L9
   per-profile reporting in one run is next.
 - **Redaction/De-Identification: L0 by design.** It remains blocked on mature OCR, PII, and review
@@ -118,10 +126,10 @@ See [`docs/engine/`](../docs/engine/README.md),
 
 The binding OCR/PII sequence, cadence, and next-12-PR list live in
 [`docs/engine/ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md)
-([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after OCR L11:
-PII/Sensitive-Data L11 entity grouping**, now that structured content builds on the L10.5
-canonical-reading/raw-text contract, L10 span geometry, L9 layout-aware blocks, readable text (L8),
-confidence capture (L6), and `quality_report` (L7).
+([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after PII L11:
+PII/Sensitive-Data L12 overlap resolution**, now that entity grouping and a review-decision overlay
+build on structured content, the L10.5 canonical-reading/raw-text contract, L10 span geometry, L9
+layout-aware blocks, readable text (L8), confidence capture (L6), and `quality_report` (L7).
 
 The OCR L8/L9 text-layer work is contract-first: the output model and invariants are fixed in
 [`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Technical raw
@@ -138,13 +146,16 @@ detection-input switch. `pii_input_text` may become the
 runs exclusively on technical raw text today, regardless of other views. The reading/readable/
 layout/PII-input layers are additive and never a standalone PII input.
 
-The checkpoint leaves OCR/Text at L11 (built on the L10.5 prerequisite), PII L10 partial, and
-Redaction L0; after reconfirming the next-three cadence, the plan is:
+The checkpoint leaves OCR/Text at L11 (built on the L10.5 prerequisite), PII at L11 done/L10
+partial, and Redaction L0; after reconfirming the next-three cadence, the plan is:
 
-1. Interleave PII **L11 — entity grouping + occurrences** without changing detection.
-2. Advance PII **L12 — overlap resolution** once grouping is in place.
-3. Add the immutable, lineage-bound **Review L8 `review_result`** foundation before binding review
-   decisions; keep `pii_result` immutable.
+1. Advance PII **L12 — overlap resolution** (deterministic engine-level precedence for
+   duplicate/nested/overlapping candidates).
+2. Formalize the **Review L8 `review_result`** artifact model — today's JSONL decision overlay
+   (see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md)) covers much of
+   L8/L9's practical intent but not the single-artifact-per-run shape or an explicit stale-decision
+   flag (L7); keep `pii_result` immutable.
+3. Add the **PII validation transparency report** (surfaces already-stored L6 validation counts).
 
 **Previous checkpoint (OCR L10.5 intermediate):** OCR/Text retained formal L10 maturity and completed
 the canonical-reading-text/raw-text prerequisite before L11. Versioned `reading_text` is additive
@@ -176,7 +187,29 @@ partial. The safe display bridge adds no recognizer, detection-input, dependency
 benchmark-payload, pseudonymization, redaction, or export change. It is not the full lineage map and
 does not satisfy the PII-input separation gate. A unique in-memory text-match fallback now improves
 coverage for otherwise-unmapped exact/format-normalized values without guessing duplicates or
-storing/logging copied text. Next remains PII L11 grouping.
+storing/logging copied text.
+
+**Latest checkpoint (PII L11 entity grouping + review-decision overlay):** PII/Sensitive-Data
+advances from L9 done/L10 partial to **L11 done**. `pii_grouping.py` groups repeated same-type,
+same-normalized-value occurrences (conservative per-type normalization: exact lowercase email,
+whitespace/case IBAN, digit/`+`-only phone, whitespace-stripped ID-like types, exact
+whitespace-normalized text otherwise — never fuzzy, never cross-type) as a pure derived view; it
+changes nothing about detection or the `pii_result` schema. A paired, lineage-bound
+review-decision overlay (`GET/POST …/pii/review[/decisions]`, JSONL under
+`document-data/<id>/review/`) lets a reviewer set `pseudonymize/keep/ignore/false_positive` at
+group or occurrence scope (occurrence overrides win), resolving to a coarse
+`pending/accepted/rejected/ignored` status; `rejected` suppresses the Review UI highlight in both
+raw and reading-text modes, `accepted`/`ignored` stay highlighted but visually distinguishable.
+Decisions are scoped to the exact current PII artifact id so a re-run never silently reapplies a
+stale one, but there is no explicit stale-UI flag and this is a lighter persistence shape than the
+formal single-artifact `review_result` model — see
+[ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md) for the exact scope and
+what remains open. This PR introduces no dependency, recognizer, detection, routing, or
+benchmark-payload change; `GET/POST …/pii` stay byte-for-byte backward compatible. OCR/Text (L11)
+and PII (now L11) are level-equal, which is acceptable since entity grouping is an
+interleaving-eligible step needing no new OCR capability. Next: **PII L12 overlap resolution**,
+then formalizing the **Review L8 `review_result`** artifact model, then the **PII validation
+transparency report**.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

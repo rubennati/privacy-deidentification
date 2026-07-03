@@ -43,3 +43,6 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
 - [ADR-0019](../docs/adr/0019-canonical-reading-text-and-technical-raw-contract.md) — Preserve
   `text_result.text` as technical raw/PII offset text and add versioned canonical `reading_text` as
   the product-facing main document view; any future PII switch remains lineage-gated.
+- [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md) — Conservative,
+  derived (non-persisted) PII entity grouping plus a lineage-bound, JSONL-based review-decision
+  overlay (`pseudonymize/keep/ignore/false_positive`) that never mutates `pii_result`.
