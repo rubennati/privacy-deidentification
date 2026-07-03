@@ -362,6 +362,10 @@ def test_docx_extracts_table_cells_in_document_order(
     assert response.status_code == 201
     content = response.json()["content"]
     assert content["source"] == "docx_text"
+    assert content["structured_content_version"] == "1"
+    table = content["structured_content"]["pages"][0]["tables"][0]
+    assert (table["row_count"], table["column_count"]) == (2, 2)
+    assert all("text" not in cell for cell in table["cells"])
     # Deterministic order: leading paragraph, table rows (cells tab-joined, rows newline-joined),
     # trailing paragraph. Table cell text must be present — paragraph-only extraction dropped it.
     assert content["text"] == "Intro\nR1C1\tR1C2\nR2C1\tR2C2\nOutro"
@@ -416,6 +420,24 @@ def test_image_uses_ocr_once(
     assert quality_report.content.ocr_page_confidence_mean == 0.91
     assert quality_report.content.flags == ["ocr_used"]
     assert "Image text" not in quality_report.model_dump_json()
+
+
+def test_image_emits_structured_field_when_geometry_is_unavailable(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _ = ocr_fakes
+    adapter.outputs = ["Name: Max Mustermann"]
+    upload, _ = _upload_and_audit(client, "form.png", _image_bytes("PNG"), "image/png")
+
+    content = client.post(f"/api/documents/{upload['id']}/ocr").json()["content"]
+
+    assert content["text"] == "Name: Max Mustermann"
+    assert content["text_geometry"] is None
+    field = content["structured_content"]["pages"][0]["fields"][0]
+    assert field["label"] == "Name"
+    assert field["field_type_hint"] == "person_name"
+    assert field["source"] == "canonical_text"
 
 
 def test_good_text_pdf_does_not_initialize_ocr(
@@ -935,6 +957,13 @@ def test_pdf_text_layer_produces_layout_text_result(
     customer = next(block for block in blocks if "Franz Hubermayr" in block["text"])
     assert contractor["order"] < customer["order"]
     assert contractor["source"] == customer["source"] == "pdf_text_layer"
+    structured = content["structured_content"]
+    assert structured is not None
+    # The canonical pypdf string safely exposes the first label/value pair. The horizontally
+    # separated date is not split out unless its canonical boundary is unambiguous.
+    assert "Angebot Nr." in {
+        field["label"] for field in structured["pages"][0]["fields"]
+    }
     # A clean text-layer PDF still never touches OCR.
     assert adapter.calls == []
     assert renderer.calls == []
@@ -1046,6 +1075,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     payload["content"].pop("layout_text_result", None)
     payload["content"].pop("layout_blocks_version", None)
     payload["content"].pop("layout_blocks", None)
+    payload["content"].pop("structured_content_version", None)
+    payload["content"].pop("structured_content", None)
     for page in payload["content"]["pages"]:
         page.pop("ocr_confidence", None)
         page.pop("ocr_line_confidences", None)
@@ -1058,6 +1089,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     assert response.json()["content"]["layout_text_result"] is None
     assert response.json()["content"]["layout_blocks_version"] is None
     assert response.json()["content"]["layout_blocks"] == []
+    assert response.json()["content"]["structured_content_version"] is None
+    assert response.json()["content"]["structured_content"] is None
     page = response.json()["content"]["pages"][0]
     assert page["ocr_confidence"] is None
     assert page["ocr_line_confidences"] == []

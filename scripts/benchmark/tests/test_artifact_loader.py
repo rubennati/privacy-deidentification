@@ -204,6 +204,49 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
                         "source": "paddleocr",
                     }
                 ],
+                "structured_content_version": "1",
+                "structured_content": {
+                    "pages": [
+                        {
+                            "page_number": 1,
+                            "tables": [],
+                            "fields": [
+                                {
+                                    "field_id": "field-p1-1",
+                                    "page_number": 1,
+                                    "label": "Private account label",
+                                    "label_span": {
+                                        "canonical_start": 0,
+                                        "canonical_end": 3,
+                                        "page_start": 0,
+                                        "page_end": 3,
+                                    },
+                                    "value_span": {
+                                        "canonical_start": 4,
+                                        "canonical_end": 20,
+                                        "page_start": 4,
+                                        "page_end": 20,
+                                    },
+                                    "field_type_hint": "unknown",
+                                    "confidence": 0.8,
+                                    "source": "canonical_text",
+                                    "flags": [],
+                                }
+                            ],
+                            "sections": [],
+                            "source": "canonical_text",
+                            "confidence": 0.8,
+                            "quality_flags": [],
+                        }
+                    ],
+                    "summary": {
+                        "page_count": 1,
+                        "table_count": 0,
+                        "field_count": 1,
+                        "section_count": 0,
+                    },
+                    "flags": ["span_backed"],
+                },
                 "text_char_count": 20,
                 "pages": [
                     {
@@ -238,6 +281,7 @@ def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> No
     assert "readable_text" not in corpus[0].text.__dataclass_fields__
     assert "layout_text_result" not in corpus[0].text.__dataclass_fields__
     assert "layout_blocks" not in corpus[0].text.__dataclass_fields__
+    assert "structured_content" not in corpus[0].text.__dataclass_fields__
     quality_report = corpus[0].quality_report
     assert quality_report is not None
     assert quality_report.input_text_artifact_id == "t1"

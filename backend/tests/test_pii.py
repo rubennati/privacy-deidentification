@@ -16,10 +16,17 @@ from pypdf import PdfWriter
 from app.api.pii import provide_pii_analyzer
 from app.config import Settings
 from app.main import app
-from app.schemas import LayoutBlock, TextArtifact, TextContent, TextPageResult
+from app.schemas import (
+    LayoutBlock,
+    StructuredContent,
+    TextArtifact,
+    TextContent,
+    TextPageResult,
+)
 from app.services.artifact_service import save_text_artifact
 from app.services.pii_adapters import DetectedEntity, PiiUnavailableError
 from app.services.pii_profiles import get_pii_profile
+from app.services.structured_content import build_structured_content
 
 
 class FakePiiAnalyzer:
@@ -95,6 +102,7 @@ def _save_text(
     layout_text_result: str | None = None,
     readable_text: str | None = None,
     layout_blocks: list[LayoutBlock] | None = None,
+    structured_content: StructuredContent | None = None,
     created_at: str = "2026-07-01T10:00:00.000001Z",
 ) -> TextArtifact:
     text_pages = [
@@ -128,6 +136,8 @@ def _save_text(
             readable_text=readable_text,
             layout_blocks_version="1" if layout_blocks else None,
             layout_blocks=layout_blocks or [],
+            structured_content_version="1" if structured_content else None,
+            structured_content=structured_content,
         ),
     )
     save_text_artifact(settings, artifact)
@@ -227,7 +237,16 @@ def test_pii_ignores_all_non_canonical_text_views(
 ) -> None:
     upload = _upload_document(client)
     document_id = str(upload["id"])
-    canonical = "Canonical Max Mustermann"
+    canonical = "Name: Max Mustermann"
+    page = TextPageResult(
+        page_number=1,
+        source="pdf_text_layer",
+        has_text_layer=True,
+        ocr_used=False,
+        text=canonical,
+        text_char_count=len(canonical),
+    )
+    structured_content = build_structured_content(canonical, [page], [], None)
     _save_text(
         settings,
         document_id,
@@ -249,6 +268,7 @@ def test_pii_ignores_all_non_canonical_text_views(
                 source="pdf_text_layer",
             )
         ],
+        structured_content=structured_content,
     )
 
     response = client.post(f"/api/documents/{document_id}/pii")

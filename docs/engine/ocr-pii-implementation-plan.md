@@ -41,13 +41,13 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 
 | Engine | Current level | Next |
 | --- | --- | --- |
-| OCR / Text | **L10 done** | PII L11 grouping → OCR L11 table/form reconstruction |
+| OCR / Text | **L11 done** | PII L11 grouping → PII L12 overlap |
 | PII / Sensitive-Data | **L9 done; L10 partial** (dev-only feedback capture) | L11 grouping → L12 overlap |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only** | L6 grouping → L8 `review_result` |
 | Benchmark / Regression | **L8 done; L10 slice out of order** | L9 per-profile metrics |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 
-OCR/Text (L10) is currently ahead of the *binding* PII/review frontier (PII L10 partial,
+OCR/Text (L11) is currently ahead of the *binding* PII/review frontier (PII L10 partial,
 Review L2 prod). The 2–3-levels-ahead rule is comfortably satisfied today; the risk is PII deep work
 (grouping/overlap/review) outrunning the OCR text-quality/geometry it will eventually need.
 
@@ -77,8 +77,10 @@ labelled goals in the request.
    a foundation for future placeholder mapping toward AI-ready pseudonymized document generation.
    Word-level geometry and a full `text_lineage_map` remain open. *(Per-page source lineage already
    exists at OCR L2; this adds line-geometry-level mapping — it is not new lineage from scratch.)*
-6. **OCR L11 — table / form reconstruction.** Rows/cells and label/value pairs as structure, kept
-   separate from canonical text.
+6. **OCR L11 — table / form reconstruction — delivered.** Optional versioned
+   `structured_content` adds span-backed rows/cells, label/value fields, and sections across PDF,
+   OCR/image, and DOCX paths. Conservative deterministic heuristics flag uncertainty and reuse L10
+   line bounds/L9 headings when available. Canonical text and active PII input remain unchanged.
 7. **OCR L13 — document understanding.** Document-type / section / zone semantics to inform PII,
    review, and later redaction.
 8. **OCR L15+ — redaction-ready text/geometry mapping.** The stable canonical-offset ↔ page-pixel
@@ -198,13 +200,20 @@ hardening + OCR L6/L7 here).
 | 8 | PII validation transparency report | PII | none (surfaces L6 data) | readable view of stored validation counts/reason codes | new detection, benchmark-logic change, DB | a transparency view reflects `pii_result` validation summary; no raw candidate text; no new metrics computed |
 | 9 | OCR span geometry (delivered) | OCR/Text | **OCR L10** | additive `text_geometry` mapping canonical line spans to page-local line boxes + `resolve_span_geometry` lookup | word-level geometry, tables, lineage map, pseudonymization/placeholder mapping/export | line geometry maps to canonical coordinates; per-page lineage and canonical text remain unchanged |
 | 10 | Review result artifact | Review / PII | **Review L8 (→ PII L13)** | immutable, lineage-bound `review_result` overlay | confirm/reject UI actions (next), rules, DB migration | a `review_result` persists bound to `pii_result`+`text_result` and re-renders; `pii_result` immutable; re-extraction marks it stale |
-| 11 | OCR word-level geometry (next) | OCR/Text | **OCR L10→L11** | extend line geometry with word-level boxes and richer coverage | tables, multi-engine selection, pseudonymization/placeholder mapping/export | a canonical offset range resolves to correct word box(es) on representative docs |
+| 11 | OCR table/form reconstruction (delivered) | OCR/Text | **OCR L11** | additive span-backed tables, fields, and sections with conservative confidence/flags | PII-input switch, pseudonymization/placeholder mapping/export, UI | representative PDF/OCR/DOCX structures resolve to canonical spans; canonical text and PII input remain unchanged |
 | 12 | Feedback-to-regression workflow | PII / Review | **PII L15 / Review L14** | promote reviewed corrections into private benchmark ground truth | exporting PII outside `volumes/`, benchmark scoring changes | corrections become private benchmark data without leaving `volumes/`; ground truth improves |
 
 Sequencing notes: PR 4 (`best_text_result` split) precedes PR 6 (`layout_text_result`); PR 6
-precedes PR 9 (per-block lineage) and PR 11 (bounding boxes); PR 10 (`review_result`) is the
+precedes PR 9 (span geometry) and PR 11 (table/form reconstruction); PR 10 (`review_result`) is the
 prerequisite for binding PII confirm/reject (PII L13) and for PR 12. None of these unblock Redaction
 on their own — Redaction stays L0 until the full prerequisite set is met.
+
+**Latest checkpoint (OCR L11):** L11 adds no dependency, engine setting, routing change, canonical
+text change, PII-input switch, quality-report change, or benchmark-report payload. Its versioned
+structured-content schema is legacy compatible and the benchmark loader ignores raw structured
+data. OCR L11 remains sufficiently ahead of PII L10 partial/Redaction L0; no benchmark or feedback
+signal changes priority. After this third OCR structure PR (L9–L11), the next three remain PII L11
+grouping, PII L12 overlap resolution, and the lineage-bound Review L8 artifact foundation.
 
 ## References
 

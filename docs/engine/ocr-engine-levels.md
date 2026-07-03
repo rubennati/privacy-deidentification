@@ -18,13 +18,14 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L10 reached (L0–L10 done); L11 is next.** Each successful OCR/Text run now
+**Current standing:** **L11 reached (L0–L11 done); L12 is next.** Each successful OCR/Text run now
 persists additive readable/layout views, versioned ordered/typed `layout_blocks` with coarse
 normalized page bounds, and additive `text_geometry` that maps canonical line spans to page-local
-line boxes (`pdf_points` for text-layer, `image_pixels` for OCR). Canonical text, routing, active PII
-input, and `quality_report` remain unchanged; L10 geometry provides source anchoring and
-traceability for review/debug and future placeholder mapping — it does not perform
-pseudonymization, placeholder mapping, document export, or pixel-perfect visual redaction.
+line boxes (`pdf_points` for text-layer, `image_pixels` for OCR). L11 adds optional versioned
+`structured_content` with span-backed tables, fields, and sections for PDF, OCR/image, and DOCX
+content. Canonical text, routing, active PII input, and `quality_report` remain unchanged; this
+structure supports future context-preserving pseudonymization but does not perform pseudonymization,
+placeholder mapping, document export, or redaction.
 
 ---
 
@@ -220,15 +221,23 @@ pseudonymization, placeholder mapping, document export, or pixel-perfect visual 
   It does not perform pseudonymization, placeholder mapping, document export, or pixel-perfect
   visual redaction.
 
-## Level 11 — Table / form reconstruction  ⛔ *open*
+## Level 11 — Table / form reconstruction  ✅ *done*
 
 - **Description:** reconstruct tables and structured regions (invoices, cost breakdowns, forms) as
   structure, not a flattened run.
 - **Engine must:** detect tables/forms and emit rows/cells and label/value pairs; keep a structured
   representation separate from canonical text.
-- **Artifacts:** `structured_document_result` (tables, sections, key-value pairs).
+- **Artifacts:** optional `structured_content_version = "1"` and `structured_content` on
+  `text_result`, containing per-page tables/cells, label/value fields, and sections plus metrics-only
+  counts/flags. Cells and values use canonical/page spans; raw table contents and field values are
+  not duplicated. Short labels/headings remain inside the sensitive text artifact.
+- **Delivered:** conservative deterministic delimiter/alignment and label/value heuristics use
+  canonical page text and enrich results with L10 line bounds or L9 heading blocks when available.
+  Uncertain tables are flagged partial/low-confidence rather than normalised into invented rows.
+  DOCX uses one logical structured page while retaining its established pageless canonical model.
 - **Acceptance:** representative tables round-trip into rows/cells usable downstream without
-  corrupting the canonical text.
+  corrupting canonical text; legacy artifacts validate, benchmark summaries ignore the structured
+  payload, and PII still receives canonical text only.
 - **Boundary to L12:** L11 reconstructs structure with one engine; L12 compares engines and selects
   the best per page.
 
@@ -351,7 +360,7 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 8 Human-readable text | ✅ done | additive deterministic `readable_text`; canonical unchanged |
 | 9 Layout-aware text | ✅ done | ordered typed `layout_blocks` with coarse normalized bounds; existing layout string preserved |
 | 10 Bounding boxes / geometry | ✅ done | additive `text_geometry` line boxes mapping canonical spans to page-local bounds; `resolve_span_geometry` lookup; canonical unchanged |
-| 11 Table / form reconstruction | ⛔ open | — |
+| 11 Table / form reconstruction | ✅ done | optional span-backed `structured_content` for tables, fields, and sections; canonical/PII input unchanged |
 | 12 Multi-engine selection | ⛔ open | single engine (PaddleOCR) |
 | 13 Document understanding | ⛔ open | — |
 | 14 Local AI assist | ⛔ open | — |
@@ -366,12 +375,11 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next level (L11):**
+**What is missing for the next level (L12):**
 
-1. Reconstruct tables and structured regions (rows/cells, key/value pairs) from the L10 line geometry
-   as a structured representation kept separate from canonical text. Word-level geometry and
-   placeholder-mapping/pixel-perfect coverage also remain open; L10 delivers line-level source
-   anchoring only.
+1. Benchmark multiple replaceable OCR/extraction engines and select the best output per page with
+   reproducible evidence. Word-level/redaction-ready geometry, placeholder mapping, and export stay
+   open at their later levels; L11 only adds semantic structure.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.

@@ -121,6 +121,18 @@ never shift a canonical PII offset, and no layer becomes an island.
   `text_lineage_map` remain L11+ work. The internal `resolve_span_geometry` helper is the
   canonical-span→box lookup; it never returns raw text.
 
+### L11 structured content
+
+- **Fields:** optional `structured_content_version = "1"` plus `structured_content` on
+  `text_result`.
+- **Purpose:** represent conservative tables/cells, label/value fields, and heading-bound sections
+  without changing or replacing any text layer.
+- **Offsets/privacy:** cells and values use canonical/page spans; raw table contents and field
+  values are not duplicated. Short labels/headings may be stored inside the already-sensitive text
+  artifact. Optional bounds reuse L10 line geometry.
+- **Boundary:** this additive structure supports future context-preserving placeholder generation,
+  but it is not the PII input, a `text_lineage_map`, pseudonymization, redaction, or export.
+
 ## Invariants
 
 These hold for any future implementation:
@@ -139,8 +151,8 @@ These hold for any future implementation:
   `layout_text_result` happens **through** the lineage map, never by re-detecting on the layout text.
 - **PII-input text and layout text must be married via lineage/mapping** — neither is a standalone
   island; both trace to the same source blocks/lines/words as canonical.
-- **`pii_input_text`, `readable_text`, `layout_text_result`, `layout_blocks`, `text_geometry`, and
-  `text_lineage_map` are additive** — new optional fields/artifacts.
+- **`pii_input_text`, `readable_text`, `layout_text_result`, `layout_blocks`, `text_geometry`,
+  `structured_content`, and `text_lineage_map` are additive** — new optional fields/artifacts.
 - **No existing artifacts are rewritten** — a re-run creates a new artifact; nothing is mutated.
 - **Legacy artifacts remain valid** — older artifacts without the new fields still validate.
 - **Separation gate.** `pii_input_text` may become the **active PII detection input** only when a
@@ -221,7 +233,7 @@ Anchored to the existing 0–19 ladder in [`ocr-engine-levels.md`](ocr-engine-le
 - **OCR L10:** `text_geometry` line boxes mapping canonical line spans to page-local bounds, with a
   `resolve_span_geometry` canonical-span→box lookup — line-level source anchoring and traceability,
   and the structural basis for `text_lineage_map` and any real `pii_input_text` divergence.
-- **OCR L11+:** table / form reconstruction.
+- **OCR L11:** span-backed table / form reconstruction in additive `structured_content`.
 - **Higher levels:** document understanding / redaction-ready geometry (the lineage map's long-term
   payoff for bounding boxes and redaction).
 
@@ -277,8 +289,12 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   new dependency was added and benchmark loaders ignore it. This delivers line-level source
   anchoring and traceability, and a foundation for future placeholder mapping toward AI-ready
   pseudonymized document generation.
-- **Not in L10:** `text_lineage_map`, word-level geometry, a PII-input switch, a general table
-  detector, a structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
+- **Delivered (L11):** `structured_content_version = "1"` and optional `structured_content` with
+  conservative tables/cells, label/value fields, and sections across PDF text-layer, OCR/image, and
+  DOCX paths. Values and cells remain canonical/page spans, partial structures are flagged, and
+  benchmark loaders ignore the payload. Canonical text and active PII input are unchanged.
+- **Not in L11:** `text_lineage_map`, word-level/redaction-ready geometry, a PII-input switch, a
+  structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
   customer) for `pii_input_text` blocks, active PII use of `pii_input_text`, pseudonymization,
   placeholder mapping, document export, and pixel-perfect visual redaction.
 
@@ -296,8 +312,8 @@ Plan for the layers beyond the v1 slice:
 - Any implementation must prove:
   - canonical text remains unchanged;
   - PII tests remain green;
-  - `readable_text`, `layout_text_result`, `pii_input_text`, `layout_blocks`, and
-    `text_lineage_map` are optional;
+  - `readable_text`, `layout_text_result`, `pii_input_text`, `layout_blocks`, `structured_content`,
+    and `text_lineage_map` are optional;
   - every non-canonical layer maps back to canonical (and source) — no islands;
   - the UI fallback to canonical text works.
 
@@ -309,7 +325,8 @@ Plan for the layers beyond the v1 slice:
 - no UI change;
 - no OCR confidence;
 - no `quality_report`;
-- no table engine;
+- no structured-content-driven PII detection;
+- no placeholder generation or pseudonymized output;
 - no perfect PDF reproduction;
 - no PII change;
 - no redaction;
