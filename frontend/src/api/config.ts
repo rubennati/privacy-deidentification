@@ -20,6 +20,9 @@ export interface PiiRuntimeConfig {
 export interface RuntimeCapabilities {
   ocrAvailable: boolean;
   piiAvailable: boolean;
+  /** OCR is installed but the container memory limit looks too low to run it without an
+   * OOM-kill mid-request (see docker-compose.yml's BACKEND_MEMORY_LIMIT). */
+  ocrMemoryLimitLow: boolean;
 }
 
 export interface AppConfig extends UploadConfig {
@@ -41,6 +44,7 @@ interface ConfigResponse {
   runtime: {
     ocr_available: boolean;
     pii_available: boolean;
+    ocr_memory_limit_low: boolean;
   };
 }
 
@@ -64,6 +68,7 @@ export async function fetchAppConfig(): Promise<AppConfig | null> {
       runtime: {
         ocrAvailable: data.runtime.ocr_available,
         piiAvailable: data.runtime.pii_available,
+        ocrMemoryLimitLow: data.runtime.ocr_memory_limit_low,
       },
     };
   } catch {

@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { AppConfig } from "../api/config";
 import { buildRuntimeNotice, buildStationRuntimeNotice } from "./runtimeNotice";
 
-function makeConfig(ocrAvailable: boolean, piiAvailable: boolean): AppConfig {
+function makeConfig(
+  ocrAvailable: boolean,
+  piiAvailable: boolean,
+  ocrMemoryLimitLow = false,
+): AppConfig {
   return {
     maxUploadBytes: 1024,
     allowedExtensions: ["pdf"],
@@ -14,7 +18,7 @@ function makeConfig(ocrAvailable: boolean, piiAvailable: boolean): AppConfig {
       candidateValidationEnabled: true,
       scoreThreshold: 0.5,
     },
-    runtime: { ocrAvailable, piiAvailable },
+    runtime: { ocrAvailable, piiAvailable, ocrMemoryLimitLow },
   };
 }
 
@@ -71,5 +75,21 @@ describe("buildStationRuntimeNotice", () => {
   it("is independent per station when both are unavailable", () => {
     expect(buildStationRuntimeNotice(makeConfig(false, false), "ocr")).toContain("OCR");
     expect(buildStationRuntimeNotice(makeConfig(false, false), "pii")).toContain("PII");
+  });
+
+  it("returns a memory-limit notice for OCR when installed but the memory limit is low", () => {
+    const notice = buildStationRuntimeNotice(makeConfig(true, true, true), "ocr");
+    expect(notice).toContain("OCR");
+    expect(notice).toContain("Speicherlimit");
+  });
+
+  it("does not apply the OCR memory-limit notice to the PII station", () => {
+    expect(buildStationRuntimeNotice(makeConfig(true, true, true), "pii")).toBeNull();
+  });
+
+  it("prefers the 'not installed' notice over the memory-limit notice when OCR is unavailable", () => {
+    const notice = buildStationRuntimeNotice(makeConfig(false, true, true), "ocr");
+    expect(notice).toContain("nicht installiert");
+    expect(notice).not.toContain("Speicherlimit");
   });
 });

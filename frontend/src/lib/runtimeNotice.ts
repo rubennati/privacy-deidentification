@@ -38,8 +38,14 @@ export function buildStationRuntimeNotice(
   }
   const available =
     station === "ocr" ? appConfig.runtime.ocrAvailable : appConfig.runtime.piiAvailable;
-  if (available) {
-    return null;
+  if (!available) {
+    return `${STATION_LABEL[station]} ist auf diesem Server nicht installiert. Ein Lauf endet mit einem Laufzeit-Fehler (503).`;
   }
-  return `${STATION_LABEL[station]} ist auf diesem Server nicht installiert. Ein Lauf endet mit einem Laufzeit-Fehler (503).`;
+  if (station === "ocr" && appConfig.runtime.ocrMemoryLimitLow) {
+    return (
+      `${STATION_LABEL[station]} ist installiert, aber das Speicherlimit des Containers ` +
+      "scheint zu niedrig zu sein. Ein Lauf kann mit einem Server-Fehler (502) abbrechen."
+    );
+  }
+  return null;
 }
