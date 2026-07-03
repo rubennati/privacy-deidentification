@@ -42,7 +42,17 @@ def document_data_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def settings(upload_dir: Path, document_data_dir: Path) -> Settings:
+def pii_feedback_archive_dir(tmp_path: Path) -> Path:
+    """A writable, empty PII feedback archive directory for a single test."""
+    directory = tmp_path / "pii-feedback-archive"
+    directory.mkdir()
+    return directory
+
+
+@pytest.fixture
+def settings(
+    upload_dir: Path, document_data_dir: Path, pii_feedback_archive_dir: Path
+) -> Settings:
     """Test settings with a small size limit so the 'too large' path is cheap to trigger.
 
     PII detection tests inject spaCy NER types (PERSON/ORGANIZATION/LOCATION), so the fixture
@@ -54,6 +64,7 @@ def settings(upload_dir: Path, document_data_dir: Path) -> Settings:
         allowed_extensions="pdf,docx,png,jpg,jpeg",
         upload_storage_dir=upload_dir,
         document_data_dir=document_data_dir,
+        pii_feedback_archive_dir=pii_feedback_archive_dir,
         log_level="WARNING",
         pii_entity_types=(
             "PERSON",

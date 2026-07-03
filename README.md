@@ -174,19 +174,21 @@ Stack traces are not exposed to clients.
 
 ### Storage layout
 
-New documents use two deliberately separate roots:
+New documents use three deliberately separate roots:
 
 ```text
 volumes/
 ├── uploads/
 │   └── <document_id>.<validated_extension>
-└── document-data/
-    └── <document_id>/
-        ├── document.json
-        ├── artifacts/
-        │   └── <artifact_id>.json
-        └── feedback/
-            └── pii_feedback.jsonl
+├── document-data/
+│   └── <document_id>/
+│       ├── document.json
+│       ├── artifacts/
+│       │   └── <artifact_id>.json
+│       └── feedback/
+│           └── pii_feedback.jsonl
+└── pii-feedback-archive/
+    └── pii_feedback.jsonl
 ```
 
 `UPLOAD_STORAGE_DIR` contains byte-identical originals only. Storage filenames are generated
@@ -194,11 +196,18 @@ from a server-side UUID; the user-visible Unicode filename is retained only in `
 and never used as a path. `DOCUMENT_DATA_DIR` contains one validated UUID-named directory per
 document. Audit, OCR/Text, and PII results are all immutable JSON files in that document's
 `artifacts/` directory. Deleting a document removes its UUID-named original and exactly its own
-document-data directory.
+document-data directory — including `feedback/pii_feedback.jsonl`.
 
-The feedback JSONL is a local, dev-gated analysis side-channel, not an immutable engine artifact or
-a binding review result. Its structured fingerprint excludes raw document/entity text, but optional
-comments can still contain sensitive input; treat it as protected document data and never commit it.
+`PII_FEEDBACK_ARCHIVE_DIR` is a third, separate root: one shared, cross-document JSONL log that
+every recorded feedback entry is *also* appended to, unchanged (`document_id` retained). Unlike
+the per-document copy, it is never touched by document deletion — by design, so review feedback
+can outlive its source document and later feed PII-quality improvement or the private benchmark
+(see [review-feedback-levels.md, Level 14](docs/engine/review-feedback-levels.md#level-14--feedback-to-regression-workflow--open)).
+
+Both feedback copies are a local, dev-gated analysis side-channel, not an immutable engine artifact
+or a binding review result. Their structured fingerprint excludes raw document/entity text, but
+optional comments can still contain sensitive input; treat both as protected data and never commit
+them.
 
 #### Existing local development data
 
