@@ -8,14 +8,16 @@ interface Props {
   step: AnalysisStep;
   hasCurrentAnalysis: boolean;
   error: { message: string; correlationId: string | null } | null;
+  runtimeNotice?: string | null;
 }
 
-function render({ step, hasCurrentAnalysis, error }: Props): string {
+function render({ step, hasCurrentAnalysis, error, runtimeNotice }: Props): string {
   return renderToStaticMarkup(
     <DocumentAnalysisPanel
       step={step}
       hasCurrentAnalysis={hasCurrentAnalysis}
       error={error}
+      runtimeNotice={runtimeNotice}
       onRun={vi.fn()}
     />,
   );
@@ -80,5 +82,38 @@ describe("DocumentAnalysisPanel", () => {
     });
 
     expect(html).not.toContain("Frühere Fehlermeldung");
+  });
+
+  it("shows a runtime notice when idle and no error is present", () => {
+    const html = render({
+      step: "idle",
+      hasCurrentAnalysis: false,
+      error: null,
+      runtimeNotice: "Hinweis: PII ist auf diesem Server nicht installiert.",
+    });
+
+    expect(html).toContain("Hinweis: PII ist auf diesem Server nicht installiert.");
+  });
+
+  it("hides the runtime notice while an error is shown", () => {
+    const html = render({
+      step: "idle",
+      hasCurrentAnalysis: false,
+      error: { message: "Ein Fehler ist aufgetreten.", correlationId: null },
+      runtimeNotice: "Hinweis: PII ist auf diesem Server nicht installiert.",
+    });
+
+    expect(html).not.toContain("Hinweis: PII ist auf diesem Server nicht installiert.");
+  });
+
+  it("hides the runtime notice while a run is in progress", () => {
+    const html = render({
+      step: "ocr",
+      hasCurrentAnalysis: false,
+      error: null,
+      runtimeNotice: "Hinweis: PII ist auf diesem Server nicht installiert.",
+    });
+
+    expect(html).not.toContain("Hinweis: PII ist auf diesem Server nicht installiert.");
   });
 });
