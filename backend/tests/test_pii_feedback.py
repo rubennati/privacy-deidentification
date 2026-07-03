@@ -120,6 +120,10 @@ def _feedback_file(document_data_dir: Path, document_id: str) -> Path:
     return document_data_dir / document_id / "feedback" / "pii_feedback.jsonl"
 
 
+def _archive_file(pii_feedback_archive_dir: Path) -> Path:
+    return pii_feedback_archive_dir / "pii_feedback.jsonl"
+
+
 def _positive_payload(artifact_id: str) -> dict[str, object]:
     return {
         "artifact_id": artifact_id,
@@ -571,3 +575,98 @@ def test_summary_unknown_artifact_returns_404(
         params={"artifact_id": "f" * 32},
     )
     assert response.status_code == 404
+
+
+def test_feedback_is_also_written_to_the_cross_document_archive(
+    gate_on_client: TestClient,
+    gate_on_settings: Settings,
+    pii_feedback_archive_dir: Path,
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+
+    response = gate_on_client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=_positive_payload(artifact.id),
+    )
+
+    assert response.status_code == 201
+    lines = _archive_file(pii_feedback_archive_dir).read_text("utf-8").splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    # document_id is retained in the archive (ADR-0020): the archive is meant for later aggregate
+    # PII-quality analysis, where knowing the source document remains useful.
+    assert entry["document_id"] == document_id
+    assert entry["artifact_id"] == artifact.id
+    assert entry["entity"]["type"] == "LOCATION"
+    assert "text" not in entry["entity"]
+
+
+def test_archive_accumulates_across_multiple_documents(
+    gate_on_client: TestClient,
+    gate_on_settings: Settings,
+    pii_feedback_archive_dir: Path,
+) -> None:
+    first_document_id = _upload_document(gate_on_client)
+    first_artifact = _save_pii(gate_on_settings, first_document_id)
+    second_document_id = _upload_document(gate_on_client)
+    second_artifact = _save_pii(gate_on_settings, second_document_id)
+
+    gate_on_client.post(
+        f"/api/documents/{first_document_id}/pii/feedback",
+        json=_positive_payload(first_artifact.id),
+    )
+    gate_on_client.post(
+        f"/api/documents/{second_document_id}/pii/feedback",
+        json=_positive_payload(second_artifact.id),
+    )
+
+    lines = _archive_file(pii_feedback_archive_dir).read_text("utf-8").splitlines()
+    assert len(lines) == 2
+    document_ids = {json.loads(line)["document_id"] for line in lines}
+    assert document_ids == {first_document_id, second_document_id}
+
+
+def test_disabled_gate_writes_neither_the_document_copy_nor_the_archive(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    pii_feedback_archive_dir: Path,
+) -> None:
+    document_id = _upload_document(client)
+    artifact = _save_pii(settings, document_id)
+
+    response = client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=_positive_payload(artifact.id),
+    )
+
+    assert response.status_code == 403
+    assert not _feedback_file(document_data_dir, document_id).exists()
+    assert not _archive_file(pii_feedback_archive_dir).exists()
+
+
+def test_archive_survives_document_deletion(
+    gate_on_client: TestClient,
+    gate_on_settings: Settings,
+    document_data_dir: Path,
+    pii_feedback_archive_dir: Path,
+) -> None:
+    document_id = _upload_document(gate_on_client)
+    artifact = _save_pii(gate_on_settings, document_id)
+    gate_on_client.post(
+        f"/api/documents/{document_id}/pii/feedback",
+        json=_positive_payload(artifact.id),
+    )
+    assert _feedback_file(document_data_dir, document_id).exists()
+    assert _archive_file(pii_feedback_archive_dir).exists()
+
+    delete_response = gate_on_client.delete(f"/api/documents/{document_id}")
+
+    assert delete_response.status_code == 204
+    # The per-document copy is gone with the rest of the document's data (ADR-0008)...
+    assert not (document_data_dir / document_id).exists()
+    # ...but the cross-document archive is untouched by design (ADR-0020) and still has the entry.
+    lines = _archive_file(pii_feedback_archive_dir).read_text("utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["document_id"] == document_id

@@ -46,6 +46,37 @@ def test_storage_configuration_rejects_equal_or_nested_roots(
         )
 
 
+def test_pii_feedback_archive_dir_defaults_to_a_third_separate_root() -> None:
+    settings = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+    )
+
+    assert settings.pii_feedback_archive_dir == Path("/data/pii-feedback-archive")
+
+
+@pytest.mark.parametrize(
+    ("upload_dir", "document_data_dir", "archive_dir"),
+    [
+        # Archive equals or nests with upload.
+        ("/tmp/storage", "/tmp/document-data", "/tmp/storage"),
+        ("/tmp/storage", "/tmp/document-data", "/tmp/storage/archive"),
+        # Archive equals or nests with document-data.
+        ("/tmp/uploads", "/tmp/storage", "/tmp/storage"),
+        ("/tmp/uploads", "/tmp/storage", "/tmp/storage/archive"),
+    ],
+)
+def test_pii_feedback_archive_dir_rejects_overlap_with_either_root(
+    upload_dir: str, document_data_dir: str, archive_dir: str
+) -> None:
+    with pytest.raises(ValueError, match="must be separate"):
+        Settings(
+            UPLOAD_STORAGE_DIR=upload_dir,
+            DOCUMENT_DATA_DIR=document_data_dir,
+            PII_FEEDBACK_ARCHIVE_DIR=archive_dir,
+        )
+
+
 def test_config_returns_effective_upload_constraints(client: TestClient) -> None:
     response = client.get("/api/config")
 

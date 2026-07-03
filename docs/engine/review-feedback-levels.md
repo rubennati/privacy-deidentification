@@ -88,38 +88,55 @@ is the L8 `review_result` model.
 - **Human can (dev):** on each entity card, press "Passt" (correct) or pick an issue (with a short
   per-reason explanation) and an optional comment. After submission the card locks to a status line
   so the same feedback is not submitted twice for one entity in one artifact.
-- **Persisted:** append-only JSONL at `document-data/{document_id}/feedback/pii_feedback.jsonl`. Each
-  line carries a timestamp, document/artifact ids, the entity fingerprint (type + offsets +
+- **Persisted (twice):**
+  1. Append-only JSONL at `document-data/{document_id}/feedback/pii_feedback.jsonl` — the copy the
+     UI reads back to restore per-entity review state. Deleted with the document (ADR-0008).
+  2. The same line, unchanged (`document_id` retained), appended to the separate, cross-document
+     `pii-feedback-archive/pii_feedback.jsonl` — **not** touched by document deletion, by design
+     (see [Level 14](#level-14--feedback-to-regression-workflow--open)).
+
+  Each line carries a timestamp, document/artifact ids, the entity fingerprint (type + offsets +
   recognizer + score), the verdict/issue_type/optional comment, the artifact's engine settings, and
   app/schema version. New feedback is accepted only when type, offsets, and recognizer match an
   entity in the referenced `pii_result`; the stored score comes from that artifact. On load,
-  `GET …/pii/feedback?artifact_id=…` collapses validated lines to the **latest verdict per entity
-  key** (type + start + end + recognizer) and returns counts/verdicts only.
+  `GET …/pii/feedback?artifact_id=…` collapses the **document-data copy's** validated lines to the
+  **latest verdict per entity key** (type + start + end + recognizer) and returns counts/verdicts
+  only; the archive is write-only from the API's perspective (no read endpoint yet — read the
+  JSONL directly for aggregate analysis, like the private benchmark runner does with its inputs).
 - **Privacy boundary:** the structured fingerprint excludes document text, OCR full text, and raw
   entity values. Optional `text_hash` values must be lowercase SHA-256 digests. Comments are short
-  reviewer notes: do not copy document text, OCR text, or raw PII into them. The JSONL remains
-  protected document data.
+  reviewer notes: do not copy document text, OCR text, or raw PII into them — this now matters even
+  more, since the archive copy is designed to outlive the source document.
 - **Gated:** available only when `ENABLE_DEV_ENGINE_SETTINGS=true`; with the gate off, the UI hides
-  the controls and both `POST …/pii/feedback` and `GET …/pii/feedback` return `403`.
+  the controls and both `POST …/pii/feedback` and `GET …/pii/feedback` return `403`; neither copy is
+  written.
 - **Explicitly not:** a learning system. It never changes detection, never mutates the immutable
   `pii_result`, and applies no rules. It is an **analysis side-channel**, not the binding L8
   `review_result` overlay.
 - **Why partial:** production stays gated off; the binding overlay is separate, future work.
 - **Acceptance:** with the gate on, a per-entity verdict persists within the documented local
-  feedback boundary and is restored + locked on reload; with the gate off, the endpoints `403` and
-  controls are hidden.
+  feedback boundary and is restored + locked on reload; a write also lands in the cross-document
+  archive and survives that document's deletion; with the gate off, the endpoints `403` and
+  controls are hidden and neither copy is written.
 - **Boundary to L6:** L5 captures feedback on a *flat list*; L6 groups repeated occurrences.
 
 ### Feedback storage (local dev)
 
-- Append-only JSONL under the host side of the existing `document-data` bind mount
-  (`volumes/document-data/<document_id>/feedback/pii_feedback.jsonl`; inside the container
-  `/data/document-data/<id>/feedback/…`). No separate Docker volume; created on first write.
-- Survives `docker compose down` (host bind mount), removed with the document's directory.
+- **Per-document copy:** append-only JSONL under the host side of the existing `document-data` bind
+  mount (`volumes/document-data/<document_id>/feedback/pii_feedback.jsonl`; inside the container
+  `/data/document-data/<id>/feedback/…`). Created on first write. Survives `docker compose down`
+  (host bind mount), removed with the document's directory.
+- **Cross-document archive:** append-only JSONL under its own bind mount, `PII_FEEDBACK_ARCHIVE_DIR`
+  (default `/data/pii-feedback-archive`, host side `volumes/pii-feedback-archive/pii_feedback.jsonl`).
+  A single shared file across all documents — deliberately not partitioned per document, since its
+  purpose is aggregate analysis after the source documents (and their own copy) may already be
+  gone. Survives `docker compose down` **and** the deletion of any/every document. Configured as a
+  root separate from both `UPLOAD_STORAGE_DIR` and `DOCUMENT_DATA_DIR` (rejected at startup if it
+  overlaps either).
 - Local development/review data: **not** committed (`volumes/` is git-ignored) and never to be
   committed. Use it only for controlled local or aggregate analysis. The structured fingerprint
   contains no document/OCR/entity text, but optional comments remain sensitive input and must not
-  contain copied document text or raw PII.
+  contain copied document text or raw PII — in either copy.
 
 ## Level 6 — Grouped occurrences  ⛔ *open (next)*
 
@@ -202,7 +219,9 @@ is the L8 `review_result` model.
 - **Human can:** promote confirmed/rejected/added decisions into the private benchmark's ground-truth
   signal (locally, privately).
 - **Persisted:** review-derived corrections exported under `volumes/benchmark/` (never committed).
-  Mirrors [PII L15](pii-engine-levels.md#level-15--feedback-derived-regression-sets---open).
+  The L5 `pii-feedback-archive` (survives document deletion, cross-document) is the raw input this
+  level would draw from; L14 itself is the still-open step that turns those entries into curated
+  benchmark ground truth. Mirrors [PII L15](pii-engine-levels.md#level-15--feedback-derived-regression-sets---open).
 - **Acceptance:** a reviewer can turn corrections into private benchmark data without exporting any
   PII outside `volumes/`.
 - **Boundary to L15:** L14 improves the ground truth; L15 governs review by policy.

@@ -8,6 +8,13 @@ Only offsets, entity type, recognizer, the artifact-authoritative score, and an 
 SHA-256 ``text_hash`` are stored — never document text, OCR full text, or raw entity values. Entity
 identity and engine settings are derived from the referenced PII artifact, not trusted from the
 client.
+
+Every recorded line is written twice: once under the document's own data directory (used to
+restore per-entity review state in the UI, and deleted with the document per ADR-0008), and once,
+unchanged and with ``document_id`` retained, into the separate, cross-document
+``pii_feedback_archive_dir`` archive. The archive is never touched by document deletion — by
+design, this feedback is meant to survive it so it can later feed PII-quality improvement or the
+private benchmark (review-feedback-levels.md, L14).
 """
 
 from __future__ import annotations
@@ -35,6 +42,9 @@ from app.services.document_service import DocumentNotFoundError, get_document_re
 
 _FEEDBACK_DIRECTORY = "feedback"
 _FEEDBACK_FILENAME = "pii_feedback.jsonl"
+# Single shared, cross-document log; the archive is intentionally not partitioned per document
+# since its purpose is aggregate analysis after documents (and their per-document copy) are gone.
+_ARCHIVE_FILENAME = "pii_feedback.jsonl"
 
 
 class FeedbackDisabledError(ApiError):
@@ -102,6 +112,7 @@ def record_pii_feedback(
         engine_settings_origin="artifact" if engine_settings is not None else "unknown",
     )
     _append_feedback_line(settings, document_id, record)
+    _append_archive_line(settings, record)
     return PiiFeedbackAck(
         recorded=True,
         schema_version=record.schema_version,
@@ -187,9 +198,23 @@ def _parse_record(line: str) -> PiiFeedbackRecord | None:
 def _append_feedback_line(
     settings: Settings, document_id: str, record: PiiFeedbackRecord
 ) -> None:
-    directory = _feedback_directory(settings, document_id)
-    directory.mkdir(parents=True, exist_ok=True)
-    destination = directory / _FEEDBACK_FILENAME
+    """Append to the per-document copy used to restore review state in the UI.
+
+    Deleted along with the document's data directory (ADR-0008) — this copy does not need to
+    survive deletion; the archive below is what does.
+    """
+    destination = _feedback_directory(settings, document_id) / _FEEDBACK_FILENAME
+    _append_line(destination, record)
+
+
+def _append_archive_line(settings: Settings, record: PiiFeedbackRecord) -> None:
+    """Append to the cross-document archive that survives document deletion by design."""
+    destination = settings.pii_feedback_archive_dir / _ARCHIVE_FILENAME
+    _append_line(destination, record)
+
+
+def _append_line(destination: Path, record: PiiFeedbackRecord) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
     # One JSON object per line; append-only so no run ever mutates a prior entry.
     line = record.model_dump_json() + "\n"
     try:
