@@ -217,6 +217,29 @@ def test_partial_positioned_input_cannot_drop_raw_data() -> None:
     assert result.status == "fallback"
 
 
+def test_flat_list_with_an_invoice_style_label_is_not_split_into_a_metadata_section() -> None:
+    """A generic label like 'Rechnungsnummer:' appearing mid-list must not, on its own, carve the
+    remaining rows into a separate metadata block. Without a party heading or an offer-specific
+    marker (Angebot/Bauvorhaben/Projekt), a flat, evenly spaced list of one-line facts is not a
+    quote/invoice header and must stay a single, consistently rendered block."""
+    lines = [
+        "Fact one: Alpha",
+        "Fact two: Beta",
+        "Fact three: Gamma",
+        "Rechnungsnummer: RE-0000001",
+        "Fact five: Delta",
+    ]
+    rows = [_row(0.10 + index * 0.018, (0.07, line)) for index, line in enumerate(lines)]
+    raw = "\n".join(lines)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == raw
+    assert result.status == "heuristic"
+    assert "document_sections" not in result.flags
+
+
 def _content(**fields: object) -> dict[str, object]:
     text = "Raw text"
     return {

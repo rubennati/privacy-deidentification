@@ -44,6 +44,17 @@ _METADATA_PREFIXES = (
     "projekt:",
     "rechnungsnummer",
 )
+# Markers distinctive enough, on their own, to justify carving a standalone metadata section out
+# of a document that has no party heading. "datum:"/"rechnungsnummer" are excluded here: they are
+# common single-fact labels that also appear in flat, non-quote documents (e.g. an ID/data sheet),
+# so one incidental match must not sweep the rest of the body into an undifferentiated block.
+_STANDALONE_METADATA_PREFIXES = (
+    "angebot nr.",
+    "angebot nr:",
+    "angebotsnummer",
+    "bauvorhaben:",
+    "projekt:",
+)
 _TOTAL_PREFIXES = (
     "zwischensumme",
     "nettosumme",
@@ -329,9 +340,9 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
             (
                 index
                 for index, row in enumerate(ordered[:body_end])
-                if _row_has_prefix(row, _METADATA_PREFIXES)
+                if _row_has_prefix(row, _STANDALONE_METADATA_PREFIXES)
             ),
-            0,
+            body_end,
         )
         blocks.extend(_plain_blocks(ordered[:metadata_index]))
         body_cursor = metadata_index
