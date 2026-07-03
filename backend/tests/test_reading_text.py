@@ -359,6 +359,82 @@ def test_paragraph_joining_does_not_absorb_unrelated_label_value_line() -> None:
     assert "Zahlungsbedingungen: zahlbar binnen 14 Tagen\n\nIBAN:" in result.text
 
 
+def test_close_prose_rows_after_table_join_but_separate_paragraph_gap_remains() -> None:
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Pos."),
+            (0.18, "Leistung"),
+            (0.55, "Menge"),
+            (0.68, "Einheit"),
+            (0.82, "Gesamt"),
+        ),
+        _row(
+            0.13,
+            (0.07, "1"),
+            (0.18, "Arbeit"),
+            (0.55, "1"),
+            (0.68, "Std"),
+            (0.82, "30,00"),
+        ),
+        _row(0.17, (0.62, "Gesamtbetrag:"), (0.82, "30,00")),
+        _row(0.21, (0.07, "ZAHLUNGSHINWEIS")),
+        _row(
+            0.25,
+            (
+                0.07,
+                "Bitte begleichen Sie den offenen Betrag innerhalb der vereinbarten Frist auf das",
+            ),
+        ),
+        _row(0.267, (0.07, "im Vertrag genannte Konto.")),
+        _row(
+            0.31,
+            (0.07, "Alternativ kann die Zahlung nach vorheriger Abstimmung vor Ort erfolgen."),
+        ),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    expected = (
+        "Bitte begleichen Sie den offenen Betrag innerhalb der vereinbarten Frist auf das "
+        "im Vertrag genannte Konto.\n\n"
+        "Alternativ kann die Zahlung nach vorheriger Abstimmung vor Ort erfolgen."
+    )
+    assert expected in result.text
+
+
+def test_close_post_table_label_value_rows_are_not_joined_as_prose() -> None:
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Pos."),
+            (0.18, "Leistung"),
+            (0.55, "Menge"),
+            (0.68, "Einheit"),
+            (0.82, "Gesamt"),
+        ),
+        _row(
+            0.13,
+            (0.07, "1"),
+            (0.18, "Arbeit"),
+            (0.55, "1"),
+            (0.68, "Std"),
+            (0.82, "30,00"),
+        ),
+        _row(0.17, (0.62, "Gesamtbetrag:"), (0.82, "30,00")),
+        _row(0.21, (0.07, "Kundennummer: SAMPLE-1")),
+        _row(0.227, (0.07, "IBAN: XX00 0000 0000 0000")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert "Kundennummer: SAMPLE-1\n\nIBAN: XX00 0000 0000 0000" in result.text
+
+
 def test_repeated_page_headers_and_footers_do_not_enter_middle_of_content() -> None:
     page_lines = [
         [

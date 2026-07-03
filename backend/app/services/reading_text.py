@@ -572,9 +572,31 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
             blocks.append([paragraph])
             flags.append("conservative_line_joining")
             continue
+        if _is_long_prose_line(line):
+            paragraph = line
+            cursor += 1
+            while (
+                cursor < len(lines)
+                and _rows_are_close(rows[cursor - 1], rows[cursor])
+                and not _starts_new_post_block(lines[cursor])
+            ):
+                paragraph = f"{paragraph} {lines[cursor]}"
+                cursor += 1
+            blocks.append([paragraph])
+            flags.append("conservative_line_joining")
+            continue
         blocks.append([line])
         cursor += 1
     return blocks, flags
+
+
+def _is_long_prose_line(line: str) -> bool:
+    return len(line) >= 60 and not _starts_new_post_block(line)
+
+
+def _rows_are_close(previous: ReadingRow, current: ReadingRow) -> bool:
+    row_height = max(previous.y1 - previous.y0, current.y1 - current.y0, 0.001)
+    return current.y0 - previous.y0 <= row_height * 1.65
 
 
 def _starts_new_post_block(line: str) -> bool:
