@@ -82,8 +82,8 @@ A deliberately separate chapter, because these terms get conflated and the guard
 
 ### Hard rules for any AI, at every level
 
-- **AI must never silently overwrite the canonical text.** Canonical text changes only via an
-  explicit reviewer/rule decision.
+- **AI must never silently overwrite technical raw or canonical reading text.** Any promoted text
+  change requires an explicit reviewer/rule decision and preserved source lineage.
 - **AI results must be labelled `assistive` / low-confidence** and stored distinctly from
   deterministic detections and human decisions.
 - **AI must run locally.** No document data may reach an external service, cached or otherwise.

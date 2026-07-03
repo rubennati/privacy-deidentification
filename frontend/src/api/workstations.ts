@@ -115,6 +115,12 @@ export interface TextArtifact {
     // Optional OCR L8 readable rendering. Legacy artifacts omit it; canonical `text` stays the
     // only offset-bearing text and the active PII input.
     readable_text?: string | null;
+    // OCR/Text L10.5 canonical reading text. It is the product-facing main text, while `text`
+    // remains the legacy technical raw extraction and current PII offset basis.
+    reading_text_version?: "1" | null;
+    reading_text?: string | null;
+    reading_text_status?: "heuristic" | "fallback" | null;
+    reading_text_flags?: string[];
     // Optional display-only reconstruction. Legacy artifacts omit it; PII offsets stay on `text`.
     layout_text_result?: string | null;
     // Internal/experimental OCR L9 slice. It remains inactive as a PII input.

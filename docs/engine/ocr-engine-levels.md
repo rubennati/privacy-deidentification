@@ -4,12 +4,13 @@ The OCR/Text engine turns an uploaded document into the **best possible machine-
 preserving structure as far as reasonably possible, so the PII engine and human reviewers work on
 trustworthy input. It is the first sub-engine in the [north star](README.md#north-star).
 
-Three output notions run through the levels and are defined in [`engine-artifacts.md`](engine-artifacts.md):
+The output notions are defined in [`engine-artifacts.md`](engine-artifacts.md):
 
-- **`best_text_result`** — the *canonical* text used by PII and review. Correctness first;
-  reading order and layout are secondary.
+- **`text_result.text`** — the legacy, offset-stable **technical raw text** used by PII today.
+- **`reading_text`** — the **canonical reading text**: deterministic, block-aware product text and
+  intended future PII/placeholder candidate once lineage is sufficient.
 - **`readable_text`** — a *human-readable* normalization that keeps the same content while making
-  prose easier to read.
+  prose easier to read; retained as the earlier L8 rendering.
 - **`layout_text_result`** — a layout-preserving rendering concerned with visual structure and
   reading order.
 
@@ -18,11 +19,14 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L10 reached (L0–L10 done); L11 is next.** Each successful OCR/Text run now
+**Current standing:** **L10.5 reached (L0–L10 done plus the required L10.5 contract step); L11 is
+next.** Each successful OCR/Text run now
 persists additive readable/layout views, versioned ordered/typed `layout_blocks` with coarse
 normalized page bounds, and additive `text_geometry` that maps canonical line spans to page-local
-line boxes (`pdf_points` for text-layer, `image_pixels` for OCR). Canonical text, routing, active PII
-input, and `quality_report` remain unchanged; L10 geometry provides source anchoring and
+line boxes (`pdf_points` for text-layer, `image_pixels` for OCR). L10.5 adds versioned
+`reading_text`, its heuristic/fallback status and non-sensitive flags, and makes it the default
+product reading view. Technical raw text, routing, active PII input, and `quality_report` remain
+unchanged; L10 geometry provides source anchoring and
 traceability for review/debug and future placeholder mapping — it does not perform
 pseudonymization, placeholder mapping, document export, or pixel-perfect visual redaction.
 
@@ -219,6 +223,27 @@ pseudonymization, placeholder mapping, document export, or pixel-perfect visual 
   and a foundation for future placeholder mapping toward AI-ready pseudonymized document generation.
   It does not perform pseudonymization, placeholder mapping, document export, or pixel-perfect
   visual redaction.
+
+## Intermediate L10.5 — Canonical reading text / raw-text contract  ✅ *done*
+
+- **Description:** separate the legacy technical extraction and offset coordinate system from the
+  useful, deterministic main document text before L11 adds structured content.
+- **Engine must:** preserve `text_result.text`, `text_char_count`, and `pages[].text` byte-for-byte as
+  **technical raw text**; add optional versioned `reading_text` built in priority order from
+  positioned/L10 geometry, L9 layout blocks, layout text, then safe raw-order fallback; keep major
+  blocks, paired party columns, offer metadata, simple line-item rows, totals, and conservative
+  paragraph joins readable without inventing or changing values.
+- **Artifacts:** additive `reading_text_version = "1"`, `reading_text`, `reading_text_status`
+  (`heuristic`/`fallback`), and non-sensitive `reading_text_flags` on `text_result`.
+- **Acceptance:** the synthetic quote fixture produces the specified block-aware, pipe-delimited
+  reading text; legacy artifacts validate; the Review User View defaults to **Kanonischer
+  Lesetext**, while Dev View can inspect **Technischer Rohtext**, **Kanonischer Lesetext**, and
+  **Layout-Text** separately.
+- **Boundary:** this does not switch PII input, provide reading↔raw offset lineage, create
+  `structured_content`, pseudonymize, map placeholders, redact, or export. PII and its highlights
+  still use technical raw text until a tested lineage map makes a switch safe.
+- **Boundary to L11:** L10.5 makes a useful plain-text document view; L11 emits explicit tables,
+  fields, and sections as structured JSON rather than relying on text rendering heuristics.
 
 ## Level 11 — Table / form reconstruction  ⛔ *open*
 

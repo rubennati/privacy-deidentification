@@ -17,42 +17,58 @@ const entity: PiiEntity = {
   recognizer: "FakeRecognizer",
 };
 
+const LEGACY_READING_TEXT = Symbol("legacy-reading-text");
+
 function render(
-  mode: "canonical" | "layout",
+  mode: "reading" | "raw" | "layout",
   layoutText: string | null | undefined,
   showEntityMeta?: boolean,
+  readingText: string | null | typeof LEGACY_READING_TEXT = "Lesefreundliches Wien",
+  devMode = true,
 ): string {
   return renderToStaticMarkup(
     <ReviewTextViewer
-      canonicalText="Hallo Wien"
+      rawText="Hallo Wien"
+      readingText={readingText === LEGACY_READING_TEXT ? undefined : readingText}
       layoutText={layoutText}
       entities={[entity]}
       mode={mode}
       onModeChange={vi.fn()}
+      devMode={devMode}
       showEntityMeta={showEntityMeta}
     />,
   );
 }
 
 describe("ReviewTextViewer", () => {
-  it("offers both display modes when layout text is present", () => {
-    const html = render("canonical", "Wien      Graz");
+  it("offers reading, raw, and layout modes in the dev view", () => {
+    const html = render("reading", "Wien      Graz");
 
-    expect(html).toContain("Canonical text");
-    expect(html).toContain("Layout text");
+    expect(html).toContain("Kanonischer Lesetext");
+    expect(html).toContain("Technischer Rohtext");
+    expect(html).toContain("Layout-Text");
+    expect(html).not.toContain("Canonical text");
     expect(html).toContain('aria-pressed="true"');
   });
 
-  it("shows canonical text with the existing PII highlights", () => {
-    const html = render("canonical", "Wien      Graz");
+  it("shows technical raw text with the existing PII highlights", () => {
+    const html = render("raw", "Wien      Graz");
 
     expect(html).toContain("Hallo ");
     expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
-    expect(html).not.toContain("Layout text is for reading/review only");
+    expect(html).not.toContain("PII-Markierungen verwenden derzeit");
+  });
+
+  it("shows canonical reading text as unhighlighted main text", () => {
+    const html = render("reading", "Wien      Graz");
+
+    expect(html).toContain("Lesefreundliches Wien");
+    expect(html).toContain("lesefreundliche Hauptansicht");
+    expect(html).not.toContain("<mark");
   });
 
   it("renders the extracted text inside a centered A4 paper sheet", () => {
-    const html = render("canonical", null);
+    const html = render("reading", null);
 
     // The A4-width, centered paper container is the review's primary document surface.
     expect(html).toContain("max-w-[210mm]");
@@ -60,37 +76,48 @@ describe("ReviewTextViewer", () => {
   });
 
   it("exposes entity type/score as a hover title by default (dev view)", () => {
-    const html = render("canonical", null);
+    const html = render("raw", null);
 
     expect(html).toContain('title="LOCATION');
   });
 
   it("suppresses the entity hover title when meta is hidden (user view)", () => {
-    const html = render("canonical", null, false);
+    const html = render("raw", null, false);
 
     // The highlight itself remains; only the technical hover metadata is gone.
     expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
     expect(html).not.toContain('title="LOCATION');
   });
 
-  it("shows layout text as unhighlighted plain text with the canonical-offset notice", () => {
+  it("shows layout text as unhighlighted plain text with the raw-offset notice", () => {
     const html = render("layout", "Wien      Graz");
 
     expect(html).toContain("Wien      Graz");
-    expect(html).toContain("Layout text is for reading/review only. PII highlights use canonical text.");
+    expect(html).toContain("Layout-Text dient der Orientierung");
+    expect(html).toContain("technischen Rohtext");
     expect(html).not.toContain("<mark");
   });
 
-  it.each([
-    ["null layout", null],
-    ["legacy artifact without the field", undefined],
-  ])("falls back cleanly to canonical text for %s", (_label, layoutText) => {
-    const html = render("layout", layoutText);
+  it("falls back cleanly to technical raw text for null reading text", () => {
+    const html = render("reading", null, undefined, null);
 
     expect(html).toContain("Hallo ");
     expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
-    expect(html).not.toContain("Canonical text</button>");
-    expect(html).not.toContain("Layout text</button>");
-    expect(html).not.toContain("Layout text is for reading/review only");
+  });
+
+  it("falls back cleanly for a legacy artifact without reading text", () => {
+    const html = render("reading", null, undefined, LEGACY_READING_TEXT);
+
+    expect(html).toContain("Hallo ");
+    expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
+  });
+
+  it("defaults the user view to reading text and keeps raw-highlight access", () => {
+    const html = render("reading", "Wien      Graz", false, "Lesefreundliches Wien", false);
+
+    expect(html).toContain("Lesefreundliches Wien");
+    expect(html).toContain("Kanonischer Lesetext");
+    expect(html).toContain("Technischer Rohtext");
+    expect(html).not.toContain("Layout-Text</button>");
   });
 });

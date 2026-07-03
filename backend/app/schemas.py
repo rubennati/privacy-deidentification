@@ -269,12 +269,21 @@ class TextContent(BaseModel):
     tool_versions: dict[str, str] = Field(default_factory=dict)
     flags: list[str] = Field(default_factory=list)
     # Additive, optional OCR L8 readable rendering. It normalizes whitespace, paragraph joins, and
-    # simple line-break hyphenation for humans, but it is never the canonical text, never the PII
+    # simple line-break hyphenation for humans, but it is never the technical raw offset text or PII
     # input, and carries no offset/lineage guarantee. Legacy artifacts may omit it.
     readable_text: str | None = Field(default=None)
+    # Additive OCR/Text L10.5 canonical reading text. This is the deterministic, block-aware main
+    # text for human reading and a future PII/placeholder-input candidate. It deliberately carries
+    # no offset/lineage guarantee yet: the legacy technical extraction in ``text`` remains the
+    # byte-stable offset basis and active PII input. All fields are optional/defaulted so artifacts
+    # written before L10.5 remain valid.
+    reading_text_version: Literal["1"] | None = None
+    reading_text: str | None = Field(default=None)
+    reading_text_status: Literal["heuristic", "fallback"] | None = None
+    reading_text_flags: list[str] = Field(default_factory=list)
     # Additive, optional human-readable layout reconstruction (OCR L9). It never feeds PII and is
-    # not the canonical text: ``text`` above stays the offset-stable source of truth. ``None`` when
-    # no layout was reconstructed (e.g. DOCX, image, or all-OCR documents), so legacy artifacts
+    # not the raw offset text: ``text`` above stays the offset-stable coordinate source. ``None``
+    # when no layout was reconstructed (e.g. DOCX, image, or all-OCR documents), so legacy artifacts
     # without this field remain valid. See docs/engine/ocr-layout-text-contract.md.
     layout_text_result: str | None = Field(default=None)
     # Additive, optional, INTERNAL semantic reading-order reconstruction (OCR L9 slice; PII-input
@@ -296,6 +305,19 @@ class TextContent(BaseModel):
     # valid.
     text_geometry_version: Literal["1"] | None = None
     text_geometry: TextGeometry | None = None
+
+    @model_validator(mode="after")
+    def _validate_reading_text(self) -> TextContent:
+        has_reading_text = self.reading_text is not None
+        if has_reading_text != (self.reading_text_version == "1"):
+            raise ValueError("reading text and version must be present together")
+        if has_reading_text != (self.reading_text_status is not None):
+            raise ValueError("reading text and status must be present together")
+        if not has_reading_text and self.reading_text_flags:
+            raise ValueError("reading text flags require reading text")
+        if self.reading_text is not None and not self.reading_text.strip():
+            raise ValueError("reading text must contain non-whitespace content")
+        return self
 
     @model_validator(mode="after")
     def _validate_text_geometry(self) -> TextContent:
