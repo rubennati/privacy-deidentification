@@ -50,6 +50,7 @@ from app.services.reading_text import (
     build_reading_text,
     collect_pdf_reading_rows,
 )
+from app.services.reading_text_projection import build_reading_text_map
 from app.services.structured_content import build_structured_content
 from app.services.text_geometry import (
     build_ocr_page_geometry,
@@ -467,6 +468,9 @@ def _text_content(
         layout_text_result,
         positioned_rows=reading_rows or [],
     )
+    reading_map = (
+        build_reading_text_map(text, reading.text, pages) if reading is not None else []
+    )
     return TextContent(
         document_id=document_id,
         input_artifact_id=original.id,
@@ -482,6 +486,8 @@ def _text_content(
         reading_text=reading.text if reading is not None else None,
         reading_text_status=reading.status if reading is not None else None,
         reading_text_flags=list(reading.flags) if reading is not None else [],
+        reading_text_map_version="1" if reading is not None else None,
+        reading_text_map=reading_map,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
         layout_blocks_version="1" if blocks else None,

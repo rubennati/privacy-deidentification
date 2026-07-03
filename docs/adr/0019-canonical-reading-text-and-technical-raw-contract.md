@@ -21,7 +21,8 @@ OCR L11 structured content must not be built before the plain-text layers have e
    text, then safe raw order. Bounded heuristics may group obvious party columns, offer metadata,
    line-item rows, totals, and split prose, but must not invent or change values.
 4. User View defaults to reading text when available. Dev View retains reading, raw, and layout
-   modes. PII highlights remain confined to raw mode until lineage exists.
+   modes. An optional offset-only `reading_text_map` may safely project existing raw PII findings
+   into reading mode; ambiguous, partial, or missing mappings remain raw-only.
 5. Reading text is an intended future PII/typed-placeholder candidate, but no input switch is
    permitted until a tested lineage map translates reading spans to raw/source coordinates.
 
@@ -33,8 +34,10 @@ OCR L11 structured content must not be built before the plain-text layers have e
 - The builder is deterministic, adapter-bound to existing pypdf/PaddleOCR geometry, and has an exact
   synthetic quote fixture. No dependency or external/LLM rewriting is introduced.
 - OCR L11 may now add structured tables/fields/sections without overloading either plain-text layer.
+- The reading projection is a display/review bridge, not the complete round-trippable
+  `text_lineage_map`; it does not satisfy the gate for changing the active PII input.
 
 ## Non-scope
 
-No PII input switch, lineage map, structured-content JSON, pseudonymization, placeholder mapping,
+No PII input switch, full source/view lineage map, pseudonymization, placeholder mapping,
 redaction/export, worker/queue, database, or artifact mutation.

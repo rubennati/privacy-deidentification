@@ -27,6 +27,7 @@ from app.services.document_service import DocumentNotFoundError, get_document_re
 from app.services.pii_adapters import DetectedEntity, PiiAnalyzer
 from app.services.pii_candidate_validation import ValidatedEntity, validate_candidates
 from app.services.pii_profiles import PiiProfileName, get_pii_profile
+from app.services.reading_text_projection import project_pii_entities_to_reading_text
 
 
 class PiiConflictError(ApiError):
@@ -157,6 +158,9 @@ def _analyze_text(
 
     try:
         entities = _build_entities(text, validated_detected)
+        entities = project_pii_entities_to_reading_text(
+            entities, text_artifact.content.reading_text_map
+        )
     except ApiError:
         raise
     except Exception as exc:
@@ -171,6 +175,11 @@ def _analyze_text(
         language=run_settings.pii_language,
         score_threshold=run_settings.pii_score_threshold,
         text_char_count=len(text),
+        reading_text_char_count=(
+            len(text_artifact.content.reading_text)
+            if text_artifact.content.reading_text is not None
+            else None
+        ),
         configured_entity_types=list(configured_types),
         entities=entities,
         entity_counts=dict(sorted(counts.items())),

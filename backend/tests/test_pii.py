@@ -102,6 +102,7 @@ def _save_text(
     layout_text_result: str | None = None,
     readable_text: str | None = None,
     reading_text: str | None = None,
+    reading_text_map: list[dict[str, object]] | None = None,
     layout_blocks: list[LayoutBlock] | None = None,
     structured_content: StructuredContent | None = None,
     created_at: str = "2026-07-01T10:00:00.000001Z",
@@ -139,6 +140,8 @@ def _save_text(
             reading_text=reading_text,
             reading_text_status="heuristic" if reading_text is not None else None,
             reading_text_flags=["geometry_ordering"] if reading_text is not None else [],
+            reading_text_map_version="1" if reading_text is not None else None,
+            reading_text_map=reading_text_map or [],
             layout_blocks_version="1" if layout_blocks else None,
             layout_blocks=layout_blocks or [],
             structured_content_version="1" if structured_content else None,
@@ -200,10 +203,60 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
         "original_score": 0.86,
         "validation_status": "kept",
         "validation_reasons": [],
+        "reading_start_offset": None,
+        "reading_end_offset": None,
+        "projection_status": "unmapped",
     }
     assert pii_fake.calls == ["Max Mustermann"]
     artifact_path = document_data_dir / document_id / "artifacts" / f"{artifact['id']}.json"
     assert artifact_path.is_file()
+
+
+def test_post_projects_pii_into_reading_text_without_changing_detection_input(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    raw = "Max\nMustermann"
+    _save_text(
+        settings,
+        document_id,
+        raw,
+        reading_text="Max Mustermann",
+        reading_text_map=[
+            {
+                "reading_start": 0,
+                "reading_end": 3,
+                "raw_start": 0,
+                "raw_end": 3,
+                "mapping_status": "exact",
+            },
+            {
+                "reading_start": 3,
+                "reading_end": 4,
+                "raw_start": 3,
+                "raw_end": 4,
+                "mapping_status": "normalized",
+            },
+            {
+                "reading_start": 4,
+                "reading_end": 14,
+                "raw_start": 4,
+                "raw_end": 14,
+                "mapping_status": "exact",
+            },
+        ],
+    )
+    pii_fake.results[raw] = [_entity("PERSON", 0, 14, 0.86)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    entity = response.json()["content"]["entities"][0]
+    assert pii_fake.calls == [raw]
+    assert (entity["start_offset"], entity["end_offset"], entity["text"]) == (0, 14, raw)
+    assert (entity["reading_start_offset"], entity["reading_end_offset"]) == (0, 14)
+    assert entity["projection_status"] == "exact"
 
 
 def test_pdf_pages_have_local_and_global_offsets(

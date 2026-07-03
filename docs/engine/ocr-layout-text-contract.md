@@ -46,8 +46,9 @@ never shift a canonical PII offset, and no layer becomes an island.
 
 ### 2. Canonical reading text
 
-- **Fields:** optional `reading_text_version = "1"`, `reading_text`, `reading_text_status`, and
-  `reading_text_flags` on `text_result` (absent on older artifacts).
+- **Fields:** optional `reading_text_version = "1"`, `reading_text`, `reading_text_status`,
+  `reading_text_flags`, and offset-only `reading_text_map_version`/`reading_text_map` on
+  `text_result` (absent on older artifacts).
 - **Purpose:** the cleaned, deterministic, block-aware main document text: sensible top-to-bottom
   order, intact party/address/account blocks, stable pipe-delimited line-item rows, major-block blank
   lines, and conservative prose joining without visual A4 spacing.
@@ -58,9 +59,13 @@ never shift a canonical PII offset, and no layer becomes an island.
   non-sensitive strategy/coverage codes and never copied text.
 - **UI:** User View defaults to **Kanonischer Lesetext** when present. Dev View can switch among
   **Kanonischer Lesetext**, **Technischer Rohtext**, and **Layout-Text**.
-- **Boundary:** no offset/lineage guarantee yet and **not** the active PII input. It is the intended
-  future PII and typed-placeholder candidate only after a tested lineage map can translate every
-  reading span back to technical raw/source coordinates.
+- **Review projection:** the conservative map covers only safely matched fragments. Existing raw
+  PII entities may carry additive exact reading offsets; partial/unmapped entities stay visible in
+  raw mode only. Segments contain offsets/status/flags, never copied text, and ambiguous repeats are
+  not guessed.
+- **Boundary:** this partial display map is **not** the active PII input and is not the complete
+  round-trippable source/view lineage map. A future input switch still requires the full separation
+  gate below.
 
 ### 3. PII-input text
 
@@ -168,8 +173,9 @@ These hold for any future implementation:
   `pii_input_text` is later made the active detection input, **every** result must map
   deterministically to technical raw offsets — no PII result may exist that cannot be expressed in
   raw coordinates.
-- **PII highlights and offsets remain anchored to technical raw text.** Visible marking in
-  `layout_text_result` happens **through** the lineage map, never by re-detecting on the layout text.
+- **PII highlights and authoritative offsets remain anchored to technical raw text.** Reading-mode
+  marking uses only exact projected offsets; layout mode remains unhighlighted. No view is
+  re-detected independently.
 - **PII-input text and layout text must be married via lineage/mapping** — neither is a standalone
   island; both trace to the same source blocks/lines/words as canonical.
 - **`reading_text`, `pii_input_text`, `readable_text`, `layout_text_result`, `layout_blocks`,

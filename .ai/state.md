@@ -66,6 +66,10 @@
     line-item rows, totals, and split prose render deterministically. User View defaults to
     **Kanonischer Lesetext**; Dev View exposes it beside **Technischer Rohtext** and **Layout-Text**.
     Technical raw/page text and counts remain byte-stable, and PII still uses raw text only.
+  - `reading_text_map` (non-level review bridge) — optional versioned offset-only segments map only
+    unambiguous reading fragments to technical raw spans. PII artifacts add optional
+    exact/partial/unmapped projection status; only exact projections highlight in Canonical Reading
+    Text, while raw offsets/input remain authoritative and legacy/ambiguous cases stay raw-only.
   - `structured_content` (L11) — optional versioned per-page tables/cells, label/value fields, and
     heading-bound sections. Table cells and field values reference canonical/page spans rather than
     duplicating raw content; short labels/headings, source, confidence, flags, and optional L10 line
@@ -164,6 +168,11 @@ conservatively while label/value rows and larger paragraph gaps remain boundarie
 positive and must-not-trigger regressions cover flat facts, offer metadata, party columns,
 tables/totals, paragraph boundaries, and repeated margins. Raw text, PII input, routing,
 dependencies, artifact versions, and the next engine cadence are unchanged.
+
+**Latest reading-text projection checkpoint:** OCR/Text remains L11 and PII remains L9 done/L10
+partial. The safe display bridge adds no recognizer, detection-input, dependency, routing,
+benchmark-payload, pseudonymization, redaction, or export change. It is not the full lineage map and
+does not satisfy the PII-input separation gate. Next remains PII L11 grouping.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

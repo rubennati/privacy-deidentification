@@ -1079,6 +1079,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     payload["content"].pop("reading_text", None)
     payload["content"].pop("reading_text_status", None)
     payload["content"].pop("reading_text_flags", None)
+    payload["content"].pop("reading_text_map_version", None)
+    payload["content"].pop("reading_text_map", None)
     payload["content"].pop("layout_text_result", None)
     payload["content"].pop("layout_blocks_version", None)
     payload["content"].pop("layout_blocks", None)

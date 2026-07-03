@@ -215,6 +215,16 @@ export interface TextArtifact {
     reading_text?: string | null;
     reading_text_status?: "heuristic" | "fallback" | null;
     reading_text_flags?: string[];
+    reading_text_map_version?: "1" | null;
+    reading_text_map?: Array<{
+      reading_start: number;
+      reading_end: number;
+      raw_start: number;
+      raw_end: number;
+      page_number: number | null;
+      mapping_status: "exact" | "normalized" | "partial";
+      flags: string[];
+    }>;
     // Optional display-only reconstruction. Legacy artifacts omit it; PII offsets stay on `text`.
     layout_text_result?: string | null;
     // Internal/experimental OCR L9 slice. It remains inactive as a PII input.
@@ -248,6 +258,9 @@ export interface PiiEntity {
   original_score?: number | null;
   validation_status?: "kept" | "score_down" | null;
   validation_reasons?: string[];
+  reading_start_offset?: number | null;
+  reading_end_offset?: number | null;
+  projection_status?: "exact" | "partial" | "unmapped" | null;
 }
 
 export interface PiiValidationSummary {
@@ -282,6 +295,7 @@ export interface PiiArtifact {
     language: string;
     score_threshold: number;
     text_char_count: number;
+    reading_text_char_count?: number | null;
     configured_entity_types: string[];
     entities: PiiEntity[];
     entity_counts: Record<string, number>;

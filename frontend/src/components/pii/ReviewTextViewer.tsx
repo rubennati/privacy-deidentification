@@ -35,6 +35,32 @@ export function ReviewTextViewer({
       : mode === "reading" && hasReadingText
         ? "reading"
         : "raw";
+  const projectedEntities =
+    readingText == null
+      ? []
+      : entities.flatMap((entity) => {
+          const start = entity.reading_start_offset;
+          const end = entity.reading_end_offset;
+          if (
+            entity.projection_status !== "exact" ||
+            start == null ||
+            end == null ||
+            start < 0 ||
+            end <= start ||
+            end > Array.from(readingText).length
+          ) {
+            return [];
+          }
+          return [
+            {
+              ...entity,
+              text: Array.from(readingText).slice(start, end).join(""),
+              start_offset: start,
+              end_offset: end,
+            },
+          ];
+        });
+  const hasRawOnlyEntities = entities.some((entity) => entity.projection_status !== "exact");
 
   return (
     <section className="min-w-0" aria-labelledby="text-viewer-heading">
@@ -96,8 +122,15 @@ export function ReviewTextViewer({
       {activeMode !== "raw" && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent-dark">
           {activeMode === "reading"
-            ? "Der Lesetext ist die lesefreundliche Hauptansicht. PII-Markierungen verwenden derzeit den technischen Rohtext."
+            ? devMode
+              ? "Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen verwenden sicher projizierte Lesetext-Offsets."
+              : "Der Lesetext ist die lesefreundliche Hauptansicht."
             : "Der Layout-Text dient der Orientierung. PII-Markierungen verwenden derzeit den technischen Rohtext."}
+        </p>
+      )}
+      {activeMode === "reading" && hasRawOnlyEntities && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Einige PII-Markierungen sind nur im technischen Rohtext sichtbar.
         </p>
       )}
 
@@ -117,9 +150,11 @@ export function ReviewTextViewer({
             )
           ) : activeMode === "reading" ? (
             readingText ? (
-              <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-7 text-ink">
-                {readingText}
-              </pre>
+              <PiiTextViewer
+                text={readingText}
+                entities={projectedEntities}
+                showEntityMeta={showEntityMeta}
+              />
             ) : (
               <p className="text-sm text-muted">Der kanonische Lesetext ist leer.</p>
             )
