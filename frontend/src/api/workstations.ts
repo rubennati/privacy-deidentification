@@ -92,6 +92,100 @@ export interface TextGeometry {
   flags: string[];
 }
 
+export interface StructuredSpan {
+  canonical_start: number;
+  canonical_end: number;
+  page_start: number;
+  page_end: number;
+}
+
+export interface StructuredBounds {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  coordinate_unit: "pdf_points" | "image_pixels";
+}
+
+export interface StructuredTableCell {
+  row_index: number;
+  column_index: number;
+  row_span: number;
+  column_span: number;
+  span: StructuredSpan;
+  bounds?: StructuredBounds | null;
+  role: "header" | "data" | "label" | "value" | "unknown";
+}
+
+export interface StructuredTable {
+  table_id: string;
+  page_number: number;
+  row_count: number;
+  column_count: number;
+  cells: StructuredTableCell[];
+  caption?: string | null;
+  bounds?: StructuredBounds | null;
+  source: "layout_blocks" | "text_geometry" | "canonical_text" | "hybrid";
+  confidence: number;
+  flags: string[];
+}
+
+export interface StructuredField {
+  field_id: string;
+  page_number: number;
+  label: string;
+  label_span: StructuredSpan;
+  value_span: StructuredSpan;
+  bounds?: StructuredBounds | null;
+  field_type_hint:
+    | "person_name"
+    | "company"
+    | "address"
+    | "iban"
+    | "contract_id"
+    | "invoice_id"
+    | "customer_id"
+    | "date"
+    | "phone"
+    | "email"
+    | "unknown";
+  confidence: number;
+  source: "layout_blocks" | "text_geometry" | "canonical_text" | "hybrid";
+  flags: string[];
+}
+
+export interface StructuredSection {
+  section_id: string;
+  page_number: number;
+  heading: string;
+  heading_span: StructuredSpan;
+  span: StructuredSpan;
+  field_ids: string[];
+  table_ids: string[];
+  source: "layout_blocks" | "text_geometry" | "canonical_text" | "hybrid";
+  confidence: number;
+  flags: string[];
+}
+
+export interface StructuredContent {
+  pages: Array<{
+    page_number: number;
+    tables: StructuredTable[];
+    fields: StructuredField[];
+    sections: StructuredSection[];
+    source: "layout_blocks" | "text_geometry" | "canonical_text" | "hybrid";
+    confidence: number;
+    quality_flags: string[];
+  }>;
+  summary: {
+    page_count: number;
+    table_count: number;
+    field_count: number;
+    section_count: number;
+  };
+  flags: string[];
+}
+
 export interface TextArtifact {
   id: string;
   document_id: string;
@@ -132,6 +226,10 @@ export interface TextArtifact {
     // review/debug. Not redaction-ready (that remains L15). Legacy artifacts omit it.
     text_geometry_version?: "1" | null;
     text_geometry?: TextGeometry | null;
+    // Additive OCR L11 table/form structure. Values and cells stay span-backed; PII continues to
+    // consume canonical `text` only.
+    structured_content_version?: "1" | null;
+    structured_content?: StructuredContent | null;
   };
 }
 

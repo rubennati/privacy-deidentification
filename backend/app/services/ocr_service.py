@@ -19,6 +19,7 @@ from app.schemas import (
     LayoutBlock,
     OcrLineConfidence,
     OriginalArtifact,
+    StructuredContent,
     TextArtifact,
     TextContent,
     TextGeometry,
@@ -49,6 +50,7 @@ from app.services.reading_text import (
     build_reading_text,
     collect_pdf_reading_rows,
 )
+from app.services.structured_content import build_structured_content
 from app.services.text_geometry import (
     build_ocr_page_geometry,
     build_pdf_page_geometry,
@@ -266,6 +268,9 @@ def _extract_pdf(
     pii_input_text = _combine_pii_input_segments(pii_input_entries)
     readable_text = build_readable_text(text, [page.text for page in pages])
     text_geometry = build_text_geometry(geometry_pages, len(pages))
+    structured_content = build_structured_content(
+        text, pages, layout_blocks, text_geometry
+    )
     flags = [
         flag
         for flag, used in (("pdf_mixed", source == "pdf_mixed"), ("ocr_used", used_ocr))
@@ -285,6 +290,7 @@ def _extract_pdf(
         pii_input_text=pii_input_text,
         layout_blocks=layout_blocks,
         text_geometry=text_geometry,
+        structured_content=structured_content,
         reading_rows=reading_rows,
     )
 
@@ -362,6 +368,7 @@ def _extract_docx(
 ) -> TextContent:
     document = DocxDocument(str(original_path))
     text = extract_docx_text(document)
+    layout_blocks = build_fallback_layout_blocks(text)
     return _text_content(
         document_id,
         original,
@@ -372,7 +379,8 @@ def _extract_docx(
         {"python-docx": version("python-docx")},
         [],
         readable_text=build_readable_text(text),
-        layout_blocks=build_fallback_layout_blocks(text),
+        layout_blocks=layout_blocks,
+        structured_content=build_structured_content(text, [], layout_blocks, None),
     )
 
 
@@ -395,6 +403,15 @@ def _extract_image(
         ocr_confidence=ocr_result.confidence,
         ocr_line_confidences=_line_confidences(ocr_result),
     )
+    layout_blocks = build_ocr_layout_blocks(ocr_result, 1)
+    text_geometry = build_text_geometry(
+        [
+            geometry
+            for geometry in (build_ocr_page_geometry(ocr_result, 1, text, 0),)
+            if geometry is not None
+        ],
+        1,
+    )
     return _text_content(
         document_id,
         original,
@@ -405,14 +422,10 @@ def _extract_image(
         ocr_adapter.tool_versions(),
         ["ocr_used"],
         readable_text=build_readable_text(text, [page.text]),
-        layout_blocks=build_ocr_layout_blocks(ocr_result, 1),
-        text_geometry=build_text_geometry(
-            [
-                geometry
-                for geometry in (build_ocr_page_geometry(ocr_result, 1, text, 0),)
-                if geometry is not None
-            ],
-            1,
+        layout_blocks=layout_blocks,
+        text_geometry=text_geometry,
+        structured_content=build_structured_content(
+            text, [page], layout_blocks, text_geometry
         ),
     )
 
@@ -442,6 +455,7 @@ def _text_content(
     pii_input_text: str | None = None,
     layout_blocks: list[LayoutBlock] | None = None,
     text_geometry: TextGeometry | None = None,
+    structured_content: StructuredContent | None = None,
     reading_rows: list[ReadingRow] | None = None,
 ) -> TextContent:
     blocks = layout_blocks or []
@@ -474,6 +488,8 @@ def _text_content(
         layout_blocks=blocks,
         text_geometry_version="1" if text_geometry is not None else None,
         text_geometry=text_geometry,
+        structured_content_version="1" if structured_content is not None else None,
+        structured_content=structured_content,
     )
 
 

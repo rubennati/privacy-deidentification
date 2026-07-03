@@ -224,6 +224,251 @@ class TextGeometry(BaseModel):
         return self
 
 
+class StructuredBounds(BaseModel):
+    """Optional page-local bounds for one OCR L11 structure."""
+
+    x0: float = Field(ge=0.0)
+    y0: float = Field(ge=0.0)
+    x1: float = Field(ge=0.0)
+    y1: float = Field(ge=0.0)
+    coordinate_unit: Literal["pdf_points", "image_pixels"]
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> StructuredBounds:
+        if self.x1 <= self.x0 or self.y1 <= self.y0:
+            raise ValueError("structured bounds must have positive width and height")
+        return self
+
+
+class StructuredSpan(BaseModel):
+    """Half-open canonical and page-local offsets without duplicated source text."""
+
+    canonical_start: int = Field(ge=0)
+    canonical_end: int = Field(ge=0)
+    page_start: int = Field(ge=0)
+    page_end: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate_offsets(self) -> StructuredSpan:
+        if self.canonical_end <= self.canonical_start:
+            raise ValueError("structured canonical span must be non-empty")
+        if self.page_end <= self.page_start:
+            raise ValueError("structured page span must be non-empty")
+        if self.canonical_end - self.canonical_start != self.page_end - self.page_start:
+            raise ValueError("structured canonical and page spans must have equal lengths")
+        return self
+
+
+class StructuredTableCell(BaseModel):
+    """One table cell represented by offsets into immutable canonical/page text."""
+
+    row_index: int = Field(ge=0)
+    column_index: int = Field(ge=0)
+    row_span: int = Field(default=1, ge=1)
+    column_span: int = Field(default=1, ge=1)
+    span: StructuredSpan
+    bounds: StructuredBounds | None = None
+    role: Literal["header", "data", "label", "value", "unknown"] = "unknown"
+
+
+class StructuredTable(BaseModel):
+    """Conservatively reconstructed OCR L11 table."""
+
+    table_id: str = Field(pattern=r"^table-p[1-9][0-9]*-[1-9][0-9]*$")
+    page_number: int = Field(ge=1)
+    row_count: int = Field(ge=0)
+    column_count: int = Field(ge=0)
+    cells: list[StructuredTableCell] = Field(default_factory=list)
+    caption: str | None = Field(default=None, min_length=1, max_length=160)
+    bounds: StructuredBounds | None = None
+    source: Literal["layout_blocks", "text_geometry", "canonical_text", "hybrid"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_cells(self) -> StructuredTable:
+        if not self.cells:
+            if not self.flags:
+                raise ValueError("empty structured tables must be flagged")
+            return self
+        if self.row_count == 0 or self.column_count == 0:
+            raise ValueError("non-empty structured tables require rows and columns")
+        keys: set[tuple[int, int]] = set()
+        for cell in self.cells:
+            if cell.row_index + cell.row_span > self.row_count:
+                raise ValueError("table cell row index/span exceeds row count")
+            if cell.column_index + cell.column_span > self.column_count:
+                raise ValueError("table cell column index/span exceeds column count")
+            key = (cell.row_index, cell.column_index)
+            if key in keys:
+                raise ValueError("table cells must have unique row/column indexes")
+            keys.add(key)
+        return self
+
+
+class StructuredField(BaseModel):
+    """A label/value pair whose value remains referenced, not duplicated."""
+
+    field_id: str = Field(pattern=r"^field-p[1-9][0-9]*-[1-9][0-9]*$")
+    page_number: int = Field(ge=1)
+    label: str = Field(min_length=1, max_length=80)
+    label_span: StructuredSpan
+    value_span: StructuredSpan
+    bounds: StructuredBounds | None = None
+    field_type_hint: Literal[
+        "person_name",
+        "company",
+        "address",
+        "iban",
+        "contract_id",
+        "invoice_id",
+        "customer_id",
+        "date",
+        "phone",
+        "email",
+        "unknown",
+    ] = "unknown"
+    confidence: float = Field(ge=0.0, le=1.0)
+    source: Literal["layout_blocks", "text_geometry", "canonical_text", "hybrid"]
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_pair(self) -> StructuredField:
+        if self.label_span.canonical_end > self.value_span.canonical_start:
+            raise ValueError("structured field label must precede its value")
+        return self
+
+
+class StructuredSection(BaseModel):
+    """A simple heading-bound range containing reconstructed fields or tables."""
+
+    section_id: str = Field(pattern=r"^section-p[1-9][0-9]*-[1-9][0-9]*$")
+    page_number: int = Field(ge=1)
+    heading: str = Field(min_length=1, max_length=160)
+    heading_span: StructuredSpan
+    span: StructuredSpan
+    field_ids: list[str] = Field(default_factory=list)
+    table_ids: list[str] = Field(default_factory=list)
+    source: Literal["layout_blocks", "text_geometry", "canonical_text", "hybrid"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_section_span(self) -> StructuredSection:
+        if not (
+            self.span.canonical_start <= self.heading_span.canonical_start
+            and self.heading_span.canonical_end <= self.span.canonical_end
+        ):
+            raise ValueError("section span must contain its heading span")
+        if not self.field_ids and not self.table_ids and not self.flags:
+            raise ValueError("empty structured sections must be flagged")
+        return self
+
+
+class StructuredPageContent(BaseModel):
+    """Structured OCR L11 output for one physical or logical page."""
+
+    page_number: int = Field(ge=1)
+    tables: list[StructuredTable] = Field(default_factory=list)
+    fields: list[StructuredField] = Field(default_factory=list)
+    sections: list[StructuredSection] = Field(default_factory=list)
+    source: Literal["layout_blocks", "text_geometry", "canonical_text", "hybrid"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    quality_flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_page_structures(self) -> StructuredPageContent:
+        item_page_numbers = [
+            *(table.page_number for table in self.tables),
+            *(field.page_number for field in self.fields),
+            *(section.page_number for section in self.sections),
+        ]
+        if any(page_number != self.page_number for page_number in item_page_numbers):
+            raise ValueError("structured item belongs to a different page")
+        ids = [
+            *(table.table_id for table in self.tables),
+            *(field.field_id for field in self.fields),
+            *(section.section_id for section in self.sections),
+        ]
+        if len(ids) != len(set(ids)):
+            raise ValueError("structured item ids must be unique per page")
+        if not ids and not self.quality_flags:
+            raise ValueError("empty structured pages must be flagged")
+        field_ids = {field.field_id for field in self.fields}
+        table_ids = {table.table_id for table in self.tables}
+        for section in self.sections:
+            if not set(section.field_ids) <= field_ids or not set(section.table_ids) <= table_ids:
+                raise ValueError("structured section references an unknown item")
+        return self
+
+
+class StructuredContentSummary(BaseModel):
+    """Metrics-only counts safe for logs and benchmark-style reporting."""
+
+    page_count: int = Field(ge=0)
+    table_count: int = Field(ge=0)
+    field_count: int = Field(ge=0)
+    section_count: int = Field(ge=0)
+
+
+class StructuredContent(BaseModel):
+    """Additive OCR L11 tables, fields, and sections beside canonical text."""
+
+    pages: list[StructuredPageContent] = Field(default_factory=list)
+    summary: StructuredContentSummary
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_summary(self) -> StructuredContent:
+        page_numbers = [page.page_number for page in self.pages]
+        if page_numbers != sorted(page_numbers) or len(page_numbers) != len(set(page_numbers)):
+            raise ValueError("structured pages must have unique page numbers in sorted order")
+        if not self.pages and not self.flags:
+            raise ValueError("empty structured content must be flagged")
+        expected = StructuredContentSummary(
+            page_count=len(self.pages),
+            table_count=sum(len(page.tables) for page in self.pages),
+            field_count=sum(len(page.fields) for page in self.pages),
+            section_count=sum(len(page.sections) for page in self.pages),
+        )
+        if self.summary != expected:
+            raise ValueError("structured content summary does not match its pages")
+        return self
+
+
+def _structured_page_spans(page: StructuredPageContent) -> list[StructuredSpan]:
+    return [
+        *(cell.span for table in page.tables for cell in table.cells),
+        *(field.label_span for field in page.fields),
+        *(field.value_span for field in page.fields),
+        *(section.heading_span for section in page.sections),
+        *(section.span for section in page.sections),
+    ]
+
+
+def _validate_structured_page_text(
+    page: StructuredPageContent,
+    canonical_text: str,
+    page_text: str,
+    canonical_base: int,
+) -> None:
+    for span in _structured_page_spans(page):
+        if span.canonical_end > len(canonical_text) or span.page_end > len(page_text):
+            raise ValueError("structured span exceeds canonical or page text length")
+        if canonical_text[span.canonical_start : span.canonical_end] != page_text[
+            span.page_start : span.page_end
+        ]:
+            raise ValueError("structured canonical and page spans reference different text")
+        if span.canonical_start != canonical_base + span.page_start:
+            raise ValueError("structured canonical/page offsets are inconsistent")
+    for field in page.fields:
+        label = canonical_text[
+            field.label_span.canonical_start : field.label_span.canonical_end
+        ]
+        if label != field.label:
+            raise ValueError("structured field label does not match its canonical span")
+
+
 class TextPageResult(BaseModel):
     """Ordered text extracted from one PDF or image page."""
 
@@ -305,6 +550,38 @@ class TextContent(BaseModel):
     # valid.
     text_geometry_version: Literal["1"] | None = None
     text_geometry: TextGeometry | None = None
+    # OCR L11 additive semantic structure. Values and table contents are represented by spans into
+    # immutable canonical/page text; only short labels/headings are repeated. It is not a PII input,
+    # pseudonymization layer, placeholder map, redaction model, or export format.
+    structured_content_version: Literal["1"] | None = None
+    structured_content: StructuredContent | None = None
+
+    @model_validator(mode="after")
+    def _validate_structured_content(self) -> TextContent:
+        if (self.structured_content is not None) != (self.structured_content_version == "1"):
+            raise ValueError("structured content and version must be present together")
+        if self.structured_content is None:
+            return self
+        pages_by_number = {page.page_number: page for page in self.pages}
+        canonical_bases: dict[int, int] = {}
+        canonical_base = 0
+        for text_page in self.pages:
+            canonical_bases[text_page.page_number] = canonical_base
+            canonical_base += len(text_page.text) + 2
+        for structured_page in self.structured_content.pages:
+            matching_page = pages_by_number.get(structured_page.page_number)
+            if matching_page is None:
+                if self.source != "docx_text" or structured_page.page_number != 1:
+                    raise ValueError("structured content references a missing page")
+                page_text = self.text
+                canonical_base = 0
+            else:
+                page_text = matching_page.text
+                canonical_base = canonical_bases[structured_page.page_number]
+            _validate_structured_page_text(
+                structured_page, self.text, page_text, canonical_base
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_reading_text(self) -> TextContent:
