@@ -1,203 +1,196 @@
 # Engine Roadmap
 
-The order in which engine capability is built, reframed around the engine (not infrastructure). Each
-item lists goal, scope, non-scope, affected files, whether it adds a dependency, tests, benchmark
-verification, risk, and acceptance criteria.
+OCR/Text and PII/Sensitive-Data are the product core. Review, benchmark, storage, and later
+redaction support those engines. All current planning uses the cumulative **0–19 maturity scale**;
+historical level numbers remain only in ADRs and the legacy mapping sections of the per-engine
+documents.
 
-Sequencing rationale: **measure first, then fix the biggest gaps the benchmark exposes** — structured
-recall (AT/DE + domain), then NER precision (candidate validation), then human review, then the DB
-and optional AI. Redaction is the final foundation, deliberately last.
+## Current standing
 
-## Status overview
+| Engine | Current level | Delivered | Next |
+| --- | --- | --- | --- |
+| OCR / Text | **L11 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L12 overlap resolution |
+| PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution |
+| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
+| Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
+| Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
 
-| ID | Title | Status |
-| --- | --- | --- |
-| Engine-0 | Capability model / target architecture | ✅ **done** (PR #8) |
-| Engine-1 | Benchmark runner / regression metrics | ✅ **done** (PR #7) |
-| Engine-2 | OCR L4–L5 hardening (confidence + quality report + readable text) | planned |
-| Engine-3 | OCR layout/table spike | planned (spike) |
-| Engine-4 | PII L2–L3 `insurance-at-de` recognizer pack | ✅ **done** |
-| Engine-5 | PII L5 candidate validation | ✅ **done** |
-| Engine-6 | Review/feedback model (Review L2–L4) | planned (priority) |
-| Engine-7 | DB architecture spike | planned (spike) |
-| Engine-8 | Optional local AI / VLM spike | planned (spike) |
-| Engine-9 | Redaction / de-identification foundation | planned (later) |
+## Delivered foundation
 
----
+- OCR L0–L11 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
+  runtime, quality routing/fallback, additive OCR confidence, an immutable metrics-only
+  `quality_report` for every successful run, additive readable/layout views plus deterministic typed
+  layout blocks for PDF and OCR content, and additive `text_geometry` line boxes mapping raw offset
+  spans to page-local geometry (source anchoring and traceability for review/debug, and a foundation
+  for future placeholder mapping toward AI-ready pseudonymized document generation — it does not
+  perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
+  redaction), plus canonical `reading_text` as the deterministic block-aware main document view and
+  conservative span-backed tables, label/value fields, and sections in optional
+  `structured_content`. PII still uses raw text.
+- PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
+  benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
+  and reproducible run settings.
+- PII L10 / Review L5 partial: gated, append-only per-entity feedback capture for local analysis.
+  This is not a binding `review_result` and does not alter detection.
+- PII L11 / Review L6: conservative, derived entity grouping (`pii_grouping.py`, no schema change to
+  `pii_result`) plus a lineage-bound review-decision overlay (every entity defaults to
+  `pseudonymize`; a reviewer opts one out via `keep`/`false_positive`, at group or occurrence
+  scope), covering much of Review L8/L9's practical intent without yet being the formal
+  `review_result` artifact model. See
+  [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
+- Benchmark L0–L8 plus an out-of-order L10 slice: private inputs, artifact matching, routing and PII
+  metrics, privacy guarding, deterministic output, validation-stage aggregates, and safe
+  lineage-matched OCR confidence/coverage columns.
 
-## Engine-0 — Capability model / target architecture  *(this PR)*
+## Current sequence
 
-- **Goal:** define the engine target picture, levels, artifacts, metrics, tool strategy, and roadmap.
-- **Scope:** `docs/engine/*`, ADR-0011, and pointer updates in `README.md`, `.ai/state.md`,
-  `.ai/decisions.md`.
-- **Non-scope:** any OCR/PII/review behaviour change; any dependency.
-- **Affected files:** docs only.
-- **New dependency:** no.
-- **Tests:** `make lint` / `make typecheck` / `make test` unaffected (docs only).
-- **Benchmark:** none (may run `make benchmark-private` to validate the snapshot; no report
-  committed).
-- **Risk:** low (documentation).
-- **Acceptance:** the eight engine documents + ADR exist, cross-link, and the current-level snapshot
-  matches the repo and the benchmark.
+### 1. Repository foundation cleanup — documentation only
 
-## Engine-1 — Benchmark runner / regression metrics  ✅ *done (PR #7)*
+- **Goal:** make the 0–19 model, repository state, API/storage documentation, and next-step ordering
+  consistent before further engine work.
+- **Maturity change:** none.
+- **Non-scope:** runtime behaviour, dependencies, recognizers, feedback logic, benchmark logic, and
+  redaction.
 
-- **Delivered:** `scripts/benchmark/` (stdlib-only), `make benchmark-private[-json]`,
-  `make benchmark-test`, `privacy_guard.py`, [ADR-0010](../adr/0010-private-benchmark-runner.md).
-- **Covers:** corpus coverage/matching, OCR/text routing correctness + page-status distribution,
-  PII P/R/F1 per doc/type/group/global, privacy-guarded reports.
-- **Remaining for a later benchmark-maturity bump (L3):** OCR confidence/runtime/memory columns,
-  per-profile PII metrics, run history/trend, and a CI regression gate — folded into Engine-2 (OCR
-  metrics) and a later CI task.
+### 2. Feedback integrity hardening — no new level
 
-## Engine-2 — OCR L4–L5 hardening
+- **Goal:** make the existing dev-only PII L10 / Review L5 capture reliable before building on its
+  data.
+- **Scope:** validate submitted entity fingerprints against the referenced `pii_result`, preserve
+  exact lineage, and verify feedback restore/lock behaviour in the UI.
+- **Non-scope:** binding review decisions, learning, global rules, or a `review_result`.
 
-- **Goal:** make OCR quality *measurable* (confidence, `quality_report`) and produce a
-  human-readable text rendering distinct from the canonical text.
-- **Scope:** capture per-page PaddleOCR confidence; add a `quality_report` artifact (counts/coverage/
-  confidence, no text); add a deterministic readable rendering seed (`layout_text_result`) that never
-  mutates `best_text_result`; extend the benchmark with confidence/coverage columns.
-- **Non-scope:** layout geometry/columns (Engine-3), tables (Engine-3), any AI.
-- **Affected files:** `backend/app/services/ocr_adapters.py` (confidence), `ocr_service.py`,
-  `audit_service.py`/`text_quality.py` (report), `schemas.py` (new artifact), `scripts/benchmark/*`,
-  `docs/engine/*`.
-- **New dependency:** no (confidence is already in the PaddleOCR payload).
-- **Tests:** confidence extraction + `quality_report` unit tests; canonical-text-unchanged test.
-- **Benchmark:** confidence/coverage appear in `make benchmark-private`; routing unchanged.
-- **Risk:** medium (touches the OCR path; must not change routing behaviour).
-- **Acceptance:** every OCR page carries confidence; a `quality_report` exists; a readable rendering
-  exists alongside an unchanged canonical text.
+### 3. OCR/PII implementation plan — planning checkpoint
 
-## Engine-3 — OCR layout/table spike
+- **Goal:** define the small PR sequence and acceptance fixtures for OCR L6/L7 and later PII
+  L11/L12 work.
+- **Required outputs:** artifact fields, privacy boundaries, adapter contracts, benchmark changes,
+  and tests for each level.
+- **Maturity change:** none.
 
-- **Goal:** evaluate layout/table reconstruction (OCR L6–L7) before committing a tool.
-- **Scope:** isolated spike comparing PyMuPDF (geometry) and Docling/PP-Structure (structure/tables)
-  on representative pages; produce findings, not a pipeline change.
-- **Non-scope:** wiring a new engine into the pipeline; changing canonical text.
-- **Affected files:** a spike dir + `docs/engine/*` findings (adapter only if adopted).
-- **New dependency:** spike-local only; a pipeline dependency needs its own follow-up PR.
-- **Tests:** spike harness; no production tests until adoption.
-- **Benchmark:** layout readability / table-quality metrics prototyped.
-- **Risk:** low (isolated); medium if adopted (heavy deps).
-- **Acceptance:** a written recommendation on layout/table tooling with measured evidence.
+### 4. OCR L6 — confidence capture — delivered
 
-## Engine-4 — PII L2–L3 `insurance-at-de` recognizer pack  ✅ *done*
+- **Goal:** capture engine-reported OCR confidence per OCR page and, where available, per line.
+- **Scope:** PaddleOCR adapter output, additive text-page metrics, benchmark consumption, and
+  synthetic tests.
+- **Non-scope:** routing changes, `quality_report`, text reflow, geometry, tables, or a new OCR tool.
+- **Dependency:** none; confidence is already present in the PaddleOCR payload.
+- **Acceptance:** every OCR page carries a documented confidence value; canonical text and routing
+  remain unchanged; benchmark output can aggregate the metric without reading raw text.
+- **Delivered:** valid PaddleOCR `rec_scores` are stored as metric-only line entries and an
+  arithmetic page mean on `text_result.pages[]`; missing scores are tolerated and `audit_result`
+  remains immutable.
 
-- **Goal:** close the biggest detection gaps the benchmark shows — AT/DE structured recall and the
-  zero-coverage domain-sensitive group.
-- **Delivered:** dependency-free Presidio pattern specifications materialized lazily by the adapter;
-  AT/DE structured + insurance/legal/business identifiers; four named coverage profiles recorded in
-  `pii_result`; benchmark canonical mappings for the new types.
-- **Remaining:** address/contact-line recognizers and L4 per-profile benchmark reporting.
-- **Non-scope:** candidate validation (Engine-5), NER retuning, any new heavy model.
-- **Affected files:** `backend/app/services/pii_adapters.py` (custom recognizers), `config.py`
-  (supported types/profiles), `schemas.py` (entity types), `scripts/benchmark/pii_matching.py`
-  (canonical map already lists these), tests, `docs/engine/*`.
-- **New dependency:** no (Presidio recognizers, deterministic patterns/context).
-- **Tests:** recognizer unit tests with **synthetic** AT/DE + domain values only.
-- **Benchmark:** `domain_sensitive_types` group moves off zero; `PHONE_NUMBER`/`IBAN_CODE` recall
-  rises without collapsing precision.
-- **Risk:** medium (precision/recall trade-offs on real formats).
-- **Acceptance:** synthetic AT/DE + domain identifiers detected; measurable recall lift on the
-  benchmark with acceptable precision.
+### 5. OCR L7 — `quality_report` — delivered
 
-## Engine-5 — PII L5 candidate validation  ✅ *done*
+- **Goal:** persist a metrics-only document summary for OCR/text quality.
+- **Scope:** source mix, page coverage, low-confidence counts, confidence summary, explicit lineage,
+  and benchmark loading.
+- **Non-scope:** readable text, layout, geometry, tables, or redaction.
+- **Acceptance:** each completed OCR/Text run has an immutable `quality_report` containing no page
+  text or raw PII.
+- **Delivered:** each report carries exact original/audit/text lineage plus source mix, audit quality
+  counts, confidence, and coverage; benchmark loading prefers matching reports and preserves legacy
+  fallback behavior.
 
-- **Goal:** raise NER precision by pruning/scoring-down obvious false positives — a subtractive,
-  auditable post-processing step (see
-  [PII engine: candidate validation](pii-engine-levels.md#candidate-validation-is-a-post-processing-exclusion-step)).
-- **Delivered:** dependency-free lexical/shape validation rules (`pii_validation_rules.py`,
-  `pii_candidate_validation.py`) producing KEEP/SCORE_DOWN/DROP with a fixed reason-code set;
-  wired into `pii_service.py` before persistence. `pii_result` gains additive per-entity
-  `original_score`/`validation_status`/`validation_reasons` and a content-level `validation`
-  summary — no new artifact type. `PII_CANDIDATE_VALIDATION_ENABLED` (default on) is an escape
-  hatch. Benchmark runner aggregates validation counts corpus-wide.
-- **Non-scope:** new detection, AI plausibility (Engine-8), review actions (Engine-6).
-- **Affected files:** `backend/app/services/pii_service.py`, `pii_candidate_validation.py`,
-  `pii_validation_rules.py` (new), `config.py`, `schemas.py`, `scripts/benchmark/*`, tests,
-  `docs/engine/*`, `docs/adr/0013-pii-candidate-validation.md`.
-- **New dependency:** no (lexical/shape rules only; no spaCy POS/model dependency introduced).
-- **Tests:** validation-rule unit tests, pii_service integration tests (drop excluded, summary
-  counts, profile stability), privacy tests (no raw values in reasons/logs/summary), benchmark
-  unit + end-to-end tests.
-- **Benchmark:** see the before/after numbers in
-  [`quality-metrics.md`](quality-metrics.md#benchmark-snapshot-aggregate-private-beforeafter-run).
-- **Risk:** medium-high (must not suppress true positives) — mitigated by preferring SCORE_DOWN
-  over DROP whenever a rule is ambiguous.
-- **Acceptance:** NER precision materially improves on the benchmark, every suppression carries a
-  reason, and true positives are preserved.
+## Later engine work
 
-## Engine-6 — Review/feedback model (Review L2–L4)
+### OCR L8 — human-readable text — delivered
 
-- **Goal:** persist human confirm/reject/add/comment over immutable PII labels, lineage-safe.
-- **Scope:** `review_result` artifact + API + UI actions bound to `pii_result`/`text_result`; stale
-  handling on re-extraction; reasons/comments.
-- **Non-scope:** rules engine (Review L5 / PII L8), DB (Engine-7), policy workflow.
-- **Affected files:** `backend/app/schemas.py`, a `review_service.py`, `backend/app/api/*`,
-  `frontend/src/components/pii/*` + detail page, tests, `docs/engine/*`.
-- **New dependency:** no (file-based `review_result` first).
-- **Tests:** decision persistence + lineage/stale tests (backend + frontend).
-- **Benchmark:** review corrections become an available signal (Review L7 later feeds ground truth).
-- **Risk:** medium (first mutable-ish state; keep `pii_result` immutable).
-- **Acceptance:** confirm/reject/add/comment persist against exact lineage and re-render; re-runs mark
-  decisions stale rather than reapplying them.
+`readable_text` now exists as an additive, deterministic human-readable rendering on `text_result`
+while canonical `best_text_result` stays byte-stable. PII offsets continue to reference only
+canonical text.
 
-## Engine-7 — DB architecture spike
+### OCR L9 — layout-aware text — delivered
 
-- **Goal:** decide the database approach when review/rules state makes files awkward (see
-  [DB chapter](target-architecture.md#database-considerations)).
-- **Scope:** design doc + spike: SQLite-first schema for index/state, run history, review decisions,
-  rules; migration strategy from file artifacts. **No production migration in the spike.**
-- **Non-scope:** moving raw text/PII into a DB; PostgreSQL; ORM rollout.
-- **Affected files:** a design doc/ADR + spike; no production schema.
-- **New dependency:** spike-local (e.g. stdlib `sqlite3`); production deps in a follow-up.
-- **Tests:** spike only.
-- **Benchmark:** could enable run-history/trend once adopted.
-- **Risk:** low (spike).
-- **Acceptance:** an ADR recommending SQLite-first scope (what moves to DB, what stays files) with a
-  migration sketch.
+`layout_text_result` remains the Review UI string, while versioned `layout_blocks` add deterministic
+page-local order, conservative types, extraction source, optional OCR confidence, and coarse
+normalized page bounds. PDF positions and transient PaddleOCR polygons are used without adding a
+dependency. Canonical/page text, readable text, quality reporting, and active PII input are
+unchanged. L11 structure is delivered separately from these display-oriented blocks.
 
-## Engine-8 — Optional local AI / VLM spike
+### OCR L10 — span geometry — delivered
 
-- **Goal:** evaluate a **local** model for hard-page OCR assist and/or PII plausibility, under the
-  [hard AI rules](target-architecture.md#hard-rules-for-any-ai-at-every-level).
-- **Scope:** isolated, local-only spike on a hard-page subset; assistive output only; measure assist
-  acceptance vs baseline.
-- **Non-scope:** pipeline integration; any external inference; auto-committing AI output as canonical.
-- **Affected files:** a spike dir + findings; no production path.
-- **New dependency:** spike-local only (large model), never in the default image.
-- **Tests:** spike harness + human adjudication.
-- **Benchmark:** assist-acceptance / false-improvement metrics prototyped.
-- **Risk:** medium (weight/latency); low to the product (isolated).
-- **Acceptance:** a written recommendation, with evidence, on whether/where local AI earns its place
-  — respecting local-only, assistive, auditable constraints.
+Additive `text_geometry` (`text_geometry_version = "1"`) maps canonical line spans to page-local
+line boxes: each `TextLineGeometry` links `canonical_start`/`canonical_end` (into `text_result.text`)
+and `page_start`/`page_end` (into `pages[].text`) to `x0/y0/x1/y1` bounds in the page's
+`coordinate_unit` (`pdf_points` for text-layer, `image_pixels` for OCR). Offsets are matched against
+the immutable canonical text — never regenerated — so canonical/page text and char counts stay
+byte-stable and PII still runs on canonical text. Pages without safely derivable geometry degrade to
+`partial`/`unsupported` with a coverage flag rather than guessing; DOCX has no geometry. The internal
+`resolve_span_geometry` helper resolves a canonical span to intersecting line boxes and never returns
+raw text. This provides line-level source anchoring and traceability for review/debug, and a
+foundation for future placeholder mapping toward AI-ready pseudonymized document generation — it does
+not perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
+redaction. Word-level/redaction-ready geometry remains open at later levels.
 
-## Engine-9 — Redaction / de-identification foundation
+### OCR L10.5 — canonical reading text / raw-text contract — delivered prerequisite
 
-- **Goal:** begin the actual de-identification — masking/redaction built on reviewed PII, as a
-  separate station after review approval.
-- **Scope:** redaction primitives behind an adapter (e.g. PyMuPDF), a redaction station design,
-  export of a de-identified document; gated on approved `review_result`.
-- **Non-scope:** everything before it must be solid first; this is the last roadmap item for a reason.
-- **Affected files:** a `redaction_service.py` + adapter, export path, schemas, UI, tests, docs.
-- **New dependency:** likely PyMuPDF (redaction) — reviewed for licensing.
-- **Tests:** redaction correctness (masked spans truly removed), no-leak tests.
-- **Benchmark:** redaction completeness vs reviewed spans.
-- **Risk:** high (correctness is safety-critical — a missed span leaks PII).
-- **Acceptance:** approved PII spans are verifiably removed from an exported document, driven by
-  reviewed decisions, with an audit trail.
+New text artifacts retain `text_result.text`, `text_char_count`, and `pages[].text` unchanged as
+technical raw extraction and the current PII offset coordinate system. Optional versioned
+`reading_text` is the product-facing canonical reading text. Its deterministic builder prefers
+position/geometry, then layout blocks, layout text, and raw-order fallback; it groups simple party
+columns, offer metadata, line-item rows, totals, and conservatively split prose. Status and flags
+make heuristic/fallback output explicit without copying text into metrics. User View defaults to
+reading text; Dev View can inspect reading, raw, and layout separately. No PII switch, lineage map,
+structured-content JSON, placeholder mapping, pseudonymization, redaction, or export is included.
 
----
+### OCR L11 — table/form reconstruction — delivered
 
-## Current level standing (project-wide)
+Optional versioned `structured_content` on `text_result` contains per-page tables/cells,
+label/value fields, and heading-bound sections. Cells and values reference immutable canonical/page
+spans instead of duplicating raw content; short labels/headings, optional L10 bounds, source,
+confidence, and partial-quality flags preserve useful context. Deterministic delimiter/alignment and
+common German/English field heuristics run for PDF text-layer, OCR/image, and DOCX outputs without a
+new dependency. Canonical/page text, active PII input, `quality_report`, benchmark summaries, and UI
+remain unchanged. This supports future context-preserving pseudonymization but does not implement
+placeholders, mappings, pseudonymized output, redaction, or export.
 
-| Area | Current level | Justification | Next level | Next PR |
-| --- | --- | --- | --- | --- |
-| OCR / Text engine | **L3 done, L4 partial** | per-page routing + quality verdicts shipped; no OCR confidence, no `quality_report`, no readable rendering | L4 → L5 | Engine-2 |
-| PII engine | **L5 done** | AT/DE + domain pack, named coverage profiles, and candidate validation shipped; address/contact-line recognition and per-profile benchmark reporting remain open | L6 | Engine-6 (entity resolution overlaps into Review) |
-| Review / feedback | **L1 done** | detail page lists candidates + lineage-safe highlights; no persisted decisions | L2 | Engine-6 |
-| Benchmark / regression | **L2** | reproducible routing + PII P/R/F1 from existing artifacts; single snapshot, no trend/CI gate | L3 (trend + CI) | Engine-2 + later CI |
-| Storage / core | **sufficient for MVP** | separated roots, immutable artifacts, validated deletes | — | — |
-| Database | **not implemented; architecture open** | everything file-based | decide SQLite-first index/state | Engine-7 (spike) |
-| Optional local AI/VLM | **not started** | deliberately deferred; guardrails defined | isolated spike | Engine-8 (spike) |
-| Redaction / de-identification | **not started** | detection-only by design; needs review first | foundation | Engine-9 |
+### PII L11 — entity grouping — delivered
+
+Groups repeated same-type occurrences under a stable presentation key without changing or dropping
+detections; each occurrence keeps its offsets and jump-to-text behaviour. Delivered as a pure,
+derived view (`pii_grouping.group_pii_entities`) recomputed from the latest `pii_result` on every
+request — `pii_result`'s schema is unchanged. See
+[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
+
+### PII L12 — overlap resolution
+
+Define and apply auditable engine-level precedence for duplicate, nested, and overlapping candidates.
+The current display-only highlight resolver is not engine-level entity resolution.
+
+### Review L6 — grouped occurrences — delivered
+
+Mirrors PII L11: the `PiiReviewGroupList` panel shows one row per entity group (type, occurrence
+count, reading-text projection coverage, current decision) with an expandable per-occurrence list.
+
+### Review L8–L9 — binding review — partially delivered
+
+A lineage-bound, file-based decision overlay now exists (`GET/POST …/pii/review[/decisions]`,
+append-only JSONL under `document-data/<id>/review/`, scoped to the exact current `pii_result.id` so
+a re-run never silently reapplies a stale decision). Every detected entity defaults to
+`pseudonymize` (no separate "pending" state, unlike a plain confirm/reject); a reviewer opts one out
+via `keep` or `false_positive`, at group or occurrence scope with occurrence-level override. This is
+a lighter persistence shape than the
+formal single-artifact `review_result` model L8 originally described — that remains open, along
+with an explicit stale-decision indicator (L7), manual add (L10), and reason/comment metadata (L11).
+Dev feedback JSONL remains a separate, dev-gated analysis input. See
+[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
+
+### Benchmark L9–L10
+
+Add per-profile PII metrics in one invocation at L9. The L10 OCR confidence/coverage columns are
+already delivered out of order using L7 `quality_report` with a legacy artifact fallback; cumulative
+benchmark maturity remains L8 until L9 lands.
+
+### Redaction remains blocked
+
+Redaction stays at L0 until reviewed decisions, stable/resolved PII spans, and OCR text-to-geometry
+mapping exist. No masking, pseudonymisation, or de-identified export is implemented today.
+
+## Legacy work-package cross-reference
+
+Older documents and ADRs may refer to `Engine-0` through `Engine-9`. Those names are historical
+work-package identifiers, not maturity levels. Delivered packages covered the capability model,
+benchmark foundation, AT/DE/domain recognizers, and candidate validation. Planned package contents
+are superseded by the level-specific sequence above.

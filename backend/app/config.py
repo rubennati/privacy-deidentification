@@ -54,6 +54,14 @@ class Settings(BaseSettings):
         default=Path("/data/document-data"),
         alias="DOCUMENT_DATA_DIR",
     )
+    # Root for the dev-only PII review-feedback archive (see feedback_service.py). Deliberately a
+    # third, separate root from document_data_dir: feedback here is retained across a document's
+    # deletion by design, so it can later feed PII improvement/benchmark work, whereas
+    # document_data_dir shares one deletion boundary with its document (ADR-0008).
+    pii_feedback_archive_dir: Path = Field(
+        default=Path("/data/pii-feedback-archive"),
+        alias="PII_FEEDBACK_ARCHIVE_DIR",
+    )
     ocr_model_dir: Path | None = Field(default=None, alias="OCR_MODEL_DIR")
     # Names of the locally provisioned PaddleOCR models. They must match the models placed under
     # OCR_MODEL_DIR/text_detection and OCR_MODEL_DIR/text_recognition (see
@@ -84,6 +92,9 @@ class Settings(BaseSettings):
     # on; kept as an explicit escape hatch to fall back to raw detection output if needed.
     pii_candidate_validation_enabled: bool = Field(
         default=True, alias="PII_CANDIDATE_VALIDATION_ENABLED"
+    )
+    enable_dev_engine_settings: bool = Field(
+        default=False, alias="ENABLE_DEV_ENGINE_SETTINGS"
     )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
@@ -157,17 +168,19 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _storage_directories_are_separate(self) -> Settings:
-        """Reject equal or nested roots so originals and application data cannot mix."""
-        upload_root = self.upload_storage_dir.resolve()
-        document_root = self.document_data_dir.resolve()
-        if (
-            upload_root == document_root
-            or upload_root.is_relative_to(document_root)
-            or document_root.is_relative_to(upload_root)
-        ):
-            raise ValueError(
-                "UPLOAD_STORAGE_DIR and DOCUMENT_DATA_DIR must be separate directories"
-            )
+        """Reject equal or nested roots so originals, document data, and the feedback archive
+        (which must outlive a document's deletion) can never mix."""
+        roots = {
+            "UPLOAD_STORAGE_DIR": self.upload_storage_dir.resolve(),
+            "DOCUMENT_DATA_DIR": self.document_data_dir.resolve(),
+            "PII_FEEDBACK_ARCHIVE_DIR": self.pii_feedback_archive_dir.resolve(),
+        }
+        names = list(roots)
+        for i, left_name in enumerate(names):
+            for right_name in names[i + 1 :]:
+                left, right = roots[left_name], roots[right_name]
+                if left == right or left.is_relative_to(right) or right.is_relative_to(left):
+                    raise ValueError(f"{left_name} and {right_name} must be separate directories")
         return self
 
     @property

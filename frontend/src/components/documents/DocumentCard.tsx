@@ -40,7 +40,7 @@ export function DocumentCard({
 
       <div className="flex shrink-0 items-center gap-3">
         <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent-dark">
-          Entgegengenommen
+          Bereit
         </span>
         <button
           type="button"

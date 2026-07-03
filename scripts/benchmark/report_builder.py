@@ -41,6 +41,7 @@ def _availability_to_dict(availability: ArtifactAvailability) -> dict[str, str]:
     return {
         "audit_result": availability.audit_result,
         "text_result": availability.text_result,
+        "quality_report": availability.quality_report,
         "pii_result": availability.pii_result,
     }
 
@@ -94,13 +95,24 @@ def _ocr_metrics_to_dict(metrics: DocumentOcrMetrics) -> dict[str, Any]:
         "text_source": metrics.text_source,
         "final_char_count": metrics.final_char_count,
         "final_word_count": metrics.final_word_count,
+        "pages_without_text": metrics.pages_without_text,
         "ocr_pages_count": metrics.ocr_pages_count,
         "text_layer_pages_count": metrics.text_layer_pages_count,
+        "ocr_pages_with_confidence": metrics.ocr_pages_with_confidence,
+        "ocr_lines_with_confidence": metrics.ocr_lines_with_confidence,
+        "ocr_page_confidence_mean": _rounded(metrics.ocr_page_confidence_mean),
+        "ocr_page_confidence_min": _rounded(metrics.ocr_page_confidence_min),
+        "ocr_page_confidence_max": _rounded(metrics.ocr_page_confidence_max),
+        "quality_report_used": metrics.quality_report_used,
         "expected_pipeline_category": metrics.expected_pipeline_category,
         "actual_pipeline_category": metrics.actual_pipeline_category,
         "routing_matches_expectation": metrics.routing_matches_expectation,
         "notes": list(metrics.notes),
     }
+
+
+def _rounded(value: float | None) -> float | None:
+    return round(value, 4) if value is not None else None
 
 
 def _entity_type_metrics_to_dict(metrics: EntityTypeMetrics) -> dict[str, Any]:
@@ -230,6 +242,22 @@ def build_report(
                 "total_broken_text_layer_pages": ocr_aggregate.total_broken_text_layer_pages,
                 "total_empty_text_layer_pages": ocr_aggregate.total_empty_text_layer_pages,
                 "total_needs_ocr_pages": ocr_aggregate.total_needs_ocr_pages,
+                "total_pages_without_text": ocr_aggregate.total_pages_without_text,
+                "total_ocr_pages_with_confidence": (
+                    ocr_aggregate.total_ocr_pages_with_confidence
+                ),
+                "total_ocr_lines_with_confidence": (
+                    ocr_aggregate.total_ocr_lines_with_confidence
+                ),
+                "ocr_page_confidence_mean": _rounded(
+                    ocr_aggregate.ocr_page_confidence_mean
+                ),
+                "ocr_page_confidence_min": _rounded(
+                    ocr_aggregate.ocr_page_confidence_min
+                ),
+                "ocr_page_confidence_max": _rounded(
+                    ocr_aggregate.ocr_page_confidence_max
+                ),
             },
             "routing_mismatches": list(ocr_aggregate.routing_mismatches),
             "highlighted_documents": _highlighted_documents(documents_section),
@@ -342,9 +370,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append("")
     if ocr_quality:
         lines += [
-            "| Document | Pages | Good | Low conf. | Broken | Empty | Needs OCR | Text source | "
-            "Expected pipeline | Actual pipeline | Routing match |",
-            "|---|---:|---:|---:|---:|---:|---:|---|---|---|---|",
+            "| Document | Pages | Good | Low conf. | Broken | Empty | Needs OCR | No text | "
+            "OCR conf. | Text source | Expected pipeline | Actual pipeline | Routing match |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|",
         ]
         for entry in report["documents"]:
             ocr = entry.get("ocr_text_metrics")
@@ -354,7 +382,9 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"| {ocr['display_filename']} | {ocr['page_count']} | "
                 f"{ocr['pages_good_text_layer']} | {ocr['pages_low_confidence_text_layer']} | "
                 f"{ocr['pages_broken_text_layer']} | {ocr['pages_empty_text_layer']} | "
-                f"{ocr['pages_needing_ocr']} | {ocr['text_source']} | "
+                f"{ocr['pages_needing_ocr']} | {ocr['pages_without_text']} | "
+                f"{ocr['ocr_page_confidence_mean']} | "
+                f"{ocr['text_source']} | "
                 f"{ocr['expected_pipeline_category']} | {ocr['actual_pipeline_category']} | "
                 f"{ocr['routing_matches_expectation']} |"
             )
@@ -368,6 +398,11 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- BROKEN_TEXT_LAYER: {agg['total_broken_text_layer_pages']}",
             f"- EMPTY_TEXT_LAYER: {agg['total_empty_text_layer_pages']}",
             f"- needs_ocr pages: {agg['total_needs_ocr_pages']}",
+            f"- pages without final text: {agg['total_pages_without_text']}",
+            f"- OCR pages with confidence: {agg['total_ocr_pages_with_confidence']}",
+            f"- OCR lines with confidence: {agg['total_ocr_lines_with_confidence']}",
+            f"- OCR page confidence mean/min/max: {agg['ocr_page_confidence_mean']} / "
+            f"{agg['ocr_page_confidence_min']} / {agg['ocr_page_confidence_max']}",
             "",
         ]
         highlighted = ocr_quality.get("highlighted_documents") or {}

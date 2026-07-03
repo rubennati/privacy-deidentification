@@ -2,13 +2,13 @@
 
 ## Windows Quick Start
 
-PowerShell oeffnen und ausfuehren:
+Open PowerShell and run:
 
 ```powershell
 irm https://raw.githubusercontent.com/rubennati/privacy-deidentification/main/scripts/windows/install.ps1 | iex
 ```
 
-Danach stehen diese Befehle bereit:
+The following commands are then available:
 
 ```powershell
 & "$HOME\PrivacyDeID\deid.ps1" start
@@ -17,13 +17,14 @@ Danach stehen diese Befehle bereit:
 & "$HOME\PrivacyDeID\deid.ps1" status
 ```
 
-Die App laeuft unter <http://localhost:8080>. Details: [Windows Local App](docs/windows-local-app.md).
+The app runs at <http://localhost:8080>. See [Windows Local App](docs/windows-local-app.md) for
+details.
 
 ## Branch workflow
 
-Feature-PRs zielen auf `dev`. `main` ist der bewusst freigegebene lokale App-Stand und erhaelt nur
-kuratierte Merges aus `dev` oder explizite Hotfixes. Windows-Installation und Updates verwenden
-immer `main`.
+Feature and documentation PRs target `dev`, the integration branch. `main` is the curated,
+user-stable local-app branch and receives only intentional promotions from `dev` or explicit
+hotfixes. Windows installation and update scripts always use `main`.
 
 A Docker-first application foundation for privacy-focused document preparation and de-identification workflows.
 
@@ -35,22 +36,24 @@ separately under `./volumes/document-data`.
 > synchronous OCR/Text and detection-only PII workstations, plus a manual document review UI.
 > Anonymization and redaction remain separate later steps.
 
-## Approach: tool-first / adapter-only
+## Approach: tool-first / adapter-bound
 
-The de-identification capability will be delivered by **integrating proven open-source tools
-behind adapters** — not by building custom intelligence. Extraction/OCR (e.g. OCRmyPDF,
-Tesseract, MinerU), PII/PHI detection (e.g. Presidio, noirdoc) and redaction (e.g. PyMuPDF)
-are integrated behind a port/interface. Our own code is orchestration, the review UI, file
-handling, export logic and secure integration. See [`AGENTS.md`](AGENTS.md).
+Core OCR, NER, redaction, and pseudonymization intelligence comes from **proven open-source tools
+behind adapters**. Extraction/OCR (for example OCRmyPDF, Tesseract, or MinerU), PII/PHI detection
+(Presidio/noirdoc), and future redaction (PyMuPDF) remain replaceable behind ports. Narrow Presidio
+recognizers, context rules, candidate validation, and deterministic domain heuristics are allowed
+when documented, tested, benchmarkable, reviewable, and auditable. See [`AGENTS.md`](AGENTS.md).
 
 ## Engine capability model
 
 The core of the project is the engine: local OCR/Text, local PII/sensitive-data, review/feedback,
 and optional (later) local AI assist. [`docs/engine/`](docs/engine/README.md) defines what each
-sub-engine should do level 0→10, the artifacts and metrics, the tool strategy, the target
-architecture (including the database and optional-local-AI questions), and the reframed roadmap.
-See [ADR-0011](docs/adr/0011-engine-capability-model.md). Current standing (summary): OCR/Text at
-Level 3 (Level 4 partial), PII at Level 1 (Level 4 foundation), review at Level 1.
+central engine should do on a **0–19 maturity scale**, the artifacts and metrics, the runtime
+settings, the tool strategy, the target architecture (including the database and optional-local-AI
+questions), and the roadmap. See [ADR-0011](docs/adr/0011-engine-capability-model.md) and
+[ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md). Current standing (summary): OCR/Text
+**L10 plus the required L10.5 canonical-reading-text step**, PII **L9** (L10 dev-only feedback capture partial), Review **L2** (dev-only through L5),
+Benchmark **L8**, Redaction **L0**.
 
 ## Architecture
 
@@ -112,13 +115,19 @@ by the make target (not by `.env`), so `make up` is always slim:
 them. Text PDFs and DOCX (including tables) are extracted **without** OCR; only image documents
 and scanned PDF pages need the OCR runtime plus provisioned models.
 
+`INSTALL_OCR=true` pulls in PaddleOCR/PaddlePaddle/MKL and makes backend images significantly
+larger on disk. For PDF-text-layer development (`layout_text_result`, `pii_input_text`), the slim
+`make up`/`make up-pii` profiles are usually enough; real scanned-document OCR needs
+`INSTALL_OCR=true` (`make up-ocr`/`make up-full`) plus provisioned models. See
+[Docker disk cleanup](#docker-disk-cleanup) if repeated OCR/full builds accumulate old images.
+
 ## API
 
 | Method | Path                   | Description                                                |
 | ------ | ---------------------- | ---------------------------------------------------------- |
 | GET    | `/api/health/live`     | Liveness check                                             |
 | GET    | `/api/health/ready`    | Readiness check for both persistent storage directories    |
-| GET    | `/api/config`          | Effective upload constraints (size limit, allowed types)   |
+| GET    | `/api/config`          | Effective upload limits, safe PII defaults, and dev gate   |
 | POST   | `/api/uploads`         | Upload one document via `multipart/form-data` field `file` |
 | GET    | `/api/documents`       | List uploaded documents, newest first                      |
 | GET    | `/api/documents/{id}`  | Get one uploaded document                                  |
@@ -129,6 +138,8 @@ and scanned PDF pages need the OCR runtime plus provisioned models.
 | GET    | `/api/documents/{id}/ocr`    | Get the newest text result                            |
 | POST   | `/api/documents/{id}/pii`   | Detect and label PII in the newest text result         |
 | GET    | `/api/documents/{id}/pii`    | Get the newest PII result                              |
+| POST   | `/api/documents/{id}/pii/feedback` | Append gated dev-only entity feedback          |
+| GET    | `/api/documents/{id}/pii/feedback`  | Restore gated dev-only feedback by artifact    |
 
 `POST /api/uploads` returns `201` with:
 
@@ -163,17 +174,21 @@ Stack traces are not exposed to clients.
 
 ### Storage layout
 
-New documents use two deliberately separate roots:
+New documents use three deliberately separate roots:
 
 ```text
 volumes/
 ├── uploads/
 │   └── <document_id>.<validated_extension>
-└── document-data/
-    └── <document_id>/
-        ├── document.json
-        └── artifacts/
-            └── <artifact_id>.json
+├── document-data/
+│   └── <document_id>/
+│       ├── document.json
+│       ├── artifacts/
+│       │   └── <artifact_id>.json
+│       └── feedback/
+│           └── pii_feedback.jsonl
+└── pii-feedback-archive/
+    └── pii_feedback.jsonl
 ```
 
 `UPLOAD_STORAGE_DIR` contains byte-identical originals only. Storage filenames are generated
@@ -181,7 +196,18 @@ from a server-side UUID; the user-visible Unicode filename is retained only in `
 and never used as a path. `DOCUMENT_DATA_DIR` contains one validated UUID-named directory per
 document. Audit, OCR/Text, and PII results are all immutable JSON files in that document's
 `artifacts/` directory. Deleting a document removes its UUID-named original and exactly its own
-document-data directory.
+document-data directory — including `feedback/pii_feedback.jsonl`.
+
+`PII_FEEDBACK_ARCHIVE_DIR` is a third, separate root: one shared, cross-document JSONL log that
+every recorded feedback entry is *also* appended to, unchanged (`document_id` retained). Unlike
+the per-document copy, it is never touched by document deletion — by design, so review feedback
+can outlive its source document and later feed PII-quality improvement or the private benchmark
+(see [review-feedback-levels.md, Level 14](docs/engine/review-feedback-levels.md#level-14--feedback-to-regression-workflow--open)).
+
+Both feedback copies are a local, dev-gated analysis side-channel, not an immutable engine artifact
+or a binding review result. Their structured fingerprint excludes raw document/entity text, but
+optional comments can still contain sensitive input; treat both as protected data and never commit
+them.
 
 #### Existing local development data
 
@@ -306,6 +332,13 @@ packages are missing.
   stable CPU path.
 - **Speed.** OCR is synchronous by design (no queue). CPU OCR of a multi-page scan can take a few
   minutes; the nginx `/api/` proxy timeout is raised to 600 s so browser requests do not 504.
+- **Memory (502 during OCR).** PaddleOCR runs in-process in the backend and needs headroom to load
+  models and run inference. `make up-ocr`/`make up-full` set `BACKEND_MEMORY_LIMIT=2g` for this.
+  Running the OCR-enabled image under the slim 512M default (e.g. plain `docker compose up` or
+  `make bf` with `INSTALL_OCR=true` in `.env`) OOM-kills the backend mid-OCR, which the browser
+  sees as an nginx **502 Bad Gateway**. Fix: use `make up-ocr`/`make up-full`, or set
+  `BACKEND_MEMORY_LIMIT=2g`. The user-view analysis then shows an OCR-specific error instead of a
+  generic one.
 - **Apple Silicon / ARM.** PaddlePaddle's published wheels determine which CPU architectures can
   build the OCR image. It builds and runs natively on `linux/amd64`; on ARM hosts (Apple Silicon)
   an `amd64` build/emulation may be required and has not been verified here.
@@ -356,7 +389,7 @@ and the selected profile applies. The score threshold stays `0.5`. The `presidio
 is capped at WARNING so its initialization messages do not flood logs, while genuine warnings
 still surface.
 
-After detection, **candidate validation** (Engine-5) inspects every already-detected candidate and
+After detection, **candidate validation** (PII L6) inspects every already-detected candidate and
 keeps, downgrades, or drops it — a subtractive post-processing filter, never a new recognizer. Full
 lexical/context rules run on `PERSON`/`ORGANIZATION`/`LOCATION`/`DATE_TIME` (the dominant NER
 false-positive source); a lighter context-presence check runs on `BIC` and a handful of domain
@@ -387,6 +420,15 @@ and PII are started explicitly and never trigger the next station automatically.
 artifact lineage visible, marks stale downstream results, and only overlays PII whose input text
 artifact matches the displayed text. PII highlighting uses Unicode codepoint offsets and renders
 plain React text nodes—no HTML injection or source-text logging.
+
+The default User View shows **Kanonischer Lesetext** when a new OCR/Text artifact provides it.
+Dev View keeps separate **Technischer Rohtext**, **Kanonischer Lesetext**, and **Layout-Text** modes.
+Current PII detection and highlights still use the byte-stable technical raw text; reading text is a
+future input candidate only after a tested lineage map exists.
+
+With `ENABLE_DEV_ENGINE_SETTINGS=true`, the detail page also exposes one-run PII profile selection
+and per-entity feedback. Feedback is restored from the local side-channel described above; it does
+not alter `pii_result`, train a model, or create the future binding `review_result` artifact.
 
 ## Private OCR/PII benchmark
 
@@ -421,6 +463,7 @@ See [`.env.example`](.env.example) for available settings, including:
 * document metadata/artifact directory (`DOCUMENT_DATA_DIR`)
 * optional local OCR model directory
 * optional PII runtime, language, model, score threshold, and entity allowlist
+* named PII profile, candidate-validation toggle, and dev-only settings/feedback gate
 * log level
 
 ### Environment profiles
@@ -448,7 +491,7 @@ a named profile — see `.env.example` section 7 for exactly how it interacts wi
 **Common debugging steps:** after any `.env` change, recreate the containers (the relevant
 `make up*` target again) and re-run the affected station for the document you're checking —
 existing artifacts are immutable and never reflect a config change retroactively. If PII detection
-looks empty, see the "If PII detects nothing" checklist in `.env.example` section 14 before
+looks empty, see the "If PII detects nothing" checklist in `.env.example` section 8 before
 assuming something is broken.
 
 ## Development and quality
@@ -458,13 +501,36 @@ Common commands are available through the `Makefile`:
 ```bash
 make lint        # Ruff and ESLint
 make typecheck   # mypy and TypeScript
-make test        # backend tests
+make test        # backend and frontend tests
 make build       # build Docker images
 make up          # start the stack
 make down        # stop the stack
 make benchmark-private   # private local OCR/PII benchmark report (see above)
 make benchmark-test      # synthetic-data unit tests for the benchmark runner
 ```
+
+### Docker disk cleanup
+
+Repeated local `--build --force-recreate` cycles leave behind dangling (`<none>:<none>`) images
+and build cache that can grow to tens of GB over time. Safe cleanup targets:
+
+```bash
+make docker-df              # show current Docker disk usage
+make docker-prune           # remove dangling images/containers/networks + build cache
+make docker-prune-project   # same, filtered to this project's labeled images (best-effort)
+make dev-rebuild            # down + up --build --force-recreate + docker-prune (safe default)
+```
+
+These never delete volumes, uploads, or document data, and never stop running containers other
+than during `dev-rebuild`'s `docker compose down`. `make docker-prune-project` is best-effort:
+Docker's dangling-image filter does not reliably match unlabeled build-stage layers, so
+`make docker-prune` remains the reliable default.
+
+If you want to reclaim disk space more aggressively and are fine affecting *other* local Docker
+projects too, you can manually run `docker image prune -af`. This is **not** wired into any make
+target — run it explicitly, and never combine it with `--volumes` (that would delete Docker
+volumes, which is unrelated to and unnecessary for cleaning up this project's `./volumes/`
+bind-mounted directories, but destroys any named volumes from other projects on the machine).
 
 ## Repository structure
 

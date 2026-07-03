@@ -1,5 +1,10 @@
 # Target Architecture
 
+> **Level scale (0–19).** Per-engine capability levels now use the **0–19 maturity scale**
+> ([engine README](README.md#maturity-scale)). Some `OCR Lx` / `PII Lx` / `Review Lx` citations
+> below still use the legacy **0–10** numbering — translate with the *Legacy scale mapping* table at
+> the bottom of the relevant engine document. Full renumbering here is a tracked follow-up.
+
 Where the engine is heading structurally. This is a target picture; nothing here is implemented by
 the PR that introduces it. It complements the existing stack decision
 ([ADR-0001](../adr/0001-stack-and-architecture.md)) and storage separation
@@ -77,8 +82,8 @@ A deliberately separate chapter, because these terms get conflated and the guard
 
 ### Hard rules for any AI, at every level
 
-- **AI must never silently overwrite the canonical text.** Canonical text changes only via an
-  explicit reviewer/rule decision.
+- **AI must never silently overwrite technical raw or canonical reading text.** Any promoted text
+  change requires an explicit reviewer/rule decision and preserved source lineage.
 - **AI results must be labelled `assistive` / low-confidence** and stored distinctly from
   deterministic detections and human decisions.
 - **AI must run locally.** No document data may reach an external service, cached or otherwise.

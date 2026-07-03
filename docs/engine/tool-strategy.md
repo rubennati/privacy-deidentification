@@ -1,9 +1,17 @@
 # Tool Strategy
 
+> **Level scale (0–19).** Per-engine capability levels now use the **0–19 maturity scale**
+> ([engine README](README.md#maturity-scale)). The `OCR Lx` / `PII Lx` citations in the tables
+> below still use the legacy **0–10** numbering — translate with the *Legacy scale mapping* table at
+> the bottom of the relevant engine document. Full renumbering here is a tracked follow-up.
+
 Which tools we integrate, in which role, and when. This follows the project's **tool-first /
 adapter-only** principle ([`AGENTS.md`](../../AGENTS.md)): we integrate proven open-source tools
 behind ports/adapters and write orchestration, not bespoke OCR/NER/redaction intelligence. Every
 tool must run **locally** — nothing sends document bytes, text, or PII to an external service.
+
+For a tool ↔ detection-strategy ↔ entity-category view (what each tool actually *covers*), see
+[`entity-taxonomy.md`](entity-taxonomy.md#tool--strategy-mapping).
 
 ## Classification
 

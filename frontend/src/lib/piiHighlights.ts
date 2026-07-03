@@ -1,16 +1,28 @@
 import type { PiiEntity } from "../api/workstations";
+import type { PiiReviewStatus } from "../api/piiReview";
 
 export type HighlightSegment =
   | { kind: "text"; text: string }
-  | { kind: "entity"; text: string; entity: PiiEntity };
+  | { kind: "entity"; text: string; entity: PiiEntity; reviewStatus?: PiiReviewStatus };
 
-/** Build safe React-renderable segments from Python Unicode-codepoint offsets. */
+/**
+ * Build safe React-renderable segments from Python Unicode-codepoint offsets.
+ *
+ * When `reviewStatusByOccurrenceId` is given, an entity resolved to `"rejected"` (false positive)
+ * is excluded entirely — it is no longer an active highlight once a reviewer rejects it. Every
+ * other resolved status is attached to its segment so the caller can style it distinctly (e.g.
+ * "kept" vs. the default "accepted"/pseudonymize look); entities with no resolved status (no
+ * review data loaded, or a legacy/malformed response) render exactly as before.
+ */
 export function buildHighlightSegments(
   text: string,
   entities: readonly PiiEntity[],
+  reviewStatusByOccurrenceId?: Record<string, PiiReviewStatus>,
 ): HighlightSegment[] {
   const codePoints = Array.from(text);
-  const valid = entities.filter((entity) => isValidEntity(codePoints, entity));
+  const valid = entities
+    .filter((entity) => isValidEntity(codePoints, entity))
+    .filter((entity) => reviewStatusByOccurrenceId?.[entity.id] !== "rejected");
   const ranked = [...valid].sort(comparePriority);
   const accepted: PiiEntity[] = [];
 
@@ -35,6 +47,7 @@ export function buildHighlightSegments(
       kind: "entity",
       text: codePoints.slice(entity.start_offset, entity.end_offset).join(""),
       entity,
+      reviewStatus: reviewStatusByOccurrenceId?.[entity.id],
     });
     cursor = entity.end_offset;
   }

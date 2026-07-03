@@ -90,4 +90,43 @@ describe("buildHighlightSegments", () => {
       { kind: "entity", text: "Anna", entity: personA },
     ]);
   });
+
+  describe("review status", () => {
+    it("excludes a rejected (false-positive) entity from the highlighted segments", () => {
+      const anna = entity("a", "Anna", 0, 4);
+      const segments = buildHighlightSegments("Anna in Wien", [anna], { a: "rejected" });
+      expect(segments).toEqual([{ kind: "text", text: "Anna in Wien" }]);
+    });
+
+    it("attaches the resolved review status to an accepted/kept entity's segment", () => {
+      const anna = entity("a", "Anna", 0, 4);
+      const accepted = buildHighlightSegments("Anna", [anna], { a: "accepted" });
+      expect(accepted).toEqual([{ kind: "entity", text: "Anna", entity: anna, reviewStatus: "accepted" }]);
+
+      const kept = buildHighlightSegments("Anna", [anna], { a: "kept" });
+      expect(kept).toEqual([{ kind: "entity", text: "Anna", entity: anna, reviewStatus: "kept" }]);
+    });
+
+    it("renders unresolved entities exactly as before (no status map)", () => {
+      const anna = entity("a", "Anna", 0, 4);
+      expect(buildHighlightSegments("Anna", [anna])).toEqual([
+        { kind: "entity", text: "Anna", entity: anna },
+      ]);
+      expect(buildHighlightSegments("Anna", [anna], {})).toEqual([
+        { kind: "entity", text: "Anna", entity: anna },
+      ]);
+    });
+
+    it("only excludes the rejected entity, letting an accepted duplicate-span sibling stand", () => {
+      const rejected = entity("a", "Anna", 0, 4, 0.9);
+      const accepted = entity("b", "Anna", 0, 4, 0.5);
+      const segments = buildHighlightSegments("Anna", [rejected, accepted], {
+        a: "rejected",
+        b: "accepted",
+      });
+      expect(segments).toEqual([
+        { kind: "entity", text: "Anna", entity: accepted, reviewStatus: "accepted" },
+      ]);
+    });
+  });
 });

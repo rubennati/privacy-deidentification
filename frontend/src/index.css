@@ -22,3 +22,19 @@
 body {
   margin: 0;
 }
+
+/* Transient highlight when a review offset link jumps to its span in the extracted text. */
+@keyframes pii-jump-flash {
+  0% {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  100% {
+    outline: 3px solid transparent;
+    outline-offset: 2px;
+  }
+}
+
+.pii-jump-flash {
+  animation: pii-jump-flash 1.4s ease-out;
+}

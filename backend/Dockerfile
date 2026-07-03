@@ -56,6 +56,9 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
+LABEL org.opencontainers.image.source="privacy-deidentification" \
+      org.opencontainers.image.title="privacy-deidentification-backend"
+
 USER app
 EXPOSE 8000
 

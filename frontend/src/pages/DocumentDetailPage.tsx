@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { fetchAppConfig, type AppConfig } from "../api/config";
 import { DocumentsApiError, fetchDocument, type DocumentSummary } from "../api/documents";
 import {
   fetchAudit,
@@ -11,16 +12,41 @@ import {
   runPii,
   type AuditArtifact,
   type PiiArtifact,
+  type PiiRunRequest,
   type TextArtifact,
   WorkstationApiError,
 } from "../api/workstations";
+import {
+  buildFeedbackStatusMap,
+  fetchPiiFeedbackSummary,
+  type PiiFeedbackStatus,
+} from "../api/piiFeedback";
+import {
+  buildReviewStatusMap,
+  fetchPiiReview,
+  type PiiReviewResult,
+} from "../api/piiReview";
 import { PiiEntityList } from "../components/pii/PiiEntityList";
-import { PiiTextViewer } from "../components/pii/PiiTextViewer";
+import { PiiReviewGroupList } from "../components/pii/PiiReviewGroupList";
+import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
+import {
+  ReviewTextViewer,
+  type ReviewTextMode,
+} from "../components/pii/ReviewTextViewer";
 import {
   StationPanel,
   type StationStatus,
 } from "../components/workstations/StationPanel";
 import { StatusNotice } from "../components/StatusNotice";
+import { DocumentAnalysisPanel } from "../components/DocumentAnalysisPanel";
+import { ViewModeToggle, type ViewMode } from "../components/ViewModeToggle";
+import {
+  isAnalysisRunning,
+  runDocumentAnalysis,
+  type AnalysisStep,
+} from "../lib/documentAnalysis";
+import { toStationError, type StationName } from "../lib/stationErrors";
+import { buildRuntimeNotice, buildStationRuntimeNotice } from "../lib/runtimeNotice";
 import { formatBytes, formatTimestamp } from "../lib/format";
 
 interface UiError {
@@ -28,19 +54,28 @@ interface UiError {
   correlationId: string | null;
 }
 
-type StationName = "audit" | "ocr" | "pii";
-
 // A new run never deletes existing artifacts — it appends a new immutable one — so
 // "erneut erstellen" (create again) is the correct verb, not "Reset".
 const RERUN_HINT =
   "Ein erneuter Lauf erzeugt ein neues Ergebnis. Vorherige Ergebnisse bleiben als Artefakte erhalten.";
+const DEV_PII_HINT =
+  "Ein neuer Lauf erzeugt ein neues Ergebnis. Ein gewaehltes Dev-Profil gilt nur fuer diesen Lauf.";
 
 export default function DocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
   const [document, setDocument] = useState<DocumentSummary | null>(null);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [audit, setAudit] = useState<AuditArtifact | null>(null);
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
+  const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
+  const [reviewResult, setReviewResult] = useState<PiiReviewResult | null>(null);
+  const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
+  const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
+  const [analysisStep, setAnalysisStep] = useState<AnalysisStep>("idle");
+  const [analysisError, setAnalysisError] = useState<UiError | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("user");
+  const [selectedPiiProfile, setSelectedPiiProfile] = useState("");
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<UiError | null>(null);
   const [stationErrors, setStationErrors] = useState<Record<StationName, UiError | null>>({
@@ -63,12 +98,20 @@ export default function DocumentDetailPage() {
         active = false;
       };
     }
+    setSelectedPiiProfile("");
+    setReviewTextMode("reading");
+    setAnalysisStep("idle");
+    setAnalysisError(null);
 
     void (async () => {
       try {
-        const loadedDocument = await fetchDocument(documentId);
+        const [loadedDocument, loadedConfig] = await Promise.all([
+          fetchDocument(documentId),
+          fetchAppConfig(),
+        ]);
         if (!active) return;
         setDocument(loadedDocument);
+        setAppConfig(loadedConfig);
 
         const [auditResult, textResult, piiResult] = await Promise.all([
           loadOptional(() => fetchAudit(documentId), "audit"),
@@ -95,6 +138,40 @@ export default function DocumentDetailPage() {
       active = false;
     };
   }, [documentId]);
+
+  // Restore per-entity feedback state for the current PII artifact when the dev gate is on.
+  const devGateEnabled = appConfig?.devEngineSettingsEnabled ?? false;
+  const piiArtifactId = pii?.id ?? null;
+  useEffect(() => {
+    if (!documentId || !piiArtifactId || !devGateEnabled) {
+      setFeedbackStatuses({});
+      return;
+    }
+    let active = true;
+    void fetchPiiFeedbackSummary(documentId, piiArtifactId).then((summary) => {
+      if (active) setFeedbackStatuses(buildFeedbackStatusMap(summary));
+    });
+    return () => {
+      active = false;
+    };
+  }, [documentId, piiArtifactId, devGateEnabled]);
+
+  // The review-entity overlay (groups + decisions) is not dev-gated; restore it whenever the
+  // current PII artifact changes so highlight suppression stays correct after a re-run.
+  useEffect(() => {
+    setSelectedOccurrenceId(null);
+    if (!documentId || !piiArtifactId) {
+      setReviewResult(null);
+      return;
+    }
+    let active = true;
+    void fetchPiiReview(documentId).then((result) => {
+      if (active) setReviewResult(result);
+    });
+    return () => {
+      active = false;
+    };
+  }, [documentId, piiArtifactId]);
 
   if (loading) {
     return (
@@ -137,6 +214,27 @@ export default function DocumentDetailPage() {
       ? "current"
       : "stale";
   const currentPiiEntities = piiStatus === "current" ? (pii?.content.entities ?? []) : [];
+  const reviewStatusByOccurrenceId = buildReviewStatusMap(reviewResult);
+  // A full, current analysis exists once both OCR and PII match the latest upstream inputs.
+  const hasCurrentAnalysis = ocrStatus === "current" && piiStatus === "current";
+  // Proactive hint when a station's runtime is not installed on this server (see
+  // runtimeNotice.ts) — surfaces the same signal a run would otherwise only discover via a 503.
+  const analysisRuntimeNotice = buildRuntimeNotice(appConfig);
+  const ocrRuntimeNotice = buildStationRuntimeNotice(appConfig, "ocr");
+  const piiRuntimeNotice = buildStationRuntimeNotice(appConfig, "pii");
+  const devPiiSettingsEnabled = appConfig?.devEngineSettingsEnabled ?? false;
+  // The dev view (and its toggle) exists only where dev engine settings are enabled; everywhere
+  // else the user view is the sole, default experience.
+  const effectiveViewMode: ViewMode = devGateEnabled ? viewMode : "user";
+  const isDevView = effectiveViewMode === "dev";
+  // The review-decision panel is not dev-gated on the backend, so it shows in both views once
+  // there is something current to review; only the per-station Dev View entity list stays dev-only.
+  const showReviewColumn = piiStatus === "current";
+  const showSecondColumn = isDevView || showReviewColumn;
+  const piiRunRequest: PiiRunRequest | undefined =
+    devPiiSettingsEnabled && selectedPiiProfile !== ""
+      ? { pii_profile: selectedPiiProfile }
+      : undefined;
 
   const execute = async <T,>(
     station: StationName,
@@ -157,12 +255,54 @@ export default function DocumentDetailPage() {
     }
   };
 
+  // The user-view analysis action: run the existing Audit → OCR → PII stations in order via the
+  // shared orchestration, applying each returned artifact as it arrives so a later failure keeps
+  // the earlier results. Backend lineage validation stays authoritative; no IDs are constructed.
+  const runUserAnalysis = async () => {
+    if (!documentId || isAnalysisRunning(analysisStep)) {
+      return;
+    }
+    setAnalysisError(null);
+    // Tracks the station currently in flight so a failure maps to a safe, station-specific message.
+    let activeStation: StationName = "audit";
+    try {
+      await runDocumentAnalysis(documentId, {
+        onStep: (step) => {
+          setAnalysisStep(step);
+          if (step === "audit" || step === "ocr" || step === "pii") {
+            activeStation = step;
+          }
+        },
+        onAudit: setAudit,
+        onText: (result) => {
+          setText(result);
+          setReviewTextMode("reading");
+        },
+        onPii: setPii,
+      });
+    } catch (error) {
+      setAnalysisStep("idle");
+      setAnalysisError(toStationError(error, activeStation));
+    }
+  };
+
   return (
     <main className="min-h-screen bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] px-4 py-10 sm:py-14">
       <div className="mx-auto max-w-6xl">
-        <Link to="/documents" className="text-sm font-medium text-accent-dark hover:underline">
-          ← Zurück zu Dokumenten
-        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link to="/documents" className="text-sm font-medium text-accent-dark hover:underline">
+            ← Zurück zu Dokumenten
+          </Link>
+          {devGateEnabled && (
+            <ViewModeToggle
+              mode={viewMode}
+              onChange={(mode) => {
+                setViewMode(mode);
+                if (mode === "user") setReviewTextMode("reading");
+              }}
+            />
+          )}
+        </div>
 
         <section className="mt-5 rounded-2xl border border-card-border bg-card p-6 shadow-[0_2px_12px_rgba(31,79,67,0.05)]">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
@@ -177,16 +317,19 @@ export default function DocumentDetailPage() {
               {document.status}
             </span>
           </div>
-          <dl className="mt-6 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
-            <Metadata label="MIME-Type" value={document.detected_mime_type ?? "Legacy/Unbekannt"} />
-            <Metadata label="Dokument-ID" value={document.id} code />
-            <Metadata label="Original-Artifact" value={document.original_artifact?.id ?? "Nicht vorhanden"} code />
-            <div className="sm:col-span-2 lg:col-span-3">
-              <Metadata label="SHA-256" value={document.sha256 ?? "Legacy/Unbekannt"} code />
-            </div>
-          </dl>
+          {isDevView && (
+            <dl className="mt-6 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+              <Metadata label="MIME-Type" value={document.detected_mime_type ?? "Legacy/Unbekannt"} />
+              <Metadata label="Dokument-ID" value={document.id} code />
+              <Metadata label="Original-Artifact" value={document.original_artifact?.id ?? "Nicht vorhanden"} code />
+              <div className="sm:col-span-2 lg:col-span-3">
+                <Metadata label="SHA-256" value={document.sha256 ?? "Legacy/Unbekannt"} code />
+              </div>
+            </dl>
+          )}
         </section>
 
+        {isDevView && (
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <StationPanel
             title="Audit"
@@ -211,8 +354,14 @@ export default function DocumentDetailPage() {
             pending={pending.ocr}
             disabled={!audit || pending.audit || pending.ocr || pending.pii}
             disabledReason={!audit ? "Zuerst ein Audit erstellen." : undefined}
+            runtimeNotice={ocrRuntimeNotice}
             error={stationErrors.ocr}
-            onAction={() => void execute("ocr", () => runOcr(documentId), setText)}
+            onAction={() =>
+              void execute("ocr", () => runOcr(documentId), (result) => {
+                setText(result);
+                setReviewTextMode("reading");
+              })
+            }
           >
             {text ? <TextSummary artifact={text} /> : <p>Noch kein Text-Artifact vorhanden.</p>}
           </StationPanel>
@@ -220,18 +369,33 @@ export default function DocumentDetailPage() {
           <StationPanel
             title="PII"
             status={piiStatus}
-            actionLabel={pii ? "PII erneut erstellen" : "PII starten"}
-            actionHint={pii ? RERUN_HINT : undefined}
+            actionLabel={
+              devPiiSettingsEnabled
+                ? "PII mit ausgewaehltem Profil starten"
+                : pii
+                  ? "PII erneut erstellen"
+                  : "PII starten"
+            }
+            actionHint={devPiiSettingsEnabled ? DEV_PII_HINT : pii ? RERUN_HINT : undefined}
             pendingLabel="PII-Erkennung läuft …"
             pending={pending.pii}
             disabled={!text || pending.ocr || pending.pii}
             disabledReason={!text ? "Zuerst OCR/Text erzeugen." : undefined}
+            runtimeNotice={piiRuntimeNotice}
             error={stationErrors.pii}
-            onAction={() => void execute("pii", () => runPii(documentId), setPii)}
+            onAction={() => void execute("pii", () => runPii(documentId, piiRunRequest), setPii)}
           >
             {pii ? <PiiSummary artifact={pii} /> : <p>PII-Erkennung noch nicht ausgeführt.</p>}
+            <PiiEngineSettingsPanel
+              config={appConfig?.pii ?? null}
+              devSettingsEnabled={devPiiSettingsEnabled}
+              selectedProfile={selectedPiiProfile}
+              artifactSettings={pii?.content.engine_settings ?? null}
+              onProfileChange={setSelectedPiiProfile}
+            />
           </StationPanel>
         </div>
+        )}
 
         <section className="mt-6 rounded-2xl border border-card-border bg-card p-6 shadow-[0_2px_12px_rgba(31,79,67,0.05)]">
           <div className="mb-5">
@@ -240,34 +404,94 @@ export default function DocumentDetailPage() {
               Extrahierter Text und erkannte PII-Entities. Es werden keine Inhalte verändert.
             </p>
           </div>
+          {/* User view gets a single product-facing analysis action; dev view keeps its separate
+              per-station controls above and never renders this panel. */}
+          {!isDevView && (
+            <div className="mb-5">
+              <DocumentAnalysisPanel
+                step={analysisStep}
+                hasCurrentAnalysis={hasCurrentAnalysis}
+                error={analysisError}
+                runtimeNotice={analysisRuntimeNotice}
+                onRun={() => void runUserAnalysis()}
+              />
+            </div>
+          )}
           {!text ? (
-            <p className="rounded-lg bg-dropzone p-4 text-sm text-muted">
-              OCR/Text noch nicht ausgeführt.
-            </p>
+            isDevView ? (
+              <p className="rounded-lg bg-dropzone p-4 text-sm text-muted">
+                OCR/Text noch nicht ausgeführt.
+              </p>
+            ) : (
+              <p className="rounded-lg bg-dropzone p-4 text-sm text-muted">
+                Dieses Dokument wurde noch nicht analysiert. Starten Sie die Analyse, um den
+                extrahierten Text und erkannte sensible Daten zu sehen.
+              </p>
+            )
           ) : (
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-              <section aria-labelledby="text-viewer-heading">
-                <h2 id="text-viewer-heading" className="font-semibold text-ink">
-                  Extrahierter Text
-                </h2>
-                <div className="mt-4 max-h-[70vh] overflow-auto rounded-xl border border-card-border bg-dropzone p-5">
-                  {text.content.text ? (
-                    <PiiTextViewer text={text.content.text} entities={currentPiiEntities} />
-                  ) : (
-                    <p className="text-sm text-muted">Der extrahierte Text ist leer.</p>
-                  )}
-                </div>
-                {!pii && (
+            <div
+              className={
+                showSecondColumn
+                  ? "grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]"
+                  : "grid gap-6"
+              }
+            >
+              <div>
+                <ReviewTextViewer
+                  rawText={text.content.text}
+                  readingText={text.content.reading_text}
+                  layoutText={text.content.layout_text_result}
+                  entities={currentPiiEntities}
+                  mode={reviewTextMode}
+                  onModeChange={setReviewTextMode}
+                  devMode={isDevView}
+                  showEntityMeta={isDevView}
+                  reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
+                  onSelectEntity={showReviewColumn ? setSelectedOccurrenceId : undefined}
+                />
+                {isDevView && !pii && (
                   <p className="mt-3 text-xs text-muted">PII-Erkennung noch nicht ausgeführt.</p>
                 )}
-              </section>
-              {pii ? (
-                <PiiEntityList entities={pii.content.entities} stale={piiStatus === "stale"} />
+              </div>
+              {isDevView ? (
+                pii ? (
+                  <div className="max-h-[70vh] overflow-auto">
+                    <PiiEntityList
+                      entities={pii.content.entities}
+                      stale={piiStatus === "stale"}
+                      documentId={documentId}
+                      artifactId={pii.id}
+                      feedbackEnabled={devPiiSettingsEnabled}
+                      feedbackStatuses={feedbackStatuses}
+                    />
+                    {showReviewColumn && (
+                      <PiiReviewGroupList
+                        documentId={documentId}
+                        review={reviewResult}
+                        onReviewChanged={setReviewResult}
+                        selectedOccurrenceId={selectedOccurrenceId}
+                        showTechnicalDetails
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <section>
+                    <h2 className="font-semibold text-ink">Erkannte Entities</h2>
+                    <p className="mt-4 text-sm text-muted">PII-Erkennung noch nicht ausgeführt.</p>
+                  </section>
+                )
               ) : (
-                <section>
-                  <h2 className="font-semibold text-ink">Erkannte Entities</h2>
-                  <p className="mt-4 text-sm text-muted">PII-Erkennung noch nicht ausgeführt.</p>
-                </section>
+                showReviewColumn && (
+                  <div className="max-h-[70vh] overflow-auto">
+                    <PiiReviewGroupList
+                      documentId={documentId}
+                      review={reviewResult}
+                      onReviewChanged={setReviewResult}
+                      selectedOccurrenceId={selectedOccurrenceId}
+                      showTechnicalDetails={false}
+                    />
+                  </div>
+                )
               )}
             </div>
           )}
@@ -302,17 +526,19 @@ function TextSummary({ artifact }: { artifact: TextArtifact }) {
   return (
     <dl className="space-y-1">
       <SummaryRow label="Quelle" value={artifact.content.source} />
-      <SummaryRow label="Zeichen" value={String(artifact.content.text_char_count)} />
+      <SummaryRow label="Rohtext-Zeichen" value={String(artifact.content.text_char_count)} />
       <SummaryRow label="Seiten" value={String(artifact.content.pages.length)} />
     </dl>
   );
 }
 
 function PiiSummary({ artifact }: { artifact: PiiArtifact }) {
+  const profile = artifact.content.engine_settings?.pii_profile ?? artifact.content.profile;
   return (
     <dl className="space-y-1">
       <SummaryRow label="Entities" value={String(artifact.content.entities.length)} />
       <SummaryRow label="Sprache" value={artifact.content.language} />
+      <SummaryRow label="Profil" value={profile} />
       <SummaryRow label="Schwellwert" value={artifact.content.score_threshold.toFixed(2)} />
     </dl>
   );
@@ -349,27 +575,4 @@ function toDocumentError(error: unknown): UiError {
     };
   }
   return { message: "Dokument konnte nicht geladen werden.", correlationId: null };
-}
-
-function toStationError(error: unknown, station: StationName): UiError {
-  if (!(error instanceof WorkstationApiError)) {
-    return { message: "Ein unerwarteter Fehler ist aufgetreten.", correlationId: null };
-  }
-  const message =
-    error.status === 0
-      ? "Keine Verbindung zum Server."
-      : error.status === 409
-        ? station === "ocr"
-          ? "Zuerst ein gültiges Audit erstellen."
-          : station === "pii"
-            ? "Zuerst OCR/Text erzeugen."
-            : "Das Original-Artifact ist nicht verwendbar."
-        : error.status === 422
-          ? station === "pii"
-            ? "Der Text konnte nicht verarbeitet werden."
-            : "Das Dokument konnte nicht verarbeitet werden."
-          : error.status === 503
-            ? "Die benötigte Runtime oder das Modell ist nicht verfügbar."
-            : error.message;
-  return { message, correlationId: error.correlationId };
 }

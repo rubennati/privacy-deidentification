@@ -10,15 +10,32 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
-from app.schemas import ConfigResponse
+from app.schemas import ConfigResponse, PiiConfigResponse, RuntimeCapabilitiesResponse
+from app.services.runtime_capabilities import (
+    ocr_memory_limit_is_low,
+    ocr_runtime_available,
+    pii_runtime_available,
+)
 
 router = APIRouter(prefix="/config", tags=["config"])
 
 
 @router.get("", response_model=ConfigResponse)
 def get_config(settings: Settings = Depends(get_settings)) -> ConfigResponse:
-    """Return the effective upload constraints (size limit and allowed extensions)."""
+    """Return effective upload constraints plus safe, read-only engine defaults."""
     return ConfigResponse(
         max_upload_bytes=settings.max_upload_bytes,
         allowed_extensions=sorted(settings.allowed_extensions),
+        dev_engine_settings_enabled=settings.enable_dev_engine_settings,
+        pii=PiiConfigResponse(
+            default_profile=settings.effective_pii_profile,
+            available_profiles=list(settings.supported_pii_profiles),
+            candidate_validation_enabled=settings.pii_candidate_validation_enabled,
+            score_threshold=settings.pii_score_threshold,
+        ),
+        runtime=RuntimeCapabilitiesResponse(
+            ocr_available=ocr_runtime_available(settings),
+            pii_available=pii_runtime_available(settings),
+            ocr_memory_limit_low=ocr_memory_limit_is_low(settings),
+        ),
     )

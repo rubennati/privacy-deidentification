@@ -23,7 +23,8 @@ FULL  := INSTALL_OCR=true  INSTALL_PII=true  BACKEND_MEMORY_LIMIT=2g
 
 .PHONY: help up up-pii up-ocr up-full down build build-pii build-ocr build-full rebuild \
 	ocr-models ocr-smoke pii-smoke logs ps lint typecheck test lock clean \
-	benchmark-private benchmark-private-json benchmark-test
+	benchmark-private benchmark-private-json benchmark-test \
+	docker-df docker-prune docker-prune-project dev-rebuild
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -35,10 +36,10 @@ up: ## Build and start the slim stack — no OCR/PII runtime (http://localhost:8
 up-pii: ## Start with the PII runtime (Presidio/spaCy)
 	$(PII) $(COMPOSE) up -d --build
 
-up-ocr: ## Start with the OCR runtime (needs `make ocr-models` first)
+up-ocr: ## Start with the OCR runtime, 2g memory (needs `make ocr-models` first)
 	$(OCR) $(COMPOSE) up -d --build
 
-up-full: ## Start with both OCR and PII runtimes (needs `make ocr-models` first)
+up-full: ## Start with OCR + PII runtimes, 2g memory (needs `make ocr-models` first)
 	$(FULL) $(COMPOSE) up -d --build
 
 down: ## Stop the stack
@@ -117,5 +118,28 @@ benchmark-private-json: ## Same as benchmark-private, JSON report only
 benchmark-test: ## Run the private benchmark runner's synthetic unit tests (no OCR/PII deps)
 	$(BENCHMARK_RUN) "pip install --quiet pytest && python -m pytest scripts/benchmark/tests -q"
 
-bf: ## Build and force recreate
+bf: ## Build and force recreate (uses .env; for OCR set INSTALL_OCR=true + BACKEND_MEMORY_LIMIT=2g, or prefer make up-ocr)
+	# Unlike up/up-ocr/up-full this has no profile prefix, so it takes INSTALL_OCR and
+	# BACKEND_MEMORY_LIMIT from .env. Running OCR here under the 512M default OOM-kills the
+	# backend (nginx 502) — set BACKEND_MEMORY_LIMIT=2g in .env or use `make up-ocr` instead.
 	-docker compose up -d --build --force-recreate
+
+docker-df: ## Show Docker disk usage (images, containers, volumes, build cache)
+	docker system df
+	docker system df -v
+
+docker-prune: ## Safe cleanup: dangling images/containers/networks/build cache. Never touches volumes.
+	docker image prune -f
+	docker container prune -f
+	docker network prune -f
+	docker builder prune -f
+
+docker-prune-project: ## Prune dangling images labeled for this project (falls back to docker-prune if none match)
+	docker image prune -f --filter label=org.opencontainers.image.source=privacy-deidentification
+	# Note: dangling build-stage layers are untagged and unlabeled, so this filter mostly affects
+	# labeled, tagged images. Use `make docker-prune` as the reliable default for dangling cleanup.
+
+dev-rebuild: ## Full local rebuild: down, up --build --force-recreate, then prune dangling images. No volume prune.
+	docker compose down --remove-orphans
+	$(SLIM) $(COMPOSE) up -d --build --force-recreate
+	docker image prune -f

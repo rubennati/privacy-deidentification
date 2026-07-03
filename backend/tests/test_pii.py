@@ -16,9 +16,17 @@ from pypdf import PdfWriter
 from app.api.pii import provide_pii_analyzer
 from app.config import Settings
 from app.main import app
-from app.schemas import TextArtifact, TextContent, TextPageResult
+from app.schemas import (
+    LayoutBlock,
+    StructuredContent,
+    TextArtifact,
+    TextContent,
+    TextPageResult,
+)
 from app.services.artifact_service import save_text_artifact
 from app.services.pii_adapters import DetectedEntity, PiiUnavailableError
+from app.services.pii_profiles import get_pii_profile
+from app.services.structured_content import build_structured_content
 
 
 class FakePiiAnalyzer:
@@ -90,6 +98,13 @@ def _save_text(
     text: str,
     *,
     pages: list[str] | None = None,
+    pii_input_text: str | None = None,
+    layout_text_result: str | None = None,
+    readable_text: str | None = None,
+    reading_text: str | None = None,
+    reading_text_map: list[dict[str, object]] | None = None,
+    layout_blocks: list[LayoutBlock] | None = None,
+    structured_content: StructuredContent | None = None,
     created_at: str = "2026-07-01T10:00:00.000001Z",
 ) -> TextArtifact:
     text_pages = [
@@ -118,6 +133,19 @@ def _save_text(
             text=text,
             text_char_count=len(text),
             pages=text_pages,
+            pii_input_text=pii_input_text,
+            layout_text_result=layout_text_result,
+            readable_text=readable_text,
+            reading_text_version="1" if reading_text is not None else None,
+            reading_text=reading_text,
+            reading_text_status="heuristic" if reading_text is not None else None,
+            reading_text_flags=["geometry_ordering"] if reading_text is not None else [],
+            reading_text_map_version="1" if reading_text is not None else None,
+            reading_text_map=reading_text_map or [],
+            layout_blocks_version="1" if layout_blocks else None,
+            layout_blocks=layout_blocks or [],
+            structured_content_version="1" if structured_content else None,
+            structured_content=structured_content,
         ),
     )
     save_text_artifact(settings, artifact)
@@ -154,6 +182,12 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
     assert artifact["artifact_type"] == "pii_result"
     assert artifact["station"] == "pii"
     assert artifact["input_text_artifact_id"] == latest.id
+    assert artifact["content"]["engine_settings"] == {
+        "pii_profile": "custom",
+        "candidate_validation_enabled": True,
+        "score_threshold": 0.5,
+        "source": "server-default",
+    }
     entity = artifact["content"]["entities"][0]
     assert entity == {
         "id": entity["id"],
@@ -169,10 +203,90 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
         "original_score": 0.86,
         "validation_status": "kept",
         "validation_reasons": [],
+        "reading_start_offset": None,
+        "reading_end_offset": None,
+        "projection_status": "unmapped",
+        "projection_method": None,
     }
     assert pii_fake.calls == ["Max Mustermann"]
     artifact_path = document_data_dir / document_id / "artifacts" / f"{artifact['id']}.json"
     assert artifact_path.is_file()
+
+
+def test_post_projects_pii_into_reading_text_without_changing_detection_input(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    raw = "Max\nMustermann"
+    _save_text(
+        settings,
+        document_id,
+        raw,
+        reading_text="Max Mustermann",
+        reading_text_map=[
+            {
+                "reading_start": 0,
+                "reading_end": 3,
+                "raw_start": 0,
+                "raw_end": 3,
+                "mapping_status": "exact",
+            },
+            {
+                "reading_start": 3,
+                "reading_end": 4,
+                "raw_start": 3,
+                "raw_end": 4,
+                "mapping_status": "normalized",
+            },
+            {
+                "reading_start": 4,
+                "reading_end": 14,
+                "raw_start": 4,
+                "raw_end": 14,
+                "mapping_status": "exact",
+            },
+        ],
+    )
+    pii_fake.results[raw] = [_entity("PERSON", 0, 14, 0.86)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    entity = response.json()["content"]["entities"][0]
+    assert pii_fake.calls == [raw]
+    assert (entity["start_offset"], entity["end_offset"], entity["text"]) == (0, 14, raw)
+    assert (entity["reading_start_offset"], entity["reading_end_offset"]) == (0, 14)
+    assert entity["projection_status"] == "exact"
+    assert entity["projection_method"] == "offset_map"
+
+
+def test_post_uses_unique_text_match_fallback_without_changing_detection_input(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    raw = "Telefon +43 (1) 234-5678"
+    value = "+43 (1) 234-5678"
+    _save_text(
+        settings,
+        document_id,
+        raw,
+        reading_text="Telefon: +43 1 234 5678",
+    )
+    pii_fake.results[raw] = [
+        _entity("PHONE_NUMBER", raw.index(value), raw.index(value) + len(value), 0.86)
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    entity = response.json()["content"]["entities"][0]
+    assert pii_fake.calls == [raw]
+    assert entity["text"] == value
+    assert entity["start_offset"] == raw.index(value)
+    assert entity["projection_status"] == "exact"
+    assert entity["projection_method"] == "text_match"
 
 
 def test_pdf_pages_have_local_and_global_offsets(
@@ -204,6 +318,52 @@ def test_pdf_pages_have_local_and_global_offsets(
     assert (second["page_start_offset"], second["page_end_offset"]) == (8, 22)
     assert second["text"] == "max@example.at"
     assert pii_fake.calls == pages
+
+
+def test_pii_ignores_all_non_canonical_text_views(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    canonical = "Name: Max Mustermann"
+    page = TextPageResult(
+        page_number=1,
+        source="pdf_text_layer",
+        has_text_layer=True,
+        ocr_used=False,
+        text=canonical,
+        text_char_count=len(canonical),
+    )
+    structured_content = build_structured_content(canonical, [page], [], None)
+    _save_text(
+        settings,
+        document_id,
+        canonical,
+        pages=[canonical],
+        readable_text="Readable replacement",
+        reading_text="Canonical reading replacement",
+        layout_text_result="Layout replacement",
+        pii_input_text="PII input replacement",
+        layout_blocks=[
+            LayoutBlock(
+                page_number=1,
+                order=1,
+                block_type="body",
+                text="Block replacement",
+                x0=0.1,
+                y0=0.1,
+                x1=0.9,
+                y1=0.2,
+                source="pdf_text_layer",
+            )
+        ],
+        structured_content=structured_content,
+    )
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    assert pii_fake.calls == [canonical]
 
 
 def test_docx_has_no_page_mapping(
@@ -300,6 +460,88 @@ def test_service_forwards_configured_allowlist_verbatim(
         settings.pii_entity_types
     )
     assert response.json()["content"]["profile"] == "structured-only"
+
+
+def test_post_rejects_dev_override_when_disabled(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+    pii_fake.results["Kontakt max@example.at"] = [_entity("EMAIL_ADDRESS", 8, 22, 1.0)]
+
+    response = client.post(
+        f"/api/documents/{document_id}/pii",
+        json={"pii_profile": "review-heavy"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_post_without_body_continues_to_work_when_dev_gate_is_enabled(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.enable_dev_engine_settings = True
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+    pii_fake.results["Kontakt max@example.at"] = [_entity("EMAIL_ADDRESS", 8, 22, 1.0)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    assert response.json()["content"]["engine_settings"] == {
+        "pii_profile": "custom",
+        "candidate_validation_enabled": True,
+        "score_threshold": 0.5,
+        "source": "server-default",
+    }
+
+
+@pytest.mark.parametrize(
+    "profile",
+    ["structured-only", "insurance-at-de", "broad-review", "review-heavy"],
+)
+def test_post_accepts_dev_profile_override_when_enabled_for_all_profiles(
+    profile: str,
+    client: TestClient,
+    settings: Settings,
+    pii_fake: FakePiiAnalyzer,
+) -> None:
+    settings.enable_dev_engine_settings = True
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+    pii_fake.results["Kontakt max@example.at"] = [_entity("EMAIL_ADDRESS", 8, 22, 1.0)]
+
+    response = client.post(
+        f"/api/documents/{document_id}/pii",
+        json={"pii_profile": profile},
+    )
+
+    assert response.status_code == 201
+    assert pii_fake.entity_types_seen == [get_pii_profile(profile).entity_types]
+    assert response.json()["content"]["engine_settings"] == {
+        "pii_profile": profile,
+        "candidate_validation_enabled": True,
+        "score_threshold": 0.5,
+        "source": "dev-ui-override",
+    }
+
+
+def test_post_rejects_unknown_dev_profile(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Kontakt max@example.at")
+
+    response = client.post(
+        f"/api/documents/{document_id}/pii",
+        json={"pii_profile": "maximum-everything"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_missing_text_result_returns_409(

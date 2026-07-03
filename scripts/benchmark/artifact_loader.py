@@ -1,10 +1,12 @@
-"""Read-only loader for local document metadata and audit/OCR/PII artifacts.
+"""Read-only loader for local document metadata and audit/OCR-quality/PII artifacts.
 
 Reads only what already exists under ``volumes/document-data`` and ``volumes/uploads``. Never
 writes, deletes, or triggers any processing. Deliberately narrow: every dataclass here keeps
 only counts, types, statuses, and offsets — raw extracted text (``TextContent.text``,
-``TextPageResult.text``, ``PiiEntity.text``) and any ground-truth ``masked_value``/``source``
-strings are never copied into these structures, so they cannot leak into a report downstream.
+``TextContent.readable_text``, ``TextContent.reading_text``, ``TextPageResult.text``,
+``PiiEntity.text``) and any ground-truth
+``masked_value``/``source`` strings are never copied into these structures, so they cannot leak
+into a report downstream.
 
 Artifact identity follows the same rule as the backend
 (``backend/app/services/artifact_service.py``): the *latest* artifact of a given
@@ -16,6 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +62,16 @@ class AuditSummary:
     text_char_count: int
     flags: tuple[str, ...]
     pages: tuple[AuditPageSummary, ...]
+    input_artifact_id: str | None = None
+
+
+@dataclass(frozen=True)
+class OcrLineConfidenceSummary:
+    """Metric-only OCR line summary; intentionally contains no recognized text."""
+
+    line_index: int
+    confidence: float
+    text_char_count: int
 
 
 @dataclass(frozen=True)
@@ -69,6 +82,8 @@ class TextPageSummary:
     ocr_used: bool
     text_char_count: int
     word_count: int
+    ocr_confidence: float | None = None
+    ocr_line_confidences: tuple[OcrLineConfidenceSummary, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,6 +95,39 @@ class TextSummary:
     word_count: int
     flags: tuple[str, ...]
     pages: tuple[TextPageSummary, ...]
+    tool_versions: dict[str, str]
+    input_artifact_id: str | None = None
+    input_audit_artifact_id: str | None = None
+
+
+@dataclass(frozen=True)
+class QualityReportSummary:
+    """Metrics-only L7 summary; no page text or OCR line text is loaded."""
+
+    artifact_id: str
+    created_at: str
+    input_artifact_id: str
+    input_audit_artifact_id: str
+    input_text_artifact_id: str
+    page_count: int
+    text_layer_pages: int
+    ocr_pages: int
+    mixed_source: bool
+    text_source: str | None
+    good_text_layer_pages: int
+    low_confidence_text_layer_pages: int
+    broken_text_layer_pages: int
+    empty_text_layer_pages: int
+    pages_needing_ocr: int
+    ocr_pages_with_confidence: int
+    ocr_lines_with_confidence: int
+    ocr_page_confidence_mean: float | None
+    ocr_page_confidence_min: float | None
+    ocr_page_confidence_max: float | None
+    final_char_count: int
+    final_word_count: int
+    pages_without_text: int
+    flags: tuple[str, ...]
     tool_versions: dict[str, str]
 
 
@@ -129,11 +177,12 @@ class DocumentArtifacts:
     audit: AuditSummary | None
     text: TextSummary | None
     pii: PiiSummary | None
+    quality_report: QualityReportSummary | None = None
     load_errors: tuple[str, ...] = field(default_factory=tuple)
 
 
 def load_local_corpus(uploads_dir: Path, document_data_dir: Path) -> list[DocumentArtifacts]:
-    """Load every local document's metadata and latest audit/text/pii artifact summaries."""
+    """Load every document's latest audit/text/quality-report/PII artifact summaries."""
     if not document_data_dir.is_dir():
         return []
 
@@ -175,18 +224,22 @@ def _load_one_document(uploads_dir: Path, document_dir: Path) -> DocumentArtifac
     )
 
     artifacts_dir = document_dir / _ARTIFACTS_DIRNAME
-    audit = text = pii = None
+    audit = text = quality_report = pii = None
     if artifacts_dir.is_dir():
         audit, audit_errors = _latest_artifact(artifacts_dir, "audit_result", _parse_audit)
         text, text_errors = _latest_artifact(artifacts_dir, "text_result", _parse_text)
+        quality_report, quality_errors = _latest_artifact(
+            artifacts_dir, "quality_report", _parse_quality_report
+        )
         pii, pii_errors = _latest_artifact(artifacts_dir, "pii_result", _parse_pii)
-        errors.extend(audit_errors + text_errors + pii_errors)
+        errors.extend(audit_errors + text_errors + quality_errors + pii_errors)
 
     return DocumentArtifacts(
         document=document,
         audit=audit,
         text=text,
         pii=pii,
+        quality_report=quality_report,
         load_errors=tuple(errors),
     )
 
@@ -247,6 +300,7 @@ def _parse_audit(raw: dict[str, Any]) -> AuditSummary:
         text_char_count=int(content.get("text_char_count", 0)),
         flags=tuple(content.get("flags") or ()),
         pages=pages,
+        input_artifact_id=_as_str(raw.get("input_artifact_id")),
     )
 
 
@@ -262,6 +316,10 @@ def _parse_text(raw: dict[str, Any]) -> TextSummary:
             # Word count only: the raw page text is read transiently here to derive a count and
             # is never assigned to a field, so it cannot propagate into a report.
             word_count=_word_count(page.get("text")),
+            ocr_confidence=_as_confidence(page.get("ocr_confidence")),
+            ocr_line_confidences=_parse_ocr_line_confidences(
+                page.get("ocr_line_confidences")
+            ),
         )
         for page in content.get("pages") or ()
     )
@@ -274,11 +332,72 @@ def _parse_text(raw: dict[str, Any]) -> TextSummary:
         flags=tuple(content.get("flags") or ()),
         pages=pages,
         tool_versions=dict(content.get("tool_versions") or {}),
+        input_artifact_id=_as_str(raw.get("input_artifact_id")),
+        input_audit_artifact_id=_as_str(raw.get("input_audit_artifact_id")),
     )
 
 
 def _word_count(text: Any) -> int:
     return len(text.split()) if isinstance(text, str) else 0
+
+
+def _parse_ocr_line_confidences(raw: Any) -> tuple[OcrLineConfidenceSummary, ...]:
+    if not isinstance(raw, list):
+        return ()
+    summaries: list[OcrLineConfidenceSummary] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        line_index = _as_int(item.get("line_index"))
+        confidence = _as_confidence(item.get("confidence"))
+        text_char_count = _as_int(item.get("text_char_count"))
+        if (
+            line_index is None
+            or line_index < 1
+            or confidence is None
+            or text_char_count is None
+            or text_char_count < 0
+        ):
+            continue
+        summaries.append(
+            OcrLineConfidenceSummary(
+                line_index=line_index,
+                confidence=confidence,
+                text_char_count=text_char_count,
+            )
+        )
+    return tuple(summaries)
+
+
+def _parse_quality_report(raw: dict[str, Any]) -> QualityReportSummary:
+    content = raw.get("content") or {}
+    return QualityReportSummary(
+        artifact_id=str(raw["id"]),
+        created_at=str(raw["created_at"]),
+        input_artifact_id=str(raw["input_artifact_id"]),
+        input_audit_artifact_id=str(raw["input_audit_artifact_id"]),
+        input_text_artifact_id=str(raw["input_text_artifact_id"]),
+        page_count=int(content["page_count"]),
+        text_layer_pages=int(content["text_layer_pages"]),
+        ocr_pages=int(content["ocr_pages"]),
+        mixed_source=bool(content["mixed_source"]),
+        text_source=_as_str(content.get("text_source")),
+        good_text_layer_pages=int(content["good_text_layer_pages"]),
+        low_confidence_text_layer_pages=int(content["low_confidence_text_layer_pages"]),
+        broken_text_layer_pages=int(content["broken_text_layer_pages"]),
+        empty_text_layer_pages=int(content["empty_text_layer_pages"]),
+        pages_needing_ocr=int(content["pages_needing_ocr"]),
+        ocr_pages_with_confidence=int(content["ocr_pages_with_confidence"]),
+        ocr_lines_with_confidence=int(content["ocr_lines_with_confidence"]),
+        ocr_page_confidence_mean=_as_confidence(content.get("ocr_page_confidence_mean")),
+        ocr_page_confidence_min=_as_confidence(content.get("ocr_page_confidence_min")),
+        ocr_page_confidence_max=_as_confidence(content.get("ocr_page_confidence_max")),
+        final_char_count=int(content["final_char_count"]),
+        final_word_count=int(content["final_word_count"]),
+        pages_without_text=int(content["pages_without_text"]),
+        flags=tuple(content.get("flags") or ()),
+        tool_versions=dict(content.get("tool_versions") or {}),
+    )
 
 
 def _parse_pii(raw: dict[str, Any]) -> PiiSummary:
@@ -350,4 +469,11 @@ def _as_str(value: Any) -> str | None:
 
 
 def _as_int(value: Any) -> int | None:
-    return value if isinstance(value, int) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _as_confidence(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    confidence = float(value)
+    return confidence if isfinite(confidence) and 0.0 <= confidence <= 1.0 else None

@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted — 2026-07-01
+Accepted — 2026-07-01. The **0–10 level numbering** in this ADR is superseded by
+[ADR-0016](0016-engine-maturity-levels-0-19.md), which moves the engines to a 0–19 maturity scale.
+The capability model, north star, and invariants below still hold; only the per-engine level numbers
+changed. The live current-level snapshot lives in the [engine docs](../engine/README.md), not here.
 
 ## Context
 

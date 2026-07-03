@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from artifact_loader import DetectedEntity, load_local_corpus
+from artifact_loader import (
+    DetectedEntity,
+    OcrLineConfidenceSummary,
+    QualityReportSummary,
+    load_local_corpus,
+)
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -47,6 +52,42 @@ def _audit_artifact(artifact_id: str, document_id: str, created_at: str) -> dict
                     "needs_ocr": False,
                 }
             ],
+        },
+    }
+
+
+def _quality_report_artifact(
+    artifact_id: str, document_id: str, created_at: str
+) -> dict:
+    return {
+        "id": artifact_id,
+        "document_id": document_id,
+        "artifact_type": "quality_report",
+        "created_at": created_at,
+        "input_artifact_id": "o1",
+        "input_audit_artifact_id": "a1",
+        "input_text_artifact_id": "t1",
+        "content": {
+            "page_count": 1,
+            "text_layer_pages": 0,
+            "ocr_pages": 1,
+            "mixed_source": False,
+            "text_source": "paddleocr",
+            "good_text_layer_pages": 0,
+            "low_confidence_text_layer_pages": 0,
+            "broken_text_layer_pages": 0,
+            "empty_text_layer_pages": 1,
+            "pages_needing_ocr": 1,
+            "ocr_pages_with_confidence": 1,
+            "ocr_lines_with_confidence": 1,
+            "ocr_page_confidence_mean": 0.85,
+            "ocr_page_confidence_min": 0.85,
+            "ocr_page_confidence_max": 0.85,
+            "final_char_count": 20,
+            "final_word_count": 3,
+            "pages_without_text": 0,
+            "flags": ["ocr_used"],
+            "tool_versions": {"paddleocr": "test"},
         },
     }
 
@@ -128,6 +169,211 @@ def test_detected_entity_has_no_raw_text_field() -> None:
     field_names = {f for f in DetectedEntity.__dataclass_fields__}
     assert "text" not in field_names
     assert "entity_text" not in field_names
+
+
+def test_load_text_confidence_without_copying_raw_ocr_text(tmp_path: Path) -> None:
+    document_data_dir = tmp_path / "document-data"
+    document_id = "7" * 32
+    _write_json(
+        document_data_dir / document_id / "document.json",
+        _document_json(document_id, "Scan.pdf", f"{document_id}.pdf", 100),
+    )
+    _write_json(
+        document_data_dir / document_id / "artifacts" / "text.json",
+        {
+            "id": "text1",
+            "document_id": document_id,
+            "artifact_type": "text_result",
+            "created_at": "2026-07-01T10:02:00Z",
+            "content": {
+                "source": "paddleocr",
+                "text": "raw recognized value",
+                "readable_text": "raw recognized value",
+                "reading_text_version": "1",
+                "reading_text": "private canonical reading value max@example.at",
+                "reading_text_status": "heuristic",
+                "reading_text_flags": ["geometry_ordering"],
+                "layout_text_result": "raw recognized value in layout",
+                "layout_blocks_version": "1",
+                "layout_blocks": [
+                    {
+                        "page_number": 1,
+                        "order": 1,
+                        "block_type": "body",
+                        "text": "private layout block value max@example.at",
+                        "x0": 0.1,
+                        "y0": 0.1,
+                        "x1": 0.9,
+                        "y1": 0.2,
+                        "source": "paddleocr",
+                    }
+                ],
+                "structured_content_version": "1",
+                "structured_content": {
+                    "pages": [
+                        {
+                            "page_number": 1,
+                            "tables": [],
+                            "fields": [
+                                {
+                                    "field_id": "field-p1-1",
+                                    "page_number": 1,
+                                    "label": "Private account label",
+                                    "label_span": {
+                                        "canonical_start": 0,
+                                        "canonical_end": 3,
+                                        "page_start": 0,
+                                        "page_end": 3,
+                                    },
+                                    "value_span": {
+                                        "canonical_start": 4,
+                                        "canonical_end": 20,
+                                        "page_start": 4,
+                                        "page_end": 20,
+                                    },
+                                    "field_type_hint": "unknown",
+                                    "confidence": 0.8,
+                                    "source": "canonical_text",
+                                    "flags": [],
+                                }
+                            ],
+                            "sections": [],
+                            "source": "canonical_text",
+                            "confidence": 0.8,
+                            "quality_flags": [],
+                        }
+                    ],
+                    "summary": {
+                        "page_count": 1,
+                        "table_count": 0,
+                        "field_count": 1,
+                        "section_count": 0,
+                    },
+                    "flags": ["span_backed"],
+                },
+                "text_char_count": 20,
+                "pages": [
+                    {
+                        "page_number": 1,
+                        "source": "paddleocr",
+                        "has_text_layer": False,
+                        "ocr_used": True,
+                        "text": "raw recognized value",
+                        "text_char_count": 20,
+                        "ocr_confidence": 0.85,
+                        "ocr_line_confidences": [
+                            {"line_index": 1, "confidence": 0.85, "text_char_count": 20}
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    _write_json(
+        document_data_dir / document_id / "artifacts" / "quality.json",
+        _quality_report_artifact("q1", document_id, "2026-07-01T10:03:00Z"),
+    )
+
+    corpus = load_local_corpus(tmp_path / "uploads", document_data_dir)
+
+    assert corpus[0].text is not None
+    page = corpus[0].text.pages[0]
+    assert page.ocr_confidence == 0.85
+    assert page.ocr_line_confidences == (OcrLineConfidenceSummary(1, 0.85, 20),)
+    assert "text" not in page.__dataclass_fields__
+    assert "text" not in OcrLineConfidenceSummary.__dataclass_fields__
+    assert "readable_text" not in corpus[0].text.__dataclass_fields__
+    assert "reading_text" not in corpus[0].text.__dataclass_fields__
+    assert "reading_text_flags" not in corpus[0].text.__dataclass_fields__
+    assert "layout_text_result" not in corpus[0].text.__dataclass_fields__
+    assert "layout_blocks" not in corpus[0].text.__dataclass_fields__
+    assert "structured_content" not in corpus[0].text.__dataclass_fields__
+    quality_report = corpus[0].quality_report
+    assert quality_report is not None
+    assert quality_report.input_text_artifact_id == "t1"
+    assert quality_report.ocr_page_confidence_mean == 0.85
+    assert quality_report.final_word_count == 3
+    forbidden_fields = {
+        "text",
+        "readable_text",
+        "reading_text",
+        "page_text",
+        "ocr_text",
+        "entity_text",
+    }
+    assert forbidden_fields.isdisjoint(QualityReportSummary.__dataclass_fields__)
+
+
+def test_loader_ignores_l10_text_geometry(tmp_path: Path) -> None:
+    document_data_dir = tmp_path / "document-data"
+    document_id = "8" * 32
+    _write_json(
+        document_data_dir / document_id / "document.json",
+        _document_json(document_id, "Scan.pdf", f"{document_id}.pdf", 100),
+    )
+    _write_json(
+        document_data_dir / document_id / "artifacts" / "text.json",
+        {
+            "id": "text1",
+            "document_id": document_id,
+            "artifact_type": "text_result",
+            "created_at": "2026-07-01T10:02:00Z",
+            "content": {
+                "source": "paddleocr",
+                "text": "raw recognized value",
+                "text_char_count": 20,
+                "text_geometry_version": "1",
+                "text_geometry": {
+                    "coverage": 1.0,
+                    "flags": ["ocr_geometry"],
+                    "pages": [
+                        {
+                            "page_number": 1,
+                            "page_width": 200.0,
+                            "page_height": 100.0,
+                            "coordinate_unit": "image_pixels",
+                            "source": "paddleocr",
+                            "status": "complete",
+                            "lines": [
+                                {
+                                    "line_index": 1,
+                                    "canonical_start": 0,
+                                    "canonical_end": 20,
+                                    "page_start": 0,
+                                    "page_end": 20,
+                                    "x0": 10.0,
+                                    "y0": 10.0,
+                                    "x1": 190.0,
+                                    "y1": 40.0,
+                                    "source": "paddleocr",
+                                    "confidence": 0.9,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "pages": [
+                    {
+                        "page_number": 1,
+                        "source": "paddleocr",
+                        "has_text_layer": False,
+                        "ocr_used": True,
+                        "text": "raw recognized value",
+                        "text_char_count": 20,
+                    }
+                ],
+            },
+        },
+    )
+
+    corpus = load_local_corpus(tmp_path / "uploads", document_data_dir)
+
+    # The loader ignores geometry entirely — it is never copied into the summary structures.
+    assert corpus[0].text is not None
+    text_fields = corpus[0].text.__dataclass_fields__
+    assert "text_geometry" not in text_fields
+    assert "text_geometry_version" not in text_fields
+    assert corpus[0].text.word_count == 3
 
 
 def _pii_artifact_with_validation(artifact_id: str, document_id: str, created_at: str) -> dict:

@@ -83,6 +83,7 @@ def _build_synthetic_corpus(tmp_path: Path) -> SimpleNamespace:
             "created_at": "2026-07-01T10:02:00Z",
             "content": {
                 "source": "pdf_text_layer",
+                "readable_text": f"Readable contact: {_SECRET_EMAIL}",
                 "text_char_count": 50,
                 "flags": [],
                 "pages": [
@@ -97,6 +98,40 @@ def _build_synthetic_corpus(tmp_path: Path) -> SimpleNamespace:
                         "text": f"Kontakt: {_SECRET_EMAIL} IBAN AT611904300234573201",
                     }
                 ],
+                "tool_versions": {},
+            },
+        },
+    )
+    _write_json(
+        document_data_dir / benched_id / "artifacts" / "quality.json",
+        {
+            "id": "quality1",
+            "document_id": benched_id,
+            "artifact_type": "quality_report",
+            "created_at": "2026-07-01T10:02:30Z",
+            "input_artifact_id": "original1",
+            "input_audit_artifact_id": "aud1",
+            "input_text_artifact_id": "txt1",
+            "content": {
+                "page_count": 1,
+                "text_layer_pages": 1,
+                "ocr_pages": 0,
+                "mixed_source": False,
+                "text_source": "pdf_text_layer",
+                "good_text_layer_pages": 1,
+                "low_confidence_text_layer_pages": 0,
+                "broken_text_layer_pages": 0,
+                "empty_text_layer_pages": 0,
+                "pages_needing_ocr": 0,
+                "ocr_pages_with_confidence": 0,
+                "ocr_lines_with_confidence": 0,
+                "ocr_page_confidence_mean": None,
+                "ocr_page_confidence_min": None,
+                "ocr_page_confidence_max": None,
+                "final_char_count": 50,
+                "final_word_count": 4,
+                "pages_without_text": 0,
+                "flags": [],
                 "tool_versions": {},
             },
         },
@@ -232,6 +267,7 @@ def test_end_to_end_report_matches_and_scores(tmp_path: Path) -> None:
     assert validation["total_kept"] == 1
     assert validation["total_dropped"] == 1
     assert validation["dropped_by_reason"] == {"STOPWORD_ONLY": 1}
+    assert report["documents"][0]["ocr_text_metrics"]["quality_report_used"] is True
 
 
 def test_end_to_end_report_json_contains_no_raw_or_masked_values(tmp_path: Path) -> None:
@@ -243,6 +279,8 @@ def test_end_to_end_report_json_contains_no_raw_or_masked_values(tmp_path: Path)
     serialized = json.dumps(report)
     assert _SECRET_EMAIL not in serialized
     assert _SECRET_MASKED_VALUE not in serialized
+    assert "Readable contact" not in serialized
+    assert "readable_text" not in serialized
     assert "AT611904300234573201" not in serialized
 
 
@@ -255,5 +293,6 @@ def test_end_to_end_markdown_report_contains_no_raw_or_masked_values(tmp_path: P
 
     assert _SECRET_EMAIL not in markdown
     assert _SECRET_MASKED_VALUE not in markdown
+    assert "Readable contact" not in markdown
     assert "AT611904300234573201" not in markdown
     assert "# Private OCR/PII Benchmark Report" in markdown

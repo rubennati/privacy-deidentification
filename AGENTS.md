@@ -14,15 +14,42 @@ Before starting work, always read:
 - Record architectural decisions as ADRs under `docs/adr/` and link them in `.ai/decisions.md`.
 - Never commit secrets. Configuration comes from environment variables.
 
-## Product principle: tool-first / adapter-only
+## Engine maturity levels (0–19)
 
-The de-identification capability is delivered by **integrating proven open-source tools
-behind adapters**, not by writing custom intelligence. Do **not** implement bespoke OCR, PII
-detection, NER, redaction or pseudonymization algorithms. Use established components (e.g.
-OCRmyPDF / Tesseract / MinerU for extraction, Presidio / noirdoc for detection, PyMuPDF for
-redaction) integrated behind a port/interface. Our own code is orchestration, the review UI,
-file handling, export logic and secure integration. Each external tool sits behind an
-adapter so it can be swapped without touching business logic.
+The central engines are planned on a **0–19 maturity scale** (see
+[`docs/engine/`](docs/engine/README.md#maturity-scale) and
+[ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md)):
+
+- Use the 0–19 scale for OCR/Text, PII/Sensitive-Data, Review/Human-Feedback, Benchmark/Regression,
+  and Redaction planning. Level numbers are cumulative within an engine and not comparable across
+  engines.
+- New engine PRs should state **which level they advance**, and PR summaries should mention the
+  affected engine level where relevant.
+- Do **not** mix the older 0–10/0–14 numbering without a migration note; each engine document has a
+  *Legacy scale mapping* table to translate old citations.
+- For *what* is detected and *how sensitive* it is — business categories, entity types, risk classes
+  **P0–P5**, and detection strategies — use [`docs/engine/entity-taxonomy.md`](docs/engine/entity-taxonomy.md)
+  ([ADR-0017](docs/adr/0017-entity-taxonomy-and-risk-classes.md)). New recognizer/entity-type work
+  should name its category, risk class, and detection strategy.
+- **Check the OCR/PII implementation plan before starting engine work**
+  ([`docs/engine/ocr-pii-implementation-plan.md`](docs/engine/ocr-pii-implementation-plan.md),
+  [ADR-0018](docs/adr/0018-ocr-pii-implementation-plan.md)). OCR/Text and PII/Sensitive-Data are the
+  core engines; **do not let PII/Redaction outrun OCR/Text prerequisites** (OCR/Text stays 2–3 levels
+  ahead). Every engine PR must state which 0–19 level it advances. After every engine PR, run the
+  plan's checkpoint loop and update `.ai/state.md`/docs if the level or the next plan changed.
+- Feature and documentation PRs target `dev`, not `main` (see [Approval](#approval)).
+
+## Product principle: tool-first / adapter-bound
+
+Core intelligence comes from **proven open-source tools behind ports/adapters**. Do not build a
+bespoke OCR engine, NER/LLM engine, redaction engine, or pseudonymization engine. Also avoid large
+opaque rule sets and untested ad-hoc heuristics.
+
+Small, deterministic domain logic is allowed when it remains adapter-bound, documented, tested,
+benchmarkable, reviewable, and auditable. Examples include Presidio `PatternRecognizer`s, context
+rules, candidate validation, domain recognizers, and narrowly scoped deterministic heuristics.
+External engines must remain replaceable without changing orchestration or product workflows.
+Our code owns orchestration, adapters, review UI, file handling, export, and secure integration.
 
 ## Workflow
 
@@ -42,7 +69,7 @@ Run via the `Makefile` (everything runs in Docker — no host toolchain needed):
 
 - `make lint` — Ruff (Python) + ESLint (TypeScript)
 - `make typecheck` — mypy (Python) + `tsc --noEmit` (TypeScript)
-- `make test` — pytest (backend)
+- `make test` — pytest (backend) + Vitest (frontend)
 - `make build` — build both container images
 - `make up` / `make down` — start / stop the stack
 
