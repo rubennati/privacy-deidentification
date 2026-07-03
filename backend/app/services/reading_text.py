@@ -109,6 +109,18 @@ _PAGE_NUMBER_SUFFIX_RE = re.compile(
 _SEPARATOR_LINE_RE = re.compile(r"^[_\-=\u2013\u2014]{8,}$")
 _INLINE_SEPARATOR_RE = re.compile(r"[_=]{8,}")
 _MARGIN_LINE_COUNT = 3
+# A transient text fragment that starts with closing punctuation (its own fragment because the
+# source PDF/OCR run boundary happened to land there) must attach to the previous fragment without
+# a leading space; any remaining text after the punctuation still gets a normal word-boundary space.
+_LEADING_CLOSE_PUNCT_RE = re.compile(r"^([.,;:!?)\]}]+)(\s*)(.*)$", re.DOTALL)
+_OPEN_PUNCT_TOKENS = frozenset({"(", "[", "{"})
+_BULLET_PREFIX_RE = re.compile(r"^[\u2022\u25e6\u2023\u25cf]\s*")
+# Same conservative line-wrap hyphen repair already used for the separate readable_text view.
+_DEHYPHENATE_RE = re.compile(r"[A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]{2,}-$")
+_WORD_START_RE = re.compile(r"^[A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]")
+# The trailing negative lookahead keeps a DD.MM.YYYY date (e.g. "13.06.2025") from being misread
+# as a decimal amount: without it, "13.06" alone would match and count towards the amount total.
+_DECIMAL_AMOUNT_RE = re.compile(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\b(?!\.\d{4})")
 
 
 @dataclass(frozen=True)
@@ -349,8 +361,26 @@ def _rows_from_geometry(page: TextPageResult, geometry: TextGeometryPage) -> lis
     return _group_fragments(fragments, page.page_number)
 
 
+def _without_separator_cells(row: ReadingRow) -> ReadingRow:
+    cells = tuple(
+        cell for cell in row.cells if not _SEPARATOR_LINE_RE.fullmatch(cell.text.strip())
+    )
+    if cells == row.cells:
+        return row
+    return ReadingRow(page_number=row.page_number, y0=row.y0, y1=row.y1, cells=cells)
+
+
 def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
-    ordered = sorted(rows, key=lambda row: (row.y0, row.cells[0].x0))
+    # A separator-rule fragment (long underscore/dash run above a heading or table) can share a row
+    # with real content purely because of PDF run boundaries. Left in, it both breaks table-header
+    # leader detection (the rule becomes "cell 0" instead of the real label) and inflates rendered
+    # line length enough to be mistaken for a long prose line. Dropping it here is render-only: the
+    # caller's raw-coverage check already ran against the untouched rows, so no source character
+    # accounting changes.
+    cleaned = [row for row in (_without_separator_cells(row) for row in rows) if row.cells]
+    if not cleaned:
+        return [], []
+    ordered = sorted(cleaned, key=lambda row: (row.y0, row.cells[0].x0))
     table_index = next(
         (index for index, row in enumerate(ordered) if _is_table_header(row.cells)), None
     )
@@ -422,16 +452,67 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
 def _plain_blocks(rows: Sequence[ReadingRow]) -> list[list[str]]:
     if not rows:
         return []
-    blocks: list[list[str]] = [[]]
+    groups: list[list[ReadingRow]] = [[]]
     heights = [max(0.001, row.y1 - row.y0) for row in rows]
     gap_limit = median(heights) * 2.2
     previous: ReadingRow | None = None
     for row in rows:
         if previous is not None and row.y0 - previous.y1 > gap_limit:
-            blocks.append([])
-        blocks[-1].append(_row_text(row))
+            groups.append([])
+        groups[-1].append(row)
         previous = row
-    return [block for block in blocks if block]
+    return [_join_continuations(group) for group in groups if group]
+
+
+def _join_continuations(rows: Sequence[ReadingRow]) -> list[str]:
+    """Render one gap-grouped block, joining bullet/prose wrap continuations conservatively.
+
+    A bulleted item or long prose line keeps absorbing the next row while it has not yet reached a
+    sentence end, the next row is neither a new bullet nor a label/value line, and the two rows sit
+    at normal single-line spacing. The terminal-punctuation stop is required here (unlike the
+    post-table joiner below): this block's rows can share near-identical line spacing between
+    genuinely separate sentences, so row-closeness alone is not a reliable continuation signal and
+    would otherwise keep absorbing unrelated following lines.
+    """
+
+    row_list = list(rows)
+    rendered = [_row_text(row) for row in row_list]
+    lines: list[str] = []
+    cursor = 0
+    while cursor < len(rendered):
+        line = rendered[cursor]
+        is_bullet = line.startswith("- ")
+        if is_bullet or _is_long_prose_line(line):
+            paragraph = line
+            cursor += 1
+            while (
+                cursor < len(rendered)
+                and not paragraph.rstrip().endswith((".", "!", "?"))
+                and not rendered[cursor].startswith("- ")
+                and not _starts_new_post_block(rendered[cursor])
+                and not _looks_like_data_row(rendered[cursor])
+                and _rows_are_close(row_list[cursor - 1], row_list[cursor])
+            ):
+                paragraph = _join_wrapped_line(paragraph, rendered[cursor])
+                cursor += 1
+            lines.append(paragraph)
+            continue
+        lines.append(line)
+        cursor += 1
+    return lines
+
+
+def _join_wrapped_line(previous: str, current: str) -> str:
+    """Join a wrap continuation, repairing a source line-break hyphen when present.
+
+    Mirrors the same conservative rule already used for the separate ``readable_text`` view: a
+    line ending in a 2+ letter word followed by a hyphen, continued by a line starting with a
+    letter, is a PDF line-wrap hyphenation, not a real compound-word or range hyphen.
+    """
+
+    if _DEHYPHENATE_RE.search(previous) and _WORD_START_RE.match(current):
+        return previous[:-1] + current
+    return f"{previous} {current}"
 
 
 def _is_party_heading_row(row: ReadingRow) -> bool:
@@ -591,7 +672,19 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
 
 
 def _is_long_prose_line(line: str) -> bool:
-    return len(line) >= 60 and not _starts_new_post_block(line)
+    return len(line) >= 60 and not _starts_new_post_block(line) and not _looks_like_data_row(line)
+
+
+def _looks_like_data_row(line: str) -> bool:
+    """A line naming two or more decimal amounts is a flattened table/cost row, not prose.
+
+    A genuine sentence rarely cites more than one decimal figure; a row from a table that failed
+    column detection (e.g. "Beschreibung 6,00 Std 67,50 405,00") typically strings several
+    together. Treating it as prose would make the continuation loop below swallow the rest of the
+    table, since such rows are tightly spaced and never end in sentence punctuation.
+    """
+
+    return len(_DECIMAL_AMOUNT_RE.findall(line)) >= 2
 
 
 def _rows_are_close(previous: ReadingRow, current: ReadingRow) -> bool:
@@ -611,7 +704,40 @@ def _row_has_prefix(row: ReadingRow, prefixes: Sequence[str]) -> bool:
 
 
 def _row_text(row: ReadingRow) -> str:
-    return " ".join(cell.text for cell in row.cells).strip()
+    text = _join_cell_texts(cell.text for cell in row.cells)
+    return _BULLET_PREFIX_RE.sub("- ", text, count=1)
+
+
+def _join_cell_texts(texts: Iterable[str]) -> str:
+    """Join transient cell fragments, closing punctuation-only splits without adding a space.
+
+    Positioned PDF/OCR extraction sometimes yields a trailing punctuation mark (or a punctuation
+    mark plus trailing words) as its own fragment purely because of run-boundary quirks, not a real
+    word gap. A plain space-join would then introduce a space the source text never had (e.g.
+    ``"word ."``). Only exact closing-punctuation-only fragments (and closing-punctuation-prefixed
+    fragments) are glued tightly; anything else keeps the normal single space between fragments.
+    """
+
+    result = ""
+    previous_open_punct = False
+    for token in texts:
+        if not token:
+            continue
+        if not result:
+            result = token
+            previous_open_punct = token in _OPEN_PUNCT_TOKENS
+            continue
+        match = _LEADING_CLOSE_PUNCT_RE.match(token)
+        if match and match.group(1):
+            punct, _gap, rest = match.groups()
+            result = f"{result}{punct}"
+            if rest:
+                result = f"{result} {rest}"
+            previous_open_punct = False
+            continue
+        result = f"{result}{token}" if previous_open_punct else f"{result} {token}"
+        previous_open_punct = token in _OPEN_PUNCT_TOKENS
+    return result.strip()
 
 
 def _render_layout_blocks(blocks: Sequence[LayoutBlock]) -> str:

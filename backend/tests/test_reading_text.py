@@ -435,6 +435,275 @@ def test_close_post_table_label_value_rows_are_not_joined_as_prose() -> None:
     assert "Kundennummer: SAMPLE-1\n\nIBAN: XX00 0000 0000 0000" in result.text
 
 
+def test_positioned_fragments_glue_trailing_punctuation_without_a_space() -> None:
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Ein Fließtext der lang genug ist um als Absatz erkannt zu werden"),
+            (0.62, "."),
+        ),
+    ]
+    raw = "Ein Fließtext der lang genug ist um als Absatz erkannt zu werden."
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == raw
+
+
+def test_positioned_fragment_starting_with_punctuation_keeps_the_following_word_gap() -> None:
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Firma unter example.com"),
+            (0.50, ". Die Gesellschaft ist im Handelsregister eingetragen und aktiv"),
+        ),
+    ]
+    raw = "Firma unter example.com. Die Gesellschaft ist im Handelsregister eingetragen und aktiv"
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == raw
+
+
+def test_bullet_marker_fragment_becomes_a_markdown_list_item() -> None:
+    rows = [
+        _row(0.10, (0.07, "•"), (0.10, "Kurzer Listeneintrag ohne Fortsetzung")),
+    ]
+    raw = "• Kurzer Listeneintrag ohne Fortsetzung"
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == "- Kurzer Listeneintrag ohne Fortsetzung"
+
+
+def test_bullet_item_wrap_continuation_joins_until_sentence_end() -> None:
+    rows = [
+        _row(
+            0.10, (0.07, "•"), (0.10, "Erste Position mit einer sehr langen Beschreibung die über")
+        ),
+        _row(0.118, (0.10, "zwei Zeilen umgebrochen wird.")),
+        _row(0.140, (0.07, "EUR 123,45")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "- Erste Position mit einer sehr langen Beschreibung die über zwei Zeilen "
+        "umgebrochen wird.\nEUR 123,45"
+    )
+
+
+def test_finished_bullet_does_not_absorb_the_next_unrelated_line() -> None:
+    """Regression for a real corpus bug: a completed bullet item must not swallow an unrelated
+    short line that merely sits close beneath it (e.g. a restated total amount)."""
+    rows = [
+        _row(0.10, (0.07, "•"), (0.10, "Position mit vollständigem Satz und klarem Ende.")),
+        _row(0.118, (0.07, "EUR 99,00")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == "- Position mit vollständigem Satz und klarem Ende.\nEUR 99,00"
+
+
+def test_two_bullet_items_in_a_row_stay_separate() -> None:
+    rows = [
+        _row(0.10, (0.07, "•"), (0.10, "Erste Position ohne Punkt am Ende")),
+        _row(0.118, (0.07, "•"), (0.10, "Zweite Position ohne Punkt am Ende")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "- Erste Position ohne Punkt am Ende\n- Zweite Position ohne Punkt am Ende"
+    )
+
+
+def test_long_prose_line_in_a_flat_block_joins_its_wrap_but_stops_at_sentence_end() -> None:
+    rows = [
+        _row(0.10, (0.07, "Dies ist ein langer Fließtextsatz der über zwei Zeilen umgebrochen")),
+        _row(0.118, (0.07, "wird und dort endet.")),
+        _row(0.140, (0.07, "Kurzer Folgesatz.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Dies ist ein langer Fließtextsatz der über zwei Zeilen umgebrochen wird und dort endet."
+        "\nKurzer Folgesatz."
+    )
+
+
+def test_long_prose_line_wrap_repairs_a_line_break_hyphen() -> None:
+    rows = [
+        _row(0.10, (0.07, "Das Dach dieses langen Beispielsatzes ist als Flachdach ausge-")),
+        _row(0.118, (0.07, "führt und stellt die Fortsetzung dar.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert (
+        "Das Dach dieses langen Beispielsatzes ist als Flachdach ausgeführt und stellt die "
+        "Fortsetzung dar."
+    ) in result.text
+    assert "ausge- führt" not in result.text
+    assert "ausge-führt" not in result.text
+
+
+def test_long_prose_line_wrap_does_not_dehyphenate_before_a_non_letter_continuation() -> None:
+    """The hyphen repair must only fire for a genuine word-wrap (next line starts with a letter),
+    never in front of a following number/code, where the hyphen is real content."""
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Dies ist wirklich ein sehr langer Beispielsatz mit einer Positionsnummer-"),
+        ),
+        _row(0.118, (0.07, "12345 wird im naechsten Abschnitt erlaeutert und fortgesetzt.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert "Positionsnummer- 12345" in result.text
+
+
+def test_long_prose_line_in_a_flat_block_does_not_absorb_a_label_value_line() -> None:
+    rows = [
+        _row(0.10, (0.07, "Dies ist ein sehr langer einleitender Satz ohne Punkt am Zeilenende")),
+        _row(0.118, (0.07, "Kundennummer: SAMPLE-1")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Dies ist ein sehr langer einleitender Satz ohne Punkt am Zeilenende"
+        "\nKundennummer: SAMPLE-1"
+    )
+
+
+def test_separator_rule_cell_does_not_block_table_header_detection() -> None:
+    """Regression for a real corpus bug: a long underscore rule sharing a header's row (a common
+    PDF pattern: a divider drawn just above a table) was being read as the header's first cell,
+    which both hid the real leader text from the header-marker check and, before that check even
+    ran, inflated the rendered line past the long-prose threshold and swallowed following rows."""
+    long_rule = "_" * 40
+    rows = [
+        _row(
+            0.10,
+            (0.02, long_rule),
+            (0.07, "Pos."),
+            (0.16, "Beschreibung"),
+            (0.82, "Betrag EUR"),
+        ),
+        _row(0.13, (0.07, "1"), (0.16, "Arbeitsleistung"), (0.84, "10,00")),
+        _row(0.16, (0.07, "2"), (0.16, "Material"), (0.84, "20,00")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert "Pos. | Beschreibung | Betrag EUR" in result.text
+    assert "1 | Arbeitsleistung | 10,00" in result.text
+    assert "2 | Material | 20,00" in result.text
+    assert long_rule not in result.text
+    assert "table_row_reconstruction" in result.flags
+
+
+def test_short_dash_run_is_not_mistaken_for_a_separator_rule() -> None:
+    """Only a long (8+) separator run is stripped; a short dash sequence is ordinary content and
+    must survive unchanged, e.g. as part of a code or reference number cell."""
+    rows = [_row(0.10, (0.07, "Referenz:"), (0.30, "-------"))]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == "Referenz: -------"
+
+
+def test_data_heavy_row_is_not_absorbed_as_a_prose_continuation() -> None:
+    """Regression for a real corpus bug: a flattened cost/line-item row (several decimal amounts,
+    no header the table detector could latch onto) that happens to be 60+ characters was
+    misclassified as a wrapped prose sentence, so the continuation loop swallowed every following
+    row in the same dense block into one unreadable line."""
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Moebel vertragen, De- od. Neumontage von Moebeln 6,00 Std 67,50 405,00"),
+        ),
+        _row(0.118, (0.07, "Verputz abschlagen 2,00 m2 25,33 50,66")),
+        _row(0.136, (0.07, "Gesamtbetrag 1.712,38")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Moebel vertragen, De- od. Neumontage von Moebeln 6,00 Std 67,50 405,00"
+        "\nVerputz abschlagen 2,00 m2 25,33 50,66"
+        "\nGesamtbetrag 1.712,38"
+    )
+
+
+def test_long_prose_line_with_a_single_amount_still_joins_its_wrap() -> None:
+    """Must-not-trigger for the data-row guard: an ordinary sentence citing one amount is not a
+    flattened table row and must still merge with its wrapped continuation, as before that guard
+    existed."""
+    rows = [
+        _row(0.10, (0.07, "Wir bieten einen Ablösebetrag in Hoehe von EUR 1.234,56 an, sofern")),
+        _row(0.118, (0.07, "Sie damit einverstanden sind.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Wir bieten einen Ablösebetrag in Hoehe von EUR 1.234,56 an, sofern "
+        "Sie damit einverstanden sind."
+    )
+
+
+def test_long_prose_line_with_a_date_and_one_amount_still_joins_its_wrap() -> None:
+    """Regression for a real corpus bug: a DD.MM.YYYY date (e.g. "13.06.2025") was itself matching
+    the decimal-amount pattern, so a perfectly ordinary sentence naming one amount plus one date
+    was counted as two amounts and wrongly treated as a flattened data row."""
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Bitte ueberweisen Sie den Betrag von 2.238,00 EUR bis spaetestens 13.06.2025"),
+        ),
+        _row(0.118, (0.07, "auf unser Konto.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Bitte ueberweisen Sie den Betrag von 2.238,00 EUR bis spaetestens 13.06.2025 "
+        "auf unser Konto."
+    )
+
+
 def test_repeated_page_headers_and_footers_do_not_enter_middle_of_content() -> None:
     page_lines = [
         [
