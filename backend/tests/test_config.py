@@ -93,7 +93,29 @@ def test_config_returns_effective_upload_constraints(client: TestClient) -> None
     }
     # The pytest/CI backend image installs no OCR/PII extras, so both are correctly unavailable;
     # see test_runtime_capabilities.py for the true/false branches of the underlying checks.
-    assert body["runtime"] == {"ocr_available": False, "pii_available": False}
+    assert body["runtime"] == {
+        "ocr_available": False,
+        "pii_available": False,
+        "ocr_memory_limit_low": False,
+    }
+
+
+def test_config_surfaces_a_low_ocr_memory_limit(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When OCR is installed but the container memory limit is too low, `/api/config` must say
+    so, rather than that only being discoverable via a live request's 502/OOM-kill."""
+    monkeypatch.setattr("app.api.config.ocr_runtime_available", lambda settings: True)
+    monkeypatch.setattr("app.api.config.ocr_memory_limit_is_low", lambda settings: True)
+
+    response = client.get("/api/config")
+
+    assert response.status_code == 200
+    assert response.json()["runtime"] == {
+        "ocr_available": True,
+        "pii_available": False,
+        "ocr_memory_limit_low": True,
+    }
 
 
 def test_dev_engine_settings_default_to_disabled(

@@ -1004,6 +1004,13 @@ class RuntimeCapabilitiesResponse(BaseModel):
     pii_available: bool = Field(
         description="Presidio, spaCy, and the configured spaCy model package are installed."
     )
+    ocr_memory_limit_low: bool = Field(
+        description=(
+            "OCR is installed but the container memory limit looks too low for PaddleOCR to run "
+            "without being OOM-killed mid-request. Restart with BACKEND_MEMORY_LIMIT=2g "
+            "(`make up-ocr`/`make up-full`)."
+        )
+    )
 
 
 class ConfigResponse(BaseModel):

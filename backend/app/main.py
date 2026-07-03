@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.errors import ApiError
 from app.logging import configure_logging, set_correlation_id
 from app.schemas import ErrorResponse
+from app.services.runtime_capabilities import warn_if_ocr_memory_limit_is_low
 
 logger = logging.getLogger("app")
 
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
     settings = get_settings()
     configure_logging(settings.log_level)
+    warn_if_ocr_memory_limit_is_low(settings, logger)
 
     app = FastAPI(
         title="Privacy De-Identification Pilot API",

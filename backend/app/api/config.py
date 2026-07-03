@@ -11,7 +11,11 @@ from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
 from app.schemas import ConfigResponse, PiiConfigResponse, RuntimeCapabilitiesResponse
-from app.services.runtime_capabilities import ocr_runtime_available, pii_runtime_available
+from app.services.runtime_capabilities import (
+    ocr_memory_limit_is_low,
+    ocr_runtime_available,
+    pii_runtime_available,
+)
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -32,5 +36,6 @@ def get_config(settings: Settings = Depends(get_settings)) -> ConfigResponse:
         runtime=RuntimeCapabilitiesResponse(
             ocr_available=ocr_runtime_available(settings),
             pii_available=pii_runtime_available(settings),
+            ocr_memory_limit_low=ocr_memory_limit_is_low(settings),
         ),
     )
