@@ -227,6 +227,10 @@ export default function DocumentDetailPage() {
   // else the user view is the sole, default experience.
   const effectiveViewMode: ViewMode = devGateEnabled ? viewMode : "user";
   const isDevView = effectiveViewMode === "dev";
+  // The review-decision panel is not dev-gated on the backend, so it shows in both views once
+  // there is something current to review; only the per-station Dev View entity list stays dev-only.
+  const showReviewColumn = piiStatus === "current";
+  const showSecondColumn = isDevView || showReviewColumn;
   const piiRunRequest: PiiRunRequest | undefined =
     devPiiSettingsEnabled && selectedPiiProfile !== ""
       ? { pii_profile: selectedPiiProfile }
@@ -427,7 +431,7 @@ export default function DocumentDetailPage() {
           ) : (
             <div
               className={
-                isDevView
+                showSecondColumn
                   ? "grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]"
                   : "grid gap-6"
               }
@@ -443,15 +447,15 @@ export default function DocumentDetailPage() {
                   devMode={isDevView}
                   showEntityMeta={isDevView}
                   reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
-                  onSelectEntity={isDevView ? setSelectedOccurrenceId : undefined}
+                  onSelectEntity={showReviewColumn ? setSelectedOccurrenceId : undefined}
                 />
                 {isDevView && !pii && (
                   <p className="mt-3 text-xs text-muted">PII-Erkennung noch nicht ausgeführt.</p>
                 )}
               </div>
-              {isDevView &&
-                (pii ? (
-                  <div>
+              {isDevView ? (
+                pii ? (
+                  <div className="max-h-[70vh] overflow-auto">
                     <PiiEntityList
                       entities={pii.content.entities}
                       stale={piiStatus === "stale"}
@@ -460,12 +464,13 @@ export default function DocumentDetailPage() {
                       feedbackEnabled={devPiiSettingsEnabled}
                       feedbackStatuses={feedbackStatuses}
                     />
-                    {piiStatus === "current" && (
+                    {showReviewColumn && (
                       <PiiReviewGroupList
                         documentId={documentId}
                         review={reviewResult}
                         onReviewChanged={setReviewResult}
                         selectedOccurrenceId={selectedOccurrenceId}
+                        showTechnicalDetails
                       />
                     )}
                   </div>
@@ -474,7 +479,20 @@ export default function DocumentDetailPage() {
                     <h2 className="font-semibold text-ink">Erkannte Entities</h2>
                     <p className="mt-4 text-sm text-muted">PII-Erkennung noch nicht ausgeführt.</p>
                   </section>
-                ))}
+                )
+              ) : (
+                showReviewColumn && (
+                  <div className="max-h-[70vh] overflow-auto">
+                    <PiiReviewGroupList
+                      documentId={documentId}
+                      review={reviewResult}
+                      onReviewChanged={setReviewResult}
+                      selectedOccurrenceId={selectedOccurrenceId}
+                      showTechnicalDetails={false}
+                    />
+                  </div>
+                )
+              )}
             </div>
           )}
         </section>

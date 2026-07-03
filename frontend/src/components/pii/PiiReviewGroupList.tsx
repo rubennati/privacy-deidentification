@@ -18,9 +18,12 @@ interface PiiReviewGroupListProps {
   /** Called with the freshly-fetched review result after a decision is persisted, so the caller
    *  (e.g. text-highlight suppression) can stay in sync without a full page reload. */
   onReviewChanged: (review: PiiReviewResult) => void;
-  /** An occurrence id selected elsewhere (e.g. a clicked text highlight); expands and scrolls to
-   *  its entity group. */
+  /** An occurrence id selected elsewhere (e.g. a clicked text highlight); scrolls to its entity
+   *  group (and, when technical details are shown, expands its occurrence list). */
   selectedOccurrenceId?: string | null;
+  /** When false (User View), hides the reading-text projection summary and the per-occurrence
+   *  offset/override list — only the group-level decision remains. Defaults to true (Dev View). */
+  showTechnicalDetails?: boolean;
 }
 
 const STATUS_STYLES: Record<PiiReviewStatus, string> = {
@@ -56,6 +59,7 @@ export function PiiReviewGroupList({
   review,
   onReviewChanged,
   selectedOccurrenceId,
+  showTechnicalDetails = true,
 }: PiiReviewGroupListProps) {
   const [savingTarget, setSavingTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -138,11 +142,13 @@ export function PiiReviewGroupList({
                   {reviewStatusLabel(group.review_status)}
                 </span>
               </div>
-              <p className="mt-2 text-xs text-muted">
-                Lesetext-Abdeckung: {group.projection_summary.exact_count} exakt ·{" "}
-                {group.projection_summary.partial_count} teilweise ·{" "}
-                {group.projection_summary.unmapped_count} nur Rohtext
-              </p>
+              {showTechnicalDetails && (
+                <p className="mt-2 text-xs text-muted">
+                  Lesetext-Abdeckung: {group.projection_summary.exact_count} exakt ·{" "}
+                  {group.projection_summary.partial_count} teilweise ·{" "}
+                  {group.projection_summary.unmapped_count} nur Rohtext
+                </p>
+              )}
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label className="sr-only" htmlFor={`group-decision-${group.entity_group_id}`}>
                   Entscheidung für Gruppe
@@ -166,7 +172,7 @@ export function PiiReviewGroupList({
                     </option>
                   ))}
                 </select>
-                {occurrences.length > 0 && (
+                {showTechnicalDetails && occurrences.length > 0 && (
                   <button
                     type="button"
                     onClick={() => setExpandedGroupId(expanded ? null : group.entity_group_id)}
@@ -176,7 +182,7 @@ export function PiiReviewGroupList({
                   </button>
                 )}
               </div>
-              {occurrences.length > 0 && (
+              {showTechnicalDetails && occurrences.length > 0 && (
                 <ul
                   className={`mt-3 space-y-2 border-t border-card-border pt-3 ${expanded ? "" : "hidden"}`}
                 >

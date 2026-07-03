@@ -59,9 +59,14 @@ function baseReview(overrides: Partial<PiiReviewResult> = {}): PiiReviewResult {
   };
 }
 
-function render(review: PiiReviewResult | null): string {
+function render(review: PiiReviewResult | null, showTechnicalDetails?: boolean): string {
   return renderToStaticMarkup(
-    <PiiReviewGroupList documentId="doc-1" review={review} onReviewChanged={vi.fn()} />,
+    <PiiReviewGroupList
+      documentId="doc-1"
+      review={review}
+      onReviewChanged={vi.fn()}
+      showTechnicalDetails={showTechnicalDetails}
+    />,
   );
 }
 
@@ -155,5 +160,33 @@ describe("PiiReviewGroupList", () => {
     // Still renders the group row itself without crashing.
     expect(html).toContain("LOCATION");
     expect(html).not.toContain("Vorkommen anzeigen");
+  });
+
+  describe("simplified mode (showTechnicalDetails=false, User View)", () => {
+    it("still shows type, occurrence count, status, and the group decision select", () => {
+      const html = render(baseReview(), false);
+      expect(html).toContain("LOCATION");
+      expect(html).toContain("2× erkannt");
+      expect(html).toContain("Ausstehend");
+      expect(html).toContain("Pseudonymisieren");
+    });
+
+    it("hides the reading-text projection summary", () => {
+      const html = render(baseReview(), false);
+      expect(html).not.toContain("Lesetext-Abdeckung");
+    });
+
+    it("hides the per-occurrence expand control, offsets, and override select", () => {
+      const html = render(baseReview(), false);
+      expect(html).not.toContain("Vorkommen anzeigen");
+      expect(html).not.toContain("Offset 0");
+      expect(html).not.toContain("Override");
+    });
+
+    it("shows full technical detail by default when the prop is omitted", () => {
+      const html = render(baseReview());
+      expect(html).toContain("Lesetext-Abdeckung");
+      expect(html).toContain("Vorkommen anzeigen");
+    });
   });
 });
