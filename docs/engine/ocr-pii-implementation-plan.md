@@ -223,6 +223,13 @@ data. OCR L11 remains sufficiently ahead of PII L10 partial/Redaction L0; no ben
 signal changes priority. After this third OCR structure PR (L9–L11), the next three remain PII L11
 grouping, PII L12 overlap resolution, and the lineage-bound Review L8 artifact foundation.
 
+**Reading-text projection checkpoint (non-level review bridge):** An optional offset-only
+`reading_text_map` and additive PII projection metadata now allow exact raw findings to highlight in
+Canonical Reading Text. Detection still runs exclusively on `text_result.text`; partial,
+ambiguous, and legacy cases stay raw-only. This does not complete the full `text_lineage_map`, does
+not advance PII L11 grouping, and does not change the next-three sequence: PII L11 grouping, PII
+L12 overlap resolution, then Review L8.
+
 ## References
 
 - [`README.md`](README.md) — engine capability model + 0–19 maturity scale

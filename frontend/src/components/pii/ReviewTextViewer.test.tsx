@@ -15,6 +15,9 @@ const entity: PiiEntity = {
   page_end_offset: 10,
   score: 0.9,
   recognizer: "FakeRecognizer",
+  reading_start_offset: 17,
+  reading_end_offset: 21,
+  projection_status: "exact",
 };
 
 const LEGACY_READING_TEXT = Symbol("legacy-reading-text");
@@ -25,13 +28,14 @@ function render(
   showEntityMeta?: boolean,
   readingText: string | null | typeof LEGACY_READING_TEXT = "Lesefreundliches Wien",
   devMode = true,
+  entities: readonly PiiEntity[] = [entity],
 ): string {
   return renderToStaticMarkup(
     <ReviewTextViewer
       rawText="Hallo Wien"
       readingText={readingText === LEGACY_READING_TEXT ? undefined : readingText}
       layoutText={layoutText}
-      entities={[entity]}
+      entities={entities}
       mode={mode}
       onModeChange={vi.fn()}
       devMode={devMode}
@@ -59,12 +63,14 @@ describe("ReviewTextViewer", () => {
     expect(html).not.toContain("PII-Markierungen verwenden derzeit");
   });
 
-  it("shows canonical reading text as unhighlighted main text", () => {
+  it("shows canonical reading text with projected PII highlights", () => {
     const html = render("reading", "Wien      Graz");
 
-    expect(html).toContain("Lesefreundliches Wien");
+    expect(html).toContain("Lesefreundliches ");
+    expect(html).toContain(">Wien</mark>");
     expect(html).toContain("lesefreundliche Hauptansicht");
-    expect(html).not.toContain("<mark");
+    expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
+    expect(html).toContain("projizierte Lesetext-Offsets");
   });
 
   it("renders the extracted text inside a centered A4 paper sheet", () => {
@@ -115,9 +121,29 @@ describe("ReviewTextViewer", () => {
   it("defaults the user view to reading text and keeps raw-highlight access", () => {
     const html = render("reading", "Wien      Graz", false, "Lesefreundliches Wien", false);
 
-    expect(html).toContain("Lesefreundliches Wien");
+    expect(html).toContain("Lesefreundliches ");
+    expect(html).toContain(">Wien</mark>");
     expect(html).toContain("Kanonischer Lesetext");
     expect(html).toContain("Technischer Rohtext");
     expect(html).not.toContain("Layout-Text</button>");
+  });
+
+  it("does not highlight unmapped entities and shows the raw-only notice", () => {
+    const unmapped = {
+      ...entity,
+      reading_start_offset: null,
+      reading_end_offset: null,
+      projection_status: "unmapped" as const,
+    };
+    const html = render("reading", null, undefined, "Lesefreundliches Wien", true, [unmapped]);
+
+    expect(html).not.toContain("<mark");
+    expect(html).toContain("nur im technischen Rohtext sichtbar");
+  });
+
+  it("ignores malformed projected offsets instead of crashing", () => {
+    const malformed = { ...entity, reading_end_offset: 999 };
+    const html = render("reading", null, undefined, "Lesefreundliches Wien", true, [malformed]);
+    expect(html).not.toContain("<mark");
   });
 });

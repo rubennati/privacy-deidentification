@@ -500,6 +500,24 @@ class TextPageResult(BaseModel):
         return self
 
 
+class ReadingTextMapSegment(BaseModel):
+    """Offset-only lineage from canonical reading text back to technical raw text."""
+
+    reading_start: int = Field(ge=0)
+    reading_end: int = Field(ge=1)
+    raw_start: int = Field(ge=0)
+    raw_end: int = Field(ge=1)
+    page_number: int | None = Field(default=None, ge=1)
+    mapping_status: Literal["exact", "normalized", "partial"]
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> ReadingTextMapSegment:
+        if self.reading_end <= self.reading_start or self.raw_end <= self.raw_start:
+            raise ValueError("reading text map ranges must be non-empty and ordered")
+        return self
+
+
 class TextContent(BaseModel):
     """Versioned text output produced by the OCR workstation."""
 
@@ -526,6 +544,8 @@ class TextContent(BaseModel):
     reading_text: str | None = Field(default=None)
     reading_text_status: Literal["heuristic", "fallback"] | None = None
     reading_text_flags: list[str] = Field(default_factory=list)
+    reading_text_map_version: Literal["1"] | None = None
+    reading_text_map: list[ReadingTextMapSegment] = Field(default_factory=list)
     # Additive, optional human-readable layout reconstruction (OCR L9). It never feeds PII and is
     # not the raw offset text: ``text`` above stays the offset-stable coordinate source. ``None``
     # when no layout was reconstructed (e.g. DOCX, image, or all-OCR documents), so legacy artifacts
@@ -594,6 +614,30 @@ class TextContent(BaseModel):
             raise ValueError("reading text flags require reading text")
         if self.reading_text is not None and not self.reading_text.strip():
             raise ValueError("reading text must contain non-whitespace content")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_reading_text_map(self) -> TextContent:
+        if self.reading_text_map and self.reading_text_map_version != "1":
+            raise ValueError("reading text map requires its version")
+        if self.reading_text_map_version == "1" and self.reading_text is None:
+            raise ValueError("reading text map requires reading text")
+        previous_reading_end = 0
+        raw_ranges: list[tuple[int, int]] = []
+        for segment in self.reading_text_map:
+            if segment.reading_start < previous_reading_end:
+                raise ValueError("reading text map segments must be ordered and non-overlapping")
+            if segment.reading_end > len(self.reading_text or ""):
+                raise ValueError("reading text map offsets exceed reading text length")
+            if segment.raw_end > len(self.text):
+                raise ValueError("reading text map offsets exceed raw text length")
+            if any(
+                segment.raw_start < end and start < segment.raw_end
+                for start, end in raw_ranges
+            ):
+                raise ValueError("reading text map raw ranges must not overlap")
+            previous_reading_end = segment.reading_end
+            raw_ranges.append((segment.raw_start, segment.raw_end))
         return self
 
     @model_validator(mode="after")
@@ -827,6 +871,9 @@ class PiiEntity(BaseModel):
             "score_down."
         ),
     )
+    reading_start_offset: int | None = Field(default=None, ge=0)
+    reading_end_offset: int | None = Field(default=None, ge=1)
+    projection_status: Literal["exact", "partial", "unmapped"] | None = None
 
     @model_validator(mode="after")
     def _validate_offsets(self) -> PiiEntity:
@@ -848,6 +895,17 @@ class PiiEntity(BaseModel):
                 raise ValueError("page entity end offset must be after start offset")
             if self.page_end_offset - self.page_start_offset != len(self.text):
                 raise ValueError("page entity offsets do not match entity text")
+        has_projection_offsets = (
+            self.reading_start_offset is not None or self.reading_end_offset is not None
+        )
+        if has_projection_offsets != (self.projection_status == "exact"):
+            raise ValueError("only exact reading projections may carry offsets")
+        if self.projection_status == "exact" and (
+            self.reading_start_offset is None
+            or self.reading_end_offset is None
+            or self.reading_end_offset <= self.reading_start_offset
+        ):
+            raise ValueError("exact reading projection offsets must be non-empty and ordered")
         return self
 
 
@@ -882,6 +940,7 @@ class PiiContent(BaseModel):
     language: str
     score_threshold: float = Field(ge=0, le=1)
     text_char_count: int = Field(ge=0)
+    reading_text_char_count: int | None = Field(default=None, ge=0)
     configured_entity_types: list[str]
     entities: list[PiiEntity] = Field(default_factory=list)
     entity_counts: dict[str, int] = Field(default_factory=dict)
@@ -911,6 +970,15 @@ class PiiContent(BaseModel):
             raise ValueError("entity type was not configured")
         if any(entity.end_offset > self.text_char_count for entity in self.entities):
             raise ValueError("entity offset exceeds source text")
+        projected = [entity for entity in self.entities if entity.projection_status == "exact"]
+        if projected and self.reading_text_char_count is None:
+            raise ValueError("projected entities require a reading text character count")
+        if self.reading_text_char_count is not None and any(
+            entity.reading_end_offset is not None
+            and entity.reading_end_offset > self.reading_text_char_count
+            for entity in projected
+        ):
+            raise ValueError("projected entity offset exceeds reading text")
         sort_keys = [
             (
                 entity.start_offset,
