@@ -120,7 +120,7 @@ def test_unknown_document_returns_404_for_get_and_post(client: TestClient) -> No
     assert response.status_code == 404
 
 
-def test_review_lists_groups_and_occurrences_with_default_pending_status(
+def test_review_lists_groups_and_occurrences_with_default_pseudonymize_status(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
@@ -139,7 +139,8 @@ def test_review_lists_groups_and_occurrences_with_default_pending_status(
     group = body["groups"][0]
     assert group["entity_type"] == "LOCATION"
     assert group["occurrence_count"] == 2
-    assert group["review_status"] == "pending"
+    # No explicit decision yet: the implied default is "pseudonymize", not a separate pending state.
+    assert group["review_status"] == "accepted"
     assert group["review_decision"] is None
     assert group["updated_at"] is None
     assert group["projection_summary"] == {
@@ -149,7 +150,7 @@ def test_review_lists_groups_and_occurrences_with_default_pending_status(
     }
     assert len(body["occurrences"]) == 2
     for occurrence in body["occurrences"]:
-        assert occurrence["review_status"] == "pending"
+        assert occurrence["review_status"] == "accepted"
         assert occurrence["review_decision"] is None
         assert occurrence["decision_scope"] is None
         assert occurrence["entity_group_id"] == group["entity_group_id"]
@@ -164,7 +165,7 @@ def test_legacy_document_without_any_review_decisions_still_loads(
     response = client.get(f"/api/documents/{document_id}/pii/review")
 
     assert response.status_code == 200
-    assert response.json()["groups"][0]["review_status"] == "pending"
+    assert response.json()["groups"][0]["review_status"] == "accepted"
 
 
 # --- group-level decisions -------------------------------------------------------------------
@@ -235,14 +236,14 @@ def test_occurrence_level_override_wins_over_group_decision(
     assert by_id[first_occurrence_id]["review_status"] == "rejected"
     assert by_id[first_occurrence_id]["review_decision"] == "false_positive"
     assert by_id[first_occurrence_id]["decision_scope"] == "occurrence"
-    assert by_id[second_occurrence_id]["review_status"] == "accepted"
+    assert by_id[second_occurrence_id]["review_status"] == "kept"
     assert by_id[second_occurrence_id]["review_decision"] == "keep"
     assert by_id[second_occurrence_id]["decision_scope"] == "entity_group"
     # The group-level view is unaffected by the occurrence override.
     assert review_after["groups"][0]["review_decision"] == "keep"
 
 
-def test_ignored_remains_distinct_from_false_positive(
+def test_kept_remains_distinct_from_false_positive(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
@@ -256,7 +257,7 @@ def test_ignored_remains_distinct_from_false_positive(
 
     client.post(
         f"/api/documents/{document_id}/pii/review/decisions",
-        json=_decision_payload("entity_group", wien_group, "ignore"),
+        json=_decision_payload("entity_group", wien_group, "keep"),
     )
     client.post(
         f"/api/documents/{document_id}/pii/review/decisions",
@@ -265,7 +266,7 @@ def test_ignored_remains_distinct_from_false_positive(
 
     review_after = client.get(f"/api/documents/{document_id}/pii/review").json()
     by_id = {g["entity_group_id"]: g for g in review_after["groups"]}
-    assert by_id[wien_group]["review_status"] == "ignored"
+    assert by_id[wien_group]["review_status"] == "kept"
     assert by_id[graz_group]["review_status"] == "rejected"
     assert by_id[wien_group]["review_status"] != by_id[graz_group]["review_status"]
 

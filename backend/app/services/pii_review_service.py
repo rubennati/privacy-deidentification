@@ -9,7 +9,9 @@ pseudonymization work will consume. Neither ``pii_result`` nor its entities/offs
 mutated by a decision; raw and projected offsets stay exactly as detected/projected.
 
 This is not pseudonymization, placeholder generation, or reconstruction/export — it only records
-a reviewer's intent (pseudonymize/keep/ignore/false_positive) against a stable target.
+a reviewer's intent (pseudonymize/keep/false_positive) against a stable target. A freshly detected
+entity is assumed "pseudonymize" by default; a reviewer only has to act to opt an entity *out* of
+pseudonymization ("keep" it as-is, or mark it a "false_positive").
 """
 
 from __future__ import annotations
@@ -43,21 +45,26 @@ from app.services.pii_grouping import group_pii_entities
 _REVIEW_DIRECTORY = "review"
 _DECISIONS_FILENAME = "pii_review_decisions.jsonl"
 
-# pseudonymize/keep both mean "reviewed, entity stays active"; ignore/false_positive both mean
-# "no longer an active highlight", but stay distinguishable (ignored vs. rejected) per the review
-# UI contract. See docs/engine/review-feedback-levels.md#level-9--confirm--reject.
+# No decision recorded yet is treated the same as an explicit "pseudonymize": that is the assumed
+# default outcome for every detected entity. "keep" opts an entity out of pseudonymization while
+# keeping it flagged as PII; "false_positive" says it was never PII to begin with (no highlight).
+# See docs/engine/review-feedback-levels.md#level-9--confirm--reject.
 _DECISION_TO_STATUS: dict[PiiReviewDecisionValue, PiiReviewStatus] = {
     "pseudonymize": "accepted",
-    "keep": "accepted",
-    "ignore": "ignored",
+    "keep": "kept",
     "false_positive": "rejected",
 }
 
 
 def _status_for(decision: PiiReviewDecisionValue | None) -> PiiReviewStatus:
-    """Map a decision (or its absence) to the coarser review status shown in the UI."""
+    """Map a decision (or its absence) to the coarser review status shown in the UI.
+
+    No recorded decision defaults to "accepted" (the implied "pseudonymize" outcome) rather than a
+    separate "pending" state — every detected entity is assumed pseudonymize-bound until a
+    reviewer explicitly opts it out.
+    """
     if decision is None:
-        return "pending"
+        return "accepted"
     return _DECISION_TO_STATUS[decision]
 
 

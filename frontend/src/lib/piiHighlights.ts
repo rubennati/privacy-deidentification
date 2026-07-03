@@ -10,9 +10,9 @@ export type HighlightSegment =
  *
  * When `reviewStatusByOccurrenceId` is given, an entity resolved to `"rejected"` (false positive)
  * is excluded entirely — it is no longer an active highlight once a reviewer rejects it. Every
- * other resolved status is attached to its segment so the caller can style it distinctly
- * (e.g. "ignored"/"accepted" vs. the default "pending" look); entities with no resolved status
- * (no review data loaded, or a legacy/malformed response) render exactly as before.
+ * other resolved status is attached to its segment so the caller can style it distinctly (e.g.
+ * "kept" vs. the default "accepted"/pseudonymize look); entities with no resolved status (no
+ * review data loaded, or a legacy/malformed response) render exactly as before.
  */
 export function buildHighlightSegments(
   text: string,

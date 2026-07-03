@@ -98,16 +98,16 @@ describe("buildHighlightSegments", () => {
       expect(segments).toEqual([{ kind: "text", text: "Anna in Wien" }]);
     });
 
-    it("attaches the resolved review status to an accepted/ignored entity's segment", () => {
+    it("attaches the resolved review status to an accepted/kept entity's segment", () => {
       const anna = entity("a", "Anna", 0, 4);
       const accepted = buildHighlightSegments("Anna", [anna], { a: "accepted" });
       expect(accepted).toEqual([{ kind: "entity", text: "Anna", entity: anna, reviewStatus: "accepted" }]);
 
-      const ignored = buildHighlightSegments("Anna", [anna], { a: "ignored" });
-      expect(ignored).toEqual([{ kind: "entity", text: "Anna", entity: anna, reviewStatus: "ignored" }]);
+      const kept = buildHighlightSegments("Anna", [anna], { a: "kept" });
+      expect(kept).toEqual([{ kind: "entity", text: "Anna", entity: anna, reviewStatus: "kept" }]);
     });
 
-    it("renders pending/unresolved entities exactly as before (no status map)", () => {
+    it("renders unresolved entities exactly as before (no status map)", () => {
       const anna = entity("a", "Anna", 0, 4);
       expect(buildHighlightSegments("Anna", [anna])).toEqual([
         { kind: "entity", text: "Anna", entity: anna },

@@ -45,4 +45,5 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   the product-facing main document view; any future PII switch remains lineage-gated.
 - [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md) — Conservative,
   derived (non-persisted) PII entity grouping plus a lineage-bound, JSONL-based review-decision
-  overlay (`pseudonymize/keep/ignore/false_positive`) that never mutates `pii_result`.
+  overlay (default `pseudonymize`; opt out via `keep`/`false_positive`) that never mutates
+  `pii_result`.

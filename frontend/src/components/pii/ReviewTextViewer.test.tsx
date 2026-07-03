@@ -181,7 +181,7 @@ describe("ReviewTextViewer", () => {
 describe("ReviewTextViewer review-decision awareness", () => {
   function renderWithReview(
     mode: "reading" | "raw",
-    reviewStatusByOccurrenceId?: Record<string, "pending" | "accepted" | "rejected" | "ignored">,
+    reviewStatusByOccurrenceId?: Record<string, "accepted" | "kept" | "rejected">,
     onSelectEntity?: (entityId: string) => void,
   ): string {
     return renderToStaticMarkup(
@@ -210,9 +210,9 @@ describe("ReviewTextViewer review-decision awareness", () => {
     expect(html).not.toContain("<mark");
   });
 
-  it("keeps highlighting an ignored/accepted entity distinguishably in both modes", () => {
-    const raw = renderWithReview("raw", { [entity.id]: "ignored" });
-    const reading = renderWithReview("reading", { [entity.id]: "ignored" });
+  it("keeps highlighting a kept entity distinguishably in both modes", () => {
+    const raw = renderWithReview("raw", { [entity.id]: "kept" });
+    const reading = renderWithReview("reading", { [entity.id]: "kept" });
     expect(raw).toContain(`<mark id="pii-mark-${entity.id}"`);
     expect(reading).toContain(`<mark id="pii-mark-${entity.id}"`);
     expect(raw).toContain("opacity-60");
@@ -223,6 +223,15 @@ describe("ReviewTextViewer review-decision awareness", () => {
     const withoutMap = renderWithReview("raw", undefined);
     expect(withoutMap).toContain(`<mark id="pii-mark-${entity.id}"`);
     expect(withoutMap).not.toContain("opacity-60");
+  });
+
+  it("renders the default accepted (pseudonymize) status with no special modifier", () => {
+    // "accepted" is the assumed default for every detected entity, so it must look like a plain
+    // highlight — only "kept" gets a distinguishing style.
+    const html = renderWithReview("raw", { [entity.id]: "accepted" });
+    expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
+    expect(html).not.toContain("opacity-60");
+    expect(html).not.toContain("ring-emerald");
   });
 
   it("makes a highlight clickable only when a selection handler is provided", () => {

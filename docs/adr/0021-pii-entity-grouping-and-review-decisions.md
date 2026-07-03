@@ -39,11 +39,18 @@ document, without a human re-deciding on every reload and without ever mutating 
 
 **Review decisions are a separate, additive overlay — not a field on `pii_result`.**
 
-- A decision (`pseudonymize | keep | ignore | false_positive`, optional `note`) targets either an
+- A decision (`pseudonymize | keep | false_positive`, optional `note`) targets either an
   `entity_group` or a single `occurrence` (a `PiiEntity.id`). Occurrence-level decisions override
   the group-level decision for that one occurrence; everything else in the group inherits the
   group decision. No decision ever mutates `start_offset`/`end_offset`/`reading_start_offset`/
   `reading_end_offset` on any entity.
+- **A freshly detected entity is assumed `pseudonymize` by default — there is no separate
+  "pending"/undecided state.** A reviewer only has to act to opt an entity *out* of
+  pseudonymization: `keep` it as-is (still PII, but don't touch it), or mark it `false_positive`
+  (it was never PII). This default was chosen deliberately over an initial "pending until reviewed"
+  design: for a tool whose whole purpose is preparing documents for pseudonymization, assuming the
+  common case (pseudonymize) and asking the reviewer to opt out of the exceptions is less friction
+  than requiring an explicit decision on every single entity.
 - Persistence reuses the existing append-only JSONL pattern from the dev-only feedback
   side-channel (`pii_feedback.jsonl`) rather than inventing a new artifact-file model, per the
   explicit instruction to reuse existing review-feedback archive logic where it fits: each decision
@@ -55,15 +62,18 @@ document, without a human re-deciding on every reload and without ever mutating 
   `ENABLE_DEV_ENGINE_SETTINGS` — it is the binding handoff layer future pseudonymization work will
   read from, not a dev-only quality-analysis channel, so it must be available whenever PII results
   exist.
-- A coarse `review_status` (`pending | accepted | rejected | ignored`) is derived from the decision
-  for display: `pseudonymize`/`keep` → `accepted`, `ignore` → `ignored`, `false_positive` →
-  `rejected`. `pending` is the default for every occurrence/group with no decision yet.
+- A coarse `review_status` (`accepted | kept | rejected`) is derived from the decision for display:
+  no explicit decision, or `pseudonymize` → `accepted`; `keep` → `kept`; `false_positive` →
+  `rejected`. `accepted` is therefore both the implied default *and* the explicit-pseudonymize
+  outcome — there is no way to distinguish "nobody has looked at this yet" from "a reviewer
+  confirmed pseudonymize" in the current model, which is an intentional simplification (see
+  Consequences).
 - `GET …/pii/review` returns the merged, request-time view (groups + occurrences with resolved
   decisions); `POST …/pii/review/decisions` appends one decision and returns a small
   acknowledgement. An unknown group/occurrence id returns `404`; an invalid `decision`/`target_type`
   value returns `422` via normal Pydantic validation. Both endpoints 404 cleanly when a document has
-  no PII result yet, and legacy documents with no decisions file simply show everything as
-  `pending`.
+  no PII result yet, and legacy documents with no decisions file simply show every entity as
+  `accepted` (the assumed-pseudonymize default).
 
 ## Consequences
 
@@ -74,11 +84,13 @@ document, without a human re-deciding on every reload and without ever mutating 
   a database or a formal artifact-file model. Formalizing this into a proper `review_result`
   artifact (with actor/reason metadata at Review L11, scoped suppression rules at L12, and reusable
   cross-run decisions at L13) remains explicitly open.
-- The decision vocabulary (`pseudonymize/keep/ignore/false_positive`) is broader than the plain
-  confirm/reject binary in the original Review L9 sketch; `keep` and `pseudonymize` both map to the
-  `accepted` status (an entity a human has reviewed and wants to remain active), while `ignore` and
-  `false_positive` both suppress the entity from being an "active" highlight but stay visually and
-  semantically distinct from each other.
+- The decision vocabulary (`pseudonymize/keep/false_positive`) differs from the plain confirm/reject
+  binary in the original Review L9 sketch: it is pseudonymization-oriented (opt out of the default,
+  rather than confirm/reject every candidate) and has no distinct "pending" status. This means the
+  API cannot today tell a caller "no one has reviewed this yet" apart from "a reviewer explicitly
+  chose pseudonymize" — both read as `accepted`. If a future requirement needs that distinction
+  (e.g. a completeness/coverage report of what a human has actually looked at), it needs a separate
+  signal, since `review_status`/`review_decision` alone cannot answer it.
 - `entity_group_id` is deterministic across requests for the *same* PII artifact (a hash of type +
   normalized value), which is what lets a decision persist and be found again — but it also means
   the same value in two different documents, or across two different PII runs on the same document,
@@ -91,5 +103,12 @@ document, without a human re-deciding on every reload and without ever mutating 
   pseudonymization engine would consume.
 - Frontend highlighting (`piiHighlights.ts`, `PiiTextViewer`) now accepts an optional per-occurrence
   review-status map: a `rejected` entity is excluded from highlighting entirely (in both raw and
-  reading-text modes), while `accepted`/`ignored` entities keep their highlight with a
-  distinguishable style. Layout-text mode is unaffected — it was and remains unhighlighted.
+  reading-text modes); a `kept` entity keeps its highlight with a distinguishable (dashed/dimmed)
+  style; an `accepted` entity — the default, expected case for most entities — renders as a normal
+  highlight with no extra modifier, so the common case does not look visually "flagged." Layout-text
+  mode is unaffected — it was and remains unhighlighted.
+- The review-decision panel (`PiiReviewGroupList`) shows in both Dev View (full detail: reading-text
+  projection coverage, per-occurrence offsets/overrides) and User View (simplified: type, count,
+  status, and the group-level decision only) next to the extracted text, in its own
+  independently-scrolling area. Each occurrence's offset is a clickable jump-to-highlight control,
+  matching the existing per-entity list.

@@ -10,9 +10,11 @@ interface PiiTextViewerProps {
    * offsets are unchanged; this only hides the technical metadata exposed on hover in user view.
    */
   showEntityMeta?: boolean;
-  /** Resolved review status per occurrence id; rejected entities are never highlighted, and
-   *  ignored/accepted entities render with a distinguishable style. Omitted entirely when no
-   *  review data has loaded, in which case every entity renders with its default look. */
+  /** Resolved review status per occurrence id. A rejected (false-positive) entity is never
+   *  highlighted; a kept (opted out of pseudonymization) entity renders with a distinguishable
+   *  style; the default/accepted (pseudonymize) case looks like a normal highlight. Omitted
+   *  entirely when no review data has loaded, in which case every entity renders with its default
+   *  look. */
   reviewStatusByOccurrenceId?: Record<string, PiiReviewStatus>;
   /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
   onSelectEntity?: (entityId: string) => void;
@@ -27,12 +29,12 @@ const ENTITY_STYLES: Record<string, string> = {
   DATE_TIME: "bg-pink-200 text-pink-950",
 };
 
-// Additional modifier applied on top of the entity-type color so a reviewed-but-not-active
-// (ignored) or reviewed-and-active (accepted) entity stays visually distinguishable from a
-// still-pending one. Rejected entities never reach this component (filtered out upstream).
+// "accepted" (pseudonymize, the default) looks like a normal highlight — it is the expected case
+// for nearly every entity, so it gets no extra modifier. "kept" (explicitly opted out of
+// pseudonymization) stays visually distinguishable. Rejected entities never reach this component
+// (filtered out upstream).
 const REVIEW_STATUS_MODIFIERS: Partial<Record<PiiReviewStatus, string>> = {
-  accepted: "ring-1 ring-inset ring-emerald-600",
-  ignored: "opacity-60 [text-decoration:underline] decoration-dashed",
+  kept: "opacity-60 [text-decoration:underline] decoration-dashed",
 };
 
 export function PiiTextViewer({

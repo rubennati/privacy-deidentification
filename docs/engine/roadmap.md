@@ -33,9 +33,10 @@ documents.
 - PII L10 / Review L5 partial: gated, append-only per-entity feedback capture for local analysis.
   This is not a binding `review_result` and does not alter detection.
 - PII L11 / Review L6: conservative, derived entity grouping (`pii_grouping.py`, no schema change to
-  `pii_result`) plus a lineage-bound review-decision overlay (`pseudonymize/keep/ignore/false_positive`
-  at group or occurrence scope), covering much of Review L8/L9's practical intent without yet being
-  the formal `review_result` artifact model. See
+  `pii_result`) plus a lineage-bound review-decision overlay (every entity defaults to
+  `pseudonymize`; a reviewer opts one out via `keep`/`false_positive`, at group or occurrence
+  scope), covering much of Review L8/L9's practical intent without yet being the formal
+  `review_result` artifact model. See
   [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 - Benchmark L0–L8 plus an out-of-order L10 slice: private inputs, artifact matching, routing and PII
   metrics, privacy guarding, deterministic output, validation-stage aggregates, and safe
@@ -167,9 +168,10 @@ count, reading-text projection coverage, current decision) with an expandable pe
 
 A lineage-bound, file-based decision overlay now exists (`GET/POST …/pii/review[/decisions]`,
 append-only JSONL under `document-data/<id>/review/`, scoped to the exact current `pii_result.id` so
-a re-run never silently reapplies a stale decision) with a broader
-`pseudonymize/keep/ignore/false_positive` vocabulary than plain confirm/reject, at group or
-occurrence scope with occurrence-level override. This is a lighter persistence shape than the
+a re-run never silently reapplies a stale decision). Every detected entity defaults to
+`pseudonymize` (no separate "pending" state, unlike a plain confirm/reject); a reviewer opts one out
+via `keep` or `false_positive`, at group or occurrence scope with occurrence-level override. This is
+a lighter persistence shape than the
 formal single-artifact `review_result` model L8 originally described — that remains open, along
 with an explicit stale-decision indicator (L7), manual add (L10), and reason/comment metadata (L11).
 Dev feedback JSONL remains a separate, dev-gated analysis input. See

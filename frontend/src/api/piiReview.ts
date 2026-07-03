@@ -5,16 +5,18 @@
 import { WorkstationApiError } from "./workstations";
 
 export type PiiReviewDecisionScope = "entity_group" | "occurrence";
-export type PiiReviewDecisionValue = "pseudonymize" | "keep" | "ignore" | "false_positive";
-export type PiiReviewStatus = "pending" | "accepted" | "rejected" | "ignored";
+// A freshly detected entity is assumed "pseudonymize" by default — there is no separate "pending"
+// value. A reviewer only has to act to opt an entity *out* of pseudonymization: "keep" it as-is,
+// or mark it a "false_positive" (not PII at all).
+export type PiiReviewDecisionValue = "pseudonymize" | "keep" | "false_positive";
+export type PiiReviewStatus = "accepted" | "kept" | "rejected";
 
 export const PII_REVIEW_DECISION_OPTIONS: ReadonlyArray<{
   value: PiiReviewDecisionValue;
   label: string;
 }> = [
   { value: "pseudonymize", label: "Pseudonymisieren" },
-  { value: "keep", label: "Beibehalten" },
-  { value: "ignore", label: "Ignorieren" },
+  { value: "keep", label: "Nicht pseudonymisieren" },
   { value: "false_positive", label: "Kein PII (False Positive)" },
 ];
 
@@ -23,10 +25,9 @@ export function reviewDecisionLabel(decision: PiiReviewDecisionValue): string {
 }
 
 const STATUS_LABELS: Record<PiiReviewStatus, string> = {
-  pending: "Ausstehend",
-  accepted: "Bestätigt",
+  accepted: "Wird pseudonymisiert",
+  kept: "Nicht pseudonymisiert",
   rejected: "Abgelehnt",
-  ignored: "Ignoriert",
 };
 
 export function reviewStatusLabel(status: PiiReviewStatus): string {

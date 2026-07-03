@@ -1078,9 +1078,12 @@ class PiiEntityGroup(BaseModel):
 
 
 PiiReviewDecisionScope = Literal["entity_group", "occurrence"]
-PiiReviewDecisionValue = Literal["pseudonymize", "keep", "ignore", "false_positive"]
+# A freshly detected entity is assumed "pseudonymize" by default — there is no separate "pending"
+# state. A reviewer only has to act to opt an entity *out* of pseudonymization, either because it
+# should be kept as-is ("keep") or because it is not PII at all ("false_positive").
+PiiReviewDecisionValue = Literal["pseudonymize", "keep", "false_positive"]
 PiiReviewDecisionSource = Literal["user", "default", "imported"]
-PiiReviewStatus = Literal["pending", "accepted", "rejected", "ignored"]
+PiiReviewStatus = Literal["accepted", "kept", "rejected"]
 
 
 class PiiReviewDecisionRequest(BaseModel):
@@ -1150,11 +1153,14 @@ class PiiReviewOccurrence(BaseModel):
     projection_method: Literal["offset_map", "text_match"] | None = None
     reading_start_offset: int | None = Field(default=None, ge=0)
     reading_end_offset: int | None = Field(default=None, ge=1)
-    review_status: PiiReviewStatus = "pending"
+    review_status: PiiReviewStatus = "accepted"
     review_decision: PiiReviewDecisionValue | None = None
     decision_scope: PiiReviewDecisionScope | None = Field(
         default=None,
-        description="Which scope the effective decision came from; None while pending.",
+        description=(
+            "Which scope the effective decision came from; None while no explicit decision has "
+            "been recorded yet (the implied default is 'pseudonymize')."
+        ),
     )
 
     @model_validator(mode="after")
@@ -1167,7 +1173,7 @@ class PiiReviewOccurrence(BaseModel):
 class PiiEntityGroupReview(PiiEntityGroup):
     """An entity group enriched with its resolved review decision."""
 
-    review_status: PiiReviewStatus = "pending"
+    review_status: PiiReviewStatus = "accepted"
     review_decision: PiiReviewDecisionValue | None = None
     updated_at: str | None = None
 

@@ -111,7 +111,7 @@ def test_entity_group_rejects_duplicate_occurrence_ids() -> None:
 
 @pytest.mark.parametrize(
     "decision",
-    ["pseudonymize", "keep", "ignore", "false_positive"],
+    ["pseudonymize", "keep", "false_positive"],
 )
 def test_review_decision_request_accepts_all_documented_decisions(decision: str) -> None:
     request = PiiReviewDecisionRequest(
@@ -152,7 +152,7 @@ def test_review_occurrence_rejects_inverted_offsets() -> None:
         )
 
 
-def test_review_occurrence_defaults_to_pending_with_no_decision() -> None:
+def test_review_occurrence_defaults_to_accepted_pseudonymize_with_no_decision() -> None:
     occurrence = PiiReviewOccurrence(
         occurrence_id="a" * 32,
         entity_type="LOCATION",
@@ -162,7 +162,9 @@ def test_review_occurrence_defaults_to_pending_with_no_decision() -> None:
         score=0.9,
         recognizer="FakeRecognizer",
     )
-    assert occurrence.review_status == "pending"
+    # No explicit decision yet: the implied default is "pseudonymize" ("accepted"), not a separate
+    # pending state.
+    assert occurrence.review_status == "accepted"
     assert occurrence.review_decision is None
     assert occurrence.decision_scope is None
 
@@ -178,7 +180,7 @@ def test_entity_group_review_extends_group_with_review_state() -> None:
             exact_count=0, partial_count=0, unmapped_count=1
         ),
     )
-    assert review.review_status == "pending"
+    assert review.review_status == "accepted"
     assert review.review_decision is None
     assert review.updated_at is None
 

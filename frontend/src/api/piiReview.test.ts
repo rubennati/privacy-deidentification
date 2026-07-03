@@ -21,7 +21,7 @@ const review: PiiReviewResult = {
       occurrence_count: 1,
       normalized_fingerprint: "f".repeat(64),
       projection_summary: { exact_count: 1, partial_count: 0, unmapped_count: 0 },
-      review_status: "pending",
+      review_status: "accepted",
       review_decision: null,
       updated_at: null,
     },
@@ -39,7 +39,7 @@ const review: PiiReviewResult = {
       projection_method: "offset_map",
       reading_start_offset: 0,
       reading_end_offset: 4,
-      review_status: "accepted",
+      review_status: "kept",
       review_decision: "keep",
       decision_scope: "entity_group",
     },
@@ -84,7 +84,7 @@ describe("submitPiiReviewDecision", () => {
       target_type: "entity_group" as const,
       target_id: "g".repeat(32),
       decision: "keep" as const,
-      review_status: "accepted" as const,
+      review_status: "kept" as const,
       updated_at: "2026-07-03T10:00:00Z",
     };
     const fetchMock = vi
@@ -123,7 +123,7 @@ describe("submitPiiReviewDecision", () => {
       submitPiiReviewDecision("doc-1", {
         target_type: "occurrence",
         target_id: "o".repeat(32),
-        decision: "ignore",
+        decision: "false_positive",
       }),
     ).rejects.toMatchObject({ status: 502 });
   });
@@ -148,7 +148,7 @@ describe("buildReviewStatusMap", () => {
 
   it("maps occurrence id to its resolved review status", () => {
     const map = buildReviewStatusMap(review);
-    expect(map[review.occurrences[0].occurrence_id]).toBe("accepted");
+    expect(map[review.occurrences[0].occurrence_id]).toBe("kept");
   });
 });
 
@@ -160,9 +160,8 @@ describe("label helpers", () => {
   });
 
   it("labels every review status", () => {
-    expect(reviewStatusLabel("pending")).toBe("Ausstehend");
-    expect(reviewStatusLabel("accepted")).toBe("Bestätigt");
+    expect(reviewStatusLabel("accepted")).toBe("Wird pseudonymisiert");
+    expect(reviewStatusLabel("kept")).toBe("Nicht pseudonymisiert");
     expect(reviewStatusLabel("rejected")).toBe("Abgelehnt");
-    expect(reviewStatusLabel("ignored")).toBe("Ignoriert");
   });
 });

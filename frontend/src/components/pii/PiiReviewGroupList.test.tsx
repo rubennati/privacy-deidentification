@@ -16,7 +16,7 @@ function baseReview(overrides: Partial<PiiReviewResult> = {}): PiiReviewResult {
         occurrence_count: 2,
         normalized_fingerprint: "f".repeat(64),
         projection_summary: { exact_count: 1, partial_count: 0, unmapped_count: 1 },
-        review_status: "pending",
+        review_status: "accepted",
         review_decision: null,
         updated_at: null,
       },
@@ -34,7 +34,7 @@ function baseReview(overrides: Partial<PiiReviewResult> = {}): PiiReviewResult {
         projection_method: "offset_map",
         reading_start_offset: 0,
         reading_end_offset: 4,
-        review_status: "pending",
+        review_status: "accepted",
         review_decision: null,
         decision_scope: null,
       },
@@ -50,7 +50,7 @@ function baseReview(overrides: Partial<PiiReviewResult> = {}): PiiReviewResult {
         projection_method: null,
         reading_start_offset: null,
         reading_end_offset: null,
-        review_status: "pending",
+        review_status: "accepted",
         review_decision: null,
         decision_scope: null,
       },
@@ -76,11 +76,11 @@ describe("PiiReviewGroupList", () => {
     expect(render(baseReview({ groups: [], occurrences: [] }))).toBe("");
   });
 
-  it("renders the grouped entity type, occurrence count, and pending status", () => {
+  it("renders the grouped entity type, occurrence count, and default accepted status", () => {
     const html = render(baseReview());
     expect(html).toContain("LOCATION");
     expect(html).toContain("2× erkannt");
-    expect(html).toContain("Ausstehend");
+    expect(html).toContain("Wird pseudonymisiert");
   });
 
   it("shows the projection coverage summary", () => {
@@ -93,9 +93,13 @@ describe("PiiReviewGroupList", () => {
   it("lists every decision option in the group-level select", () => {
     const html = render(baseReview());
     expect(html).toContain("Pseudonymisieren");
-    expect(html).toContain("Beibehalten");
-    expect(html).toContain("Ignorieren");
+    expect(html).toContain("Nicht pseudonymisieren");
     expect(html).toContain("Kein PII (False Positive)");
+  });
+
+  it("defaults the group-level select to pseudonymize when no explicit decision was made", () => {
+    const html = render(baseReview());
+    expect(html).toContain('<option value="pseudonymize" selected');
   });
 
   it("reflects the current group decision as the selected option", () => {
@@ -104,31 +108,31 @@ describe("PiiReviewGroupList", () => {
         groups: [
           {
             ...baseReview().groups[0],
-            review_status: "accepted",
+            review_status: "kept",
             review_decision: "keep",
             updated_at: "2026-07-03T10:00:00Z",
           },
         ],
       }),
     );
-    expect(html).toContain("Bestätigt");
+    expect(html).toContain("Nicht pseudonymisiert");
     expect(html).toContain('<option value="keep" selected');
   });
 
-  it("distinguishes rejected/ignored group status from pending/accepted", () => {
+  it("distinguishes rejected/kept group status from the accepted default", () => {
     const rejected = render(
       baseReview({
         groups: [{ ...baseReview().groups[0], review_status: "rejected", review_decision: "false_positive" }],
       }),
     );
-    const ignored = render(
+    const kept = render(
       baseReview({
-        groups: [{ ...baseReview().groups[0], review_status: "ignored", review_decision: "ignore" }],
+        groups: [{ ...baseReview().groups[0], review_status: "kept", review_decision: "keep" }],
       }),
     );
     expect(rejected).toContain("Abgelehnt");
-    expect(ignored).toContain("Ignoriert");
-    expect(rejected).not.toContain("Ignoriert");
+    expect(kept).toContain("Nicht pseudonymisiert");
+    expect(rejected).not.toContain("Nicht pseudonymisiert");
   });
 
   it("shows an expand control with the occurrence count and an occurrence-level override", () => {
@@ -174,7 +178,7 @@ describe("PiiReviewGroupList", () => {
       const html = render(baseReview(), false);
       expect(html).toContain("LOCATION");
       expect(html).toContain("2× erkannt");
-      expect(html).toContain("Ausstehend");
+      expect(html).toContain("Wird pseudonymisiert");
       expect(html).toContain("Pseudonymisieren");
     });
 

@@ -83,8 +83,9 @@
     pseudonymization, redaction, export, or any PII-input switch. Benchmark loaders ignore it.
 - **PII/Sensitive-Data: L11 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
   entity grouping (L11) is delivered as a derived view (`pii_grouping.py`) over `pii_result`, paired
-  with a lineage-bound review-decision overlay (`pseudonymize/keep/ignore/false_positive` at group
-  or occurrence scope) — see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md).
+  with a lineage-bound review-decision overlay: every detected entity defaults to `pseudonymize`
+  (no separate "pending" state), and a reviewer opts an entity out via `keep` or `false_positive` —
+  see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md).
   Overlap resolution (L12) and the formal binding-review artifact model (L13) remain open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6 done; L7–L9 partial.** Grouped
   occurrences (L6) are delivered, and a file-based (JSONL, not yet a single artifact-per-run)
@@ -196,12 +197,14 @@ whitespace/case IBAN, digit/`+`-only phone, whitespace-stripped ID-like types, e
 whitespace-normalized text otherwise — never fuzzy, never cross-type) as a pure derived view; it
 changes nothing about detection or the `pii_result` schema. A paired, lineage-bound
 review-decision overlay (`GET/POST …/pii/review[/decisions]`, JSONL under
-`document-data/<id>/review/`) lets a reviewer set `pseudonymize/keep/ignore/false_positive` at
-group or occurrence scope (occurrence overrides win), resolving to a coarse
-`pending/accepted/rejected/ignored` status; `rejected` suppresses the Review UI highlight in both
-raw and reading-text modes, `accepted`/`ignored` stay highlighted but visually distinguishable.
-Decisions are scoped to the exact current PII artifact id so a re-run never silently reapplies a
-stale one, but there is no explicit stale-UI flag and this is a lighter persistence shape than the
+`document-data/<id>/review/`) assumes every detected entity is `pseudonymize`-bound by default (no
+separate "pending" state); a reviewer opts an entity out via `keep` or `false_positive` at group or
+occurrence scope (occurrence overrides win), resolving to a coarse `accepted/kept/rejected` status
+— `rejected` suppresses the Review UI highlight in both raw and reading-text modes, `kept` stays
+highlighted but visually distinguishable, and the default/`accepted` case looks like a normal
+highlight. Decisions are scoped to the exact current PII artifact id so a re-run never silently
+reapplies a stale one, but there is no explicit stale-UI flag and this is a lighter persistence
+shape than the
 formal single-artifact `review_result` model — see
 [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md) for the exact scope and
 what remains open. This PR introduces no dependency, recognizer, detection, routing, or

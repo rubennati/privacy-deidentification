@@ -38,7 +38,7 @@ input, or report may be committed.
 | `structured_content` | ✅ OCR L11 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
-| review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize/keep/ignore/false_positive` decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
+| review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
 | `review_result` | 🔜 Review L8 (formal model) | the single-artifact-per-run shape this level originally described; today's decision overlay above covers much of its practical intent | yes | immutable artifact |
 | `benchmark_result` | ✅ today as private reports | routing and PII quality metrics | guarded report metadata and metrics | local report files |
 
@@ -165,10 +165,11 @@ short:
   A decision never mutates `pii_result` or any raw/projected offset, and a re-run producing a new
   PII artifact id makes prior decisions invisible rather than silently reapplying them.
 - Group-level decisions apply to every occurrence in the group unless an occurrence-level decision
-  overrides it for that one occurrence. A decision resolves to a coarse
-  `pending/accepted/rejected/ignored` status for display; `rejected` (false positive) suppresses the
-  Review UI highlight entirely, while `accepted`/`ignored` stay highlighted but visually
-  distinguishable.
+  overrides it for that one occurrence. No decision (the default) is treated the same as an
+  explicit `pseudonymize` — there is no separate "pending" state. A decision resolves to a coarse
+  `accepted/kept/rejected` status for display: `rejected` (false positive) suppresses the Review UI
+  highlight entirely, `kept` stays highlighted but visually distinguishable, and the default/
+  `accepted` case renders as a normal highlight.
 - This is not pseudonymization, placeholder generation, text replacement, or export — only a
   reviewer's recorded intent for later stages to consume.
 

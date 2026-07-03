@@ -240,8 +240,9 @@ it does not re-run detection on reading text and persists only offsets plus a me
 advances from L9 done/L10 partial to **L11 done**. Conservative, derived entity grouping
 (`pii_grouping.py`) presents repeated same-type occurrences as one group without changing detection
 or the `pii_result` schema; a paired, lineage-bound review-decision overlay
-(`GET/POST …/pii/review[/decisions]`, JSONL under `document-data/<id>/review/`) lets a reviewer set
-`pseudonymize/keep/ignore/false_positive` at group or occurrence scope, satisfying much of Review
+(`GET/POST …/pii/review[/decisions]`, JSONL under `document-data/<id>/review/`) assumes every
+detected entity is `pseudonymize`-bound by default (no separate "pending" state); a reviewer opts
+one out via `keep` or `false_positive`, at group or occurrence scope, satisfying much of Review
 L6/L8/L9's practical intent (grouped occurrences; decisions persist, restore on reload, and are
 never silently reapplied across a re-run) without yet being the formal single-artifact
 `review_result` model or an explicit stale-decision flag — see

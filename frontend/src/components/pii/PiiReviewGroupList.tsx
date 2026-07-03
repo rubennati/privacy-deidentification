@@ -28,10 +28,9 @@ interface PiiReviewGroupListProps {
 }
 
 const STATUS_STYLES: Record<PiiReviewStatus, string> = {
-  pending: "text-accent-dark",
   accepted: "text-emerald-700",
+  kept: "text-muted",
   rejected: "text-red-700",
-  ignored: "text-muted",
 };
 
 function groupElementId(entityGroupId: string): string {
@@ -150,17 +149,16 @@ export function PiiReviewGroupList({
                 </label>
                 <select
                   id={`group-decision-${group.entity_group_id}`}
-                  value={group.review_decision ?? ""}
+                  // No explicit decision yet defaults to "pseudonymize" — every detected entity is
+                  // assumed pseudonymize-bound until a reviewer opts it out.
+                  value={group.review_decision ?? "pseudonymize"}
                   disabled={savingTarget === group.entity_group_id}
                   onChange={(event) => {
-                    const value = event.target.value as PiiReviewDecisionValue | "";
-                    if (value) {
-                      void submit("entity_group", group.entity_group_id, value);
-                    }
+                    const value = event.target.value as PiiReviewDecisionValue;
+                    void submit("entity_group", group.entity_group_id, value);
                   }}
                   className="rounded-lg border border-card-border bg-dropzone px-2 py-1 text-xs text-ink"
                 >
-                  <option value="">Entscheidung wählen …</option>
                   {PII_REVIEW_DECISION_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}

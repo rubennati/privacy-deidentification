@@ -21,9 +21,10 @@ mapping from the previous 0–10 ladder is in
 lineage-safe highlights, offers clickable offsets + a legend, exposes a gated per-run
 engine-settings override, and captures **per-entity dev feedback** (analysis input, not learning).
 Grouped occurrences (L6, mirroring [PII L11](pii-engine-levels.md#level-11--entity-grouping--repeated-occurrences---done))
-are now delivered, paired with a lineage-bound review-decision overlay
-(`pseudonymize/keep/ignore/false_positive` at group or occurrence scope) that covers much of the
-*practical* intent of L8/L9 without yet being the formal `review_result` artifact model — see
+are now delivered, paired with a lineage-bound review-decision overlay (every entity defaults to
+`pseudonymize`; a reviewer opts one out via `keep` or `false_positive`, at group or occurrence
+scope) that covers much of the *practical* intent of L8/L9 without yet being the formal
+`review_result` artifact model — see
 [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md) for the exact scope and what
 remains open (stale-review detection L7, the formal artifact model L8, actor/reason metadata L11,
 suppression rules L12, manual add L10, and reusable cross-run decisions L13).
@@ -196,9 +197,9 @@ suppression rules L12, manual add L10, and reusable cross-run decisions L13).
 
 - **Human can:** mark a candidate **confirmed** or **rejected**.
 - **Delivered:** `POST …/pii/review/decisions` lets a reviewer set a binding decision
-  (`pseudonymize/keep/ignore/false_positive`, broader than a plain confirm/reject) at group or
-  occurrence scope; it persists, restores on reload, and resolves to a coarse
-  `pending/accepted/rejected/ignored` status. See
+  (`pseudonymize/keep/false_positive`, pseudonymize-by-default rather than a plain confirm/reject —
+  a reviewer opts an entity *out* of pseudonymization) at group or occurrence scope; it persists,
+  restores on reload, and resolves to a coarse `accepted/kept/rejected` status. See
   [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 - **Persisted:** per-candidate decisions in `review_result`. Mirrors
   [PII L13](pii-engine-levels.md#level-13--review-confirm--reject---open).
@@ -331,7 +332,7 @@ Design constraints (not features) for L8+:
 | 6 Grouped occurrences | ✅ done | `PiiReviewGroupList` + derived `pii_grouping.py` ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
 | 7 Stale review detection | ⏳ partially covered | decisions scoped to the exact PII artifact id (never silently reapplied); no explicit "stale" UI flag |
 | 8 `review_result` model | ⏳ partially covered | JSONL decision overlay delivered; not the formal single-artifact-per-run model |
-| 9 Confirm / reject | ⏳ partially covered | broader `pseudonymize/keep/ignore/false_positive` decisions delivered at group/occurrence scope |
+| 9 Confirm / reject | ⏳ partially covered | pseudonymize-by-default `pseudonymize/keep/false_positive` decisions delivered at group/occurrence scope |
 | 10 Manual add | ⛔ open | — |
 | 11 Reason / comment | ⛔ open | — |
 | 12 Suppression rules | ⛔ open | — |
