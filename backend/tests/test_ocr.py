@@ -232,6 +232,9 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     assert content["text"] == "Digital text"
     assert content["text_char_count"] == len(content["text"])
     assert content["readable_text"] == "Digital text"
+    assert content["reading_text"] == "Digital text"
+    assert content["reading_text_version"] == "1"
+    assert content["reading_text_status"] == "heuristic"
     assert content["pages"] == [
         {
             "page_number": 1,
@@ -906,7 +909,7 @@ def test_pdf_text_layer_produces_layout_text_result(
 
     assert response.status_code == 201
     content = response.json()["content"]
-    # Canonical text is exactly the unchanged default extraction — the offset-stable PII input.
+    # Technical raw text is the unchanged default extraction — the offset-stable PII input.
     expected_canonical = "\n\n".join(
         page.extract_text() or "" for page in PdfReader(BytesIO(fixture)).pages
     )
@@ -1043,6 +1046,10 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     payload = json.loads(path.read_text(encoding="utf-8"))
     # Simulate a legacy artifact written before this field existed.
     payload["content"].pop("readable_text", None)
+    payload["content"].pop("reading_text_version", None)
+    payload["content"].pop("reading_text", None)
+    payload["content"].pop("reading_text_status", None)
+    payload["content"].pop("reading_text_flags", None)
     payload["content"].pop("layout_text_result", None)
     payload["content"].pop("layout_blocks_version", None)
     payload["content"].pop("layout_blocks", None)
@@ -1055,6 +1062,10 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
 
     assert response.status_code == 200
     assert response.json()["content"]["readable_text"] is None
+    assert response.json()["content"]["reading_text_version"] is None
+    assert response.json()["content"]["reading_text"] is None
+    assert response.json()["content"]["reading_text_status"] is None
+    assert response.json()["content"]["reading_text_flags"] == []
     assert response.json()["content"]["layout_text_result"] is None
     assert response.json()["content"]["layout_blocks_version"] is None
     assert response.json()["content"]["layout_blocks"] == []
@@ -1077,6 +1088,7 @@ def test_readable_text_absent_for_empty_text_result(
     content = response.json()["content"]
     assert content["text"] == ""
     assert content["readable_text"] is None
+    assert content["reading_text"] is None
 
 
 def _pdf_contact_blocks_and_table_bytes() -> bytes:
@@ -1340,7 +1352,7 @@ def test_pdf_text_layer_emits_span_geometry(
 
     content = client.post(f"/api/documents/{upload['id']}/ocr").json()["content"]
 
-    # Canonical text and its counts remain byte-stable with geometry added.
+    # Technical raw text and its counts remain byte-stable with geometry added.
     assert content["text"] == "Digital text"
     assert content["text_char_count"] == len("Digital text")
     assert content["pages"][0]["text"] == "Digital text"

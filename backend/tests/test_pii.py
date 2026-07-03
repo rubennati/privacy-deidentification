@@ -94,6 +94,7 @@ def _save_text(
     pii_input_text: str | None = None,
     layout_text_result: str | None = None,
     readable_text: str | None = None,
+    reading_text: str | None = None,
     layout_blocks: list[LayoutBlock] | None = None,
     created_at: str = "2026-07-01T10:00:00.000001Z",
 ) -> TextArtifact:
@@ -126,6 +127,10 @@ def _save_text(
             pii_input_text=pii_input_text,
             layout_text_result=layout_text_result,
             readable_text=readable_text,
+            reading_text_version="1" if reading_text is not None else None,
+            reading_text=reading_text,
+            reading_text_status="heuristic" if reading_text is not None else None,
+            reading_text_flags=["geometry_ordering"] if reading_text is not None else [],
             layout_blocks_version="1" if layout_blocks else None,
             layout_blocks=layout_blocks or [],
         ),
@@ -234,6 +239,7 @@ def test_pii_ignores_all_non_canonical_text_views(
         canonical,
         pages=[canonical],
         readable_text="Readable replacement",
+        reading_text="Canonical reading replacement",
         layout_text_result="Layout replacement",
         pii_input_text="PII input replacement",
         layout_blocks=[

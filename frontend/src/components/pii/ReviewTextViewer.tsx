@@ -1,14 +1,16 @@
 import type { PiiEntity } from "../../api/workstations";
 import { PiiTextViewer } from "./PiiTextViewer";
 
-export type ReviewTextMode = "canonical" | "layout";
+export type ReviewTextMode = "reading" | "raw" | "layout";
 
 interface ReviewTextViewerProps {
-  canonicalText: string;
+  rawText: string;
+  readingText?: string | null;
   layoutText?: string | null;
   entities: readonly PiiEntity[];
   mode: ReviewTextMode;
   onModeChange: (mode: ReviewTextMode) => void;
+  devMode?: boolean;
   /** Forwarded to the highlighted text view: when false, hover metadata is suppressed. */
   showEntityMeta?: boolean;
 }
@@ -16,15 +18,23 @@ interface ReviewTextViewerProps {
 const MODE_BUTTON_BASE = "rounded-md px-3 py-1.5 text-xs font-medium transition-colors";
 
 export function ReviewTextViewer({
-  canonicalText,
+  rawText,
+  readingText,
   layoutText,
   entities,
   mode,
   onModeChange,
+  devMode = false,
   showEntityMeta = true,
 }: ReviewTextViewerProps) {
+  const hasReadingText = readingText != null;
   const hasLayoutText = layoutText != null;
-  const activeMode = hasLayoutText && mode === "layout" ? "layout" : "canonical";
+  const activeMode: ReviewTextMode =
+    mode === "layout" && hasLayoutText
+      ? "layout"
+      : mode === "reading" && hasReadingText
+        ? "reading"
+        : "raw";
 
   return (
     <section className="min-w-0" aria-labelledby="text-viewer-heading">
@@ -33,7 +43,7 @@ export function ReviewTextViewer({
         <h2 id="text-viewer-heading" className="font-semibold text-ink">
           Extrahierter Text
         </h2>
-        {hasLayoutText && (
+        {(devMode || hasReadingText) && (
           <div
             className="flex rounded-lg border border-card-border bg-dropzone p-1"
             role="group"
@@ -41,35 +51,53 @@ export function ReviewTextViewer({
           >
             <button
               type="button"
-              onClick={() => onModeChange("canonical")}
-              aria-pressed={activeMode === "canonical"}
+              onClick={() => onModeChange("reading")}
+              aria-pressed={activeMode === "reading"}
+              disabled={!hasReadingText}
               className={`${MODE_BUTTON_BASE} ${
-                activeMode === "canonical"
+                activeMode === "reading"
                   ? "bg-card text-ink shadow-sm"
-                  : "text-muted hover:text-ink"
+                  : "text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
               }`}
             >
-              Canonical text
+              Kanonischer Lesetext
             </button>
             <button
               type="button"
-              onClick={() => onModeChange("layout")}
-              aria-pressed={activeMode === "layout"}
+              onClick={() => onModeChange("raw")}
+              aria-pressed={activeMode === "raw"}
               className={`${MODE_BUTTON_BASE} ${
-                activeMode === "layout"
+                activeMode === "raw"
                   ? "bg-card text-ink shadow-sm"
                   : "text-muted hover:text-ink"
               }`}
             >
-              Layout text
+              Technischer Rohtext
             </button>
+            {devMode && (
+              <button
+                type="button"
+                onClick={() => onModeChange("layout")}
+                aria-pressed={activeMode === "layout"}
+                disabled={!hasLayoutText}
+                className={`${MODE_BUTTON_BASE} ${
+                  activeMode === "layout"
+                    ? "bg-card text-ink shadow-sm"
+                    : "text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                }`}
+              >
+                Layout-Text
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {activeMode === "layout" && (
+      {activeMode !== "raw" && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent-dark">
-          Layout text is for reading/review only. PII highlights use canonical text.
+          {activeMode === "reading"
+            ? "Der Lesetext ist die lesefreundliche Hauptansicht. PII-Markierungen verwenden derzeit den technischen Rohtext."
+            : "Der Layout-Text dient der Orientierung. PII-Markierungen verwenden derzeit den technischen Rohtext."}
         </p>
       )}
 
@@ -87,10 +115,18 @@ export function ReviewTextViewer({
             ) : (
               <p className="text-sm text-muted">Der Layout-Text ist leer.</p>
             )
-          ) : canonicalText ? (
-            <PiiTextViewer text={canonicalText} entities={entities} showEntityMeta={showEntityMeta} />
+          ) : activeMode === "reading" ? (
+            readingText ? (
+              <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-7 text-ink">
+                {readingText}
+              </pre>
+            ) : (
+              <p className="text-sm text-muted">Der kanonische Lesetext ist leer.</p>
+            )
+          ) : rawText ? (
+            <PiiTextViewer text={rawText} entities={entities} showEntityMeta={showEntityMeta} />
           ) : (
-            <p className="text-sm text-muted">Der extrahierte Text ist leer.</p>
+            <p className="text-sm text-muted">Der technische Rohtext ist leer.</p>
           )}
         </div>
       </div>
