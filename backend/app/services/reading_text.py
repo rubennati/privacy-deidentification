@@ -121,6 +121,23 @@ _WORD_START_RE = re.compile(r"^[A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]")
 # The trailing negative lookahead keeps a DD.MM.YYYY date (e.g. "13.06.2025") from being misread
 # as a decimal amount: without it, "13.06" alone would match and count towards the amount total.
 _DECIMAL_AMOUNT_RE = re.compile(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\b(?!\.\d{4})")
+# A common attachment/photo/document file extension. Used to keep an attachment-list line (e.g. a
+# photo caption naming its file) from being absorbed as a prose wrap continuation: such lines never
+# end in sentence punctuation, so without this guard a preceding long line would keep swallowing
+# every following list entry through to the end of the block.
+_FILENAME_EXTENSION_RE = re.compile(
+    r"\.(?:jpe?g|png|gif|bmp|tiff?|heic|webp|pdf|docx?|xlsx?)\b", re.IGNORECASE
+)
+# Standard German business-letter salutation openers and sign-offs. These are generic
+# correspondence conventions (not tied to any sender/company) and mark a reliable paragraph
+# boundary even on documents whose vertical PDF spacing does not otherwise separate blocks.
+_GREETING_LINE_RE = re.compile(r"^(guten tag|sehr geehrte\w*)\b", re.IGNORECASE)
+_CLOSING_LINE_RE = re.compile(
+    r"^(mit freundlichen gr(?:ü|u)(?:ß|ss)en|freundliche gr(?:ü|u)(?:ß|ss)e"
+    r"|beste gr(?:ü|u)(?:ß|ss)e|viele gr(?:ü|u)(?:ß|ss)e|liebe gr(?:ü|u)(?:ß|ss)e"
+    r"|hochachtungsvoll)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -456,12 +473,28 @@ def _plain_blocks(rows: Sequence[ReadingRow]) -> list[list[str]]:
     heights = [max(0.001, row.y1 - row.y0) for row in rows]
     gap_limit = median(heights) * 2.2
     previous: ReadingRow | None = None
+    previous_is_letter_marker = False
     for row in rows:
-        if previous is not None and row.y0 - previous.y1 > gap_limit:
+        is_letter_marker = _is_letter_marker_row(row)
+        if previous is not None and (
+            row.y0 - previous.y1 > gap_limit or is_letter_marker or previous_is_letter_marker
+        ):
             groups.append([])
         groups[-1].append(row)
         previous = row
+        previous_is_letter_marker = is_letter_marker
     return [_join_continuations(group) for group in groups if group]
+
+
+def _is_letter_marker_row(row: ReadingRow) -> bool:
+    """A greeting opener or sign-off closing always starts its own paragraph.
+
+    Unlike ordinary paragraph gaps, these are fixed, well-known correspondence conventions, so they
+    are a safe boundary signal even where this document's vertical spacing is not.
+    """
+
+    stripped = _row_text(row).strip()
+    return bool(_GREETING_LINE_RE.match(stripped) or _CLOSING_LINE_RE.match(stripped))
 
 
 def _join_continuations(rows: Sequence[ReadingRow]) -> list[str]:
@@ -491,6 +524,7 @@ def _join_continuations(rows: Sequence[ReadingRow]) -> list[str]:
                 and not rendered[cursor].startswith("- ")
                 and not _starts_new_post_block(rendered[cursor])
                 and not _looks_like_data_row(rendered[cursor])
+                and not _looks_like_filename_row(rendered[cursor])
                 and _rows_are_close(row_list[cursor - 1], row_list[cursor])
             ):
                 paragraph = _join_wrapped_line(paragraph, rendered[cursor])
@@ -647,6 +681,7 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
                 cursor < len(lines)
                 and not paragraph.rstrip().endswith((".", "!", "?"))
                 and not _starts_new_post_block(lines[cursor])
+                and not _looks_like_filename_row(lines[cursor])
             ):
                 paragraph = f"{paragraph} {lines[cursor]}"
                 cursor += 1
@@ -660,6 +695,7 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
                 cursor < len(lines)
                 and _rows_are_close(rows[cursor - 1], rows[cursor])
                 and not _starts_new_post_block(lines[cursor])
+                and not _looks_like_filename_row(lines[cursor])
             ):
                 paragraph = f"{paragraph} {lines[cursor]}"
                 cursor += 1
@@ -672,7 +708,24 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
 
 
 def _is_long_prose_line(line: str) -> bool:
-    return len(line) >= 60 and not _starts_new_post_block(line) and not _looks_like_data_row(line)
+    return (
+        len(line) >= 60
+        and not _starts_new_post_block(line)
+        and not _looks_like_data_row(line)
+        and not _looks_like_filename_row(line)
+    )
+
+
+def _looks_like_filename_row(line: str) -> bool:
+    """A line naming an attachment/photo file is a list entry, not a prose sentence.
+
+    Such a line (e.g. a photo caption like "Bild Küche / IMG_1234.jpg") never ends in sentence
+    punctuation, so without this guard it would either be misread as a long-prose paragraph starter
+    itself, or get silently absorbed into a preceding one, together with every following list entry
+    through to the end of the block.
+    """
+
+    return bool(_FILENAME_EXTENSION_RE.search(line))
 
 
 def _looks_like_data_row(line: str) -> bool:
@@ -853,11 +906,25 @@ def _clean_page_margin_line(line: str) -> str | None:
     stripped = _normalize_line(_INLINE_SEPARATOR_RE.sub(" ", stripped))
     if not stripped:
         return None
-    match = _PAGE_NUMBER_SUFFIX_RE.search(stripped)
-    if match is None:
-        return stripped
-    prefix = stripped[: match.start()].rstrip(" |,;-")
-    return prefix if len(prefix) > 40 else None
+    # Strip a trailing page-number suffix repeatedly, not just once: two adjacent PDF text runs
+    # that are both, on their own, the exact same bare page-number marker (e.g. a duplicated
+    # running header fragment landing in the same positioned row) must not leave one copy of that
+    # marker behind disguised as a "real" prefix after only the last copy is removed.
+    while True:
+        match = _PAGE_NUMBER_SUFFIX_RE.search(stripped)
+        if match is None:
+            return stripped
+        prefix = stripped[: match.start()].rstrip(" |,;-")
+        # A bare page-number line (e.g. "Seite 3 von 8", "Page 1/3") has no real prefix and is
+        # always noise. Any other non-empty prefix is real content and must survive the suffix
+        # strip: a short prefix that repeats across pages (e.g. a running "<case-number> Seite: N"
+        # header) is exactly what the cross-page dedup below is for, and a short prefix that
+        # appears on only one page is not page-margin noise at all.
+        if not prefix:
+            return None
+        if prefix == stripped:
+            return stripped
+        stripped = prefix
 
 
 def _split_paired_labels(line: str) -> list[str]:

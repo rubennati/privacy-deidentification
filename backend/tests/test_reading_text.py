@@ -597,6 +597,79 @@ def test_long_prose_line_in_a_flat_block_does_not_absorb_a_label_value_line() ->
     )
 
 
+def test_greeting_opener_becomes_its_own_paragraph_even_at_tight_line_spacing() -> None:
+    """A generic German salutation opener ("Guten Tag," / "Sehr geehrte...") marks a reliable
+    letter paragraph boundary on its own, independent of vertical spacing. Some correspondence
+    documents have no reliable geometric gap between blocks, so this line-based signal is needed
+    to separate the greeting from what precedes and follows it."""
+    rows = [
+        _row(0.10, (0.07, "Testobjekt: Musterstraße 1, 1010 Wien")),
+        _row(0.118, (0.07, "Guten Tag,")),
+        _row(0.136, (0.07, "das ist ein Testsatz zur Erläuterung.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Testobjekt: Musterstraße 1, 1010 Wien"
+        "\n\nGuten Tag,"
+        "\n\ndas ist ein Testsatz zur Erläuterung."
+    )
+
+
+def test_closing_sign_off_becomes_its_own_paragraph_even_at_tight_line_spacing() -> None:
+    rows = [
+        _row(0.10, (0.07, "Vielen Dank für Ihr Verständnis.")),
+        _row(0.118, (0.07, "Freundliche Grüße")),
+        _row(0.136, (0.07, "Das Team")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Vielen Dank für Ihr Verständnis."
+        "\n\nFreundliche Grüße"
+        "\n\nDas Team"
+    )
+
+
+def test_greeting_phrase_mid_sentence_does_not_split_the_paragraph() -> None:
+    """The salutation regex is anchored to the start of the line: a line that merely mentions the
+    phrase mid-sentence (not as its own greeting) must not be treated as a paragraph boundary."""
+    rows = [
+        _row(0.10, (0.07, "Diese sehr geehrte Persönlichkeit war beim Termin anwesend und hat")),
+        _row(0.118, (0.07, "den Bericht unterschrieben.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Diese sehr geehrte Persönlichkeit war beim Termin anwesend und hat den Bericht "
+        "unterschrieben."
+    )
+
+
+def test_closing_word_mid_sentence_does_not_split_the_paragraph() -> None:
+    rows = [
+        _row(0.10, (0.07, "Grüße aus der Bauleitung übermitteln wir mit diesem Schreiben")),
+        _row(0.118, (0.07, "an alle Beteiligten.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Grüße aus der Bauleitung übermitteln wir mit diesem Schreiben an alle Beteiligten."
+    )
+
+
 def test_separator_rule_cell_does_not_block_table_header_detection() -> None:
     """Regression for a real corpus bug: a long underscore rule sharing a header's row (a common
     PDF pattern: a divider drawn just above a table) was being read as the header's first cell,
@@ -660,6 +733,55 @@ def test_data_heavy_row_is_not_absorbed_as_a_prose_continuation() -> None:
         "Moebel vertragen, De- od. Neumontage von Moebeln 6,00 Std 67,50 405,00"
         "\nVerputz abschlagen 2,00 m2 25,33 50,66"
         "\nGesamtbetrag 1.712,38"
+    )
+
+
+def test_attachment_filename_list_is_not_absorbed_into_a_single_prose_line() -> None:
+    """Regression for a real corpus bug: a long lead-in line (60+ characters, e.g. a heading fused
+    with a repeated page header) was absorbing every following attachment/photo caption line as a
+    prose wrap continuation, because filenames never end in sentence punctuation. The whole
+    attachment list collapsed into one unreadable line instead of staying one entry per line."""
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Beispiel Firma Musterstraße 1 Anhänge mit folgenden Bilddateien im Ordner"),
+        ),
+        _row(0.118, (0.07, "Bild Uebersicht / 20250708_090948.jpg")),
+        _row(0.136, (0.07, "Bild Kueche / 20250708_091058.jpg")),
+        _row(0.154, (0.07, "Bild Bad / 20250708_091111.jpg")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Beispiel Firma Musterstraße 1 Anhänge mit folgenden Bilddateien im Ordner"
+        "\nBild Uebersicht / 20250708_090948.jpg"
+        "\nBild Kueche / 20250708_091058.jpg"
+        "\nBild Bad / 20250708_091111.jpg"
+    )
+
+
+def test_long_prose_line_mentioning_a_web_domain_still_joins_its_wrap() -> None:
+    """Must-not-trigger for the filename guard: a line naming a website or email domain (a dot
+    followed by letters that is not a tracked attachment file extension) is ordinary prose and
+    must still merge with its wrapped continuation."""
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Weitere Informationen erhalten Sie auf unserer Webseite www.beispielfirma.at"),
+        ),
+        _row(0.118, (0.07, "oder unter der angegebenen Telefonnummer.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Weitere Informationen erhalten Sie auf unserer Webseite www.beispielfirma.at "
+        "oder unter der angegebenen Telefonnummer."
     )
 
 
@@ -762,6 +884,88 @@ def test_repeated_page_headers_and_footers_do_not_enter_middle_of_content() -> N
     assert result.text.index("REPORT HEADER") < result.text.index("First body")
     assert result.text.index("Example Company legal footer") > result.text.index("Third body")
     assert "repeated_page_margins_filtered" in result.flags
+
+
+def _numbered_single_cell_rows(page_lines: list[list[str]]) -> list[ReadingRow]:
+    return [
+        ReadingRow(
+            page_number=page_number,
+            y0=0.05 + line_index * 0.10,
+            y1=0.062 + line_index * 0.10,
+            cells=(ReadingCell(text=line, x0=0.07, x1=0.07 + max(0.04, len(line) * 0.006)),),
+        )
+        for page_number, lines in enumerate(page_lines, 1)
+        for line_index, line in enumerate(lines)
+    ]
+
+
+def test_repeated_case_number_header_keeps_one_occurrence_instead_of_vanishing() -> None:
+    """Regression for a real corpus bug: a short, meaningful running header (a case number printed
+    as "<case-number> Seite: N" on every page) was dropped entirely by the page-number-suffix
+    cleanup on every page, including the one page where that same text is also the only place a
+    required field value appears. Stripping just the "Seite: N" suffix and letting the existing
+    cross-page dedup keep one occurrence recovers the value without reintroducing the running
+    header everywhere else."""
+    page_lines = [
+        ["CASE-9001 Seite: 1", "First body"],
+        ["CASE-9001 Seite: 2", "Second body"],
+        ["CASE-9001 Seite: 3", "Third body"],
+    ]
+    pages = [_numbered_page("\n".join(lines), index) for index, lines in enumerate(page_lines, 1)]
+    rows = _numbered_single_cell_rows(page_lines)
+    raw = "\n\n".join(page.text for page in pages)
+
+    result = build_reading_text(raw, pages, None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text.count("CASE-9001") == 1
+    assert "Seite:" not in result.text
+    assert "First body" in result.text
+    assert "Second body" in result.text
+    assert "Third body" in result.text
+
+
+def test_bare_page_number_line_is_still_fully_dropped_on_every_page() -> None:
+    page_lines = [
+        ["Seite 1 von 3", "First body"],
+        ["Seite 2 von 3", "Second body"],
+        ["Seite 3 von 3", "Third body"],
+    ]
+    pages = [_numbered_page("\n".join(lines), index) for index, lines in enumerate(page_lines, 1)]
+    rows = _numbered_single_cell_rows(page_lines)
+    raw = "\n\n".join(page.text for page in pages)
+
+    result = build_reading_text(raw, pages, None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert "Seite" not in result.text
+    assert "First body" in result.text
+    assert "Second body" in result.text
+    assert "Third body" in result.text
+
+
+def test_duplicated_bare_page_marker_fused_into_one_row_is_still_fully_dropped() -> None:
+    """Regression for a real corpus bug: two copies of the exact same bare page-number marker
+    (e.g. a running header duplicated by the source PDF) can land as two cells of the very same
+    positioned row, rendering as "Seite 5 Seite 5". Stripping only the trailing copy left the
+    other copy behind disguised as a "real" prefix; the cleanup must recognize that the leftover
+    is itself still nothing but the same bare marker and drop it too."""
+    page_lines = [
+        ["Seite 1", "First body"],
+        ["Seite 2", "Second body"],
+        ["Seite 5 Seite 5", "Third body"],
+    ]
+    pages = [_numbered_page("\n".join(lines), index) for index, lines in enumerate(page_lines, 1)]
+    rows = _numbered_single_cell_rows(page_lines)
+    raw = "\n\n".join(page.text for page in pages)
+
+    result = build_reading_text(raw, pages, None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert "Seite" not in result.text
+    assert "First body" in result.text
+    assert "Second body" in result.text
+    assert "Third body" in result.text
 
 
 def _content(**fields: object) -> dict[str, object]:
