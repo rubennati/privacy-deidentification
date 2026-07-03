@@ -26,7 +26,7 @@ def test_ocr_runtime_available_when_packages_installed_and_models_provisioned(
     settings = Settings(ocr_model_dir=model_dir)
     monkeypatch.setattr(
         "app.services.runtime_capabilities.find_spec",
-        _fake_find_spec({"paddleocr", "paddlepaddle"}),
+        _fake_find_spec({"paddleocr", "paddle"}),
     )
 
     assert ocr_runtime_available(settings) is True
@@ -50,7 +50,7 @@ def test_ocr_runtime_unavailable_when_models_not_provisioned(
     settings = Settings(ocr_model_dir=None)
     monkeypatch.setattr(
         "app.services.runtime_capabilities.find_spec",
-        _fake_find_spec({"paddleocr", "paddlepaddle"}),
+        _fake_find_spec({"paddleocr", "paddle"}),
     )
 
     assert ocr_runtime_available(settings) is False
@@ -64,7 +64,7 @@ def test_ocr_runtime_unavailable_when_model_subdirectories_missing(
     settings = Settings(ocr_model_dir=model_dir)
     monkeypatch.setattr(
         "app.services.runtime_capabilities.find_spec",
-        _fake_find_spec({"paddleocr", "paddlepaddle"}),
+        _fake_find_spec({"paddleocr", "paddle"}),
     )
 
     assert ocr_runtime_available(settings) is False

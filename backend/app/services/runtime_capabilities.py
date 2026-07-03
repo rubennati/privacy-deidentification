@@ -18,9 +18,10 @@ def ocr_runtime_available(settings: Settings) -> bool:
     """True when PaddleOCR/PaddlePaddle are installed and the local models are provisioned.
 
     Mirrors the two conditions `PaddleOcrAdapter` needs before it will even attempt to build an
-    engine (see ``ocr_adapters.PaddleOcrAdapter._local_model_directories``).
+    engine (see ``ocr_adapters.PaddleOcrAdapter._local_model_directories``). Note: the
+    ``paddlepaddle`` PyPI distribution is imported as ``paddle``, not ``paddlepaddle``.
     """
-    if find_spec("paddleocr") is None or find_spec("paddlepaddle") is None:
+    if find_spec("paddleocr") is None or find_spec("paddle") is None:
         return False
     model_dir = settings.ocr_model_dir
     if model_dir is None:
