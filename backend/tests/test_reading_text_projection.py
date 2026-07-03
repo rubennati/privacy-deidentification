@@ -30,10 +30,12 @@ def _content(**fields: object) -> dict[str, object]:
     }
 
 
-def _entity(start: int, end: int, text: str) -> PiiEntity:
+def _entity(
+    start: int, end: int, text: str, entity_type: str = "PERSON"
+) -> PiiEntity:
     return PiiEntity(
         id="e" * 32,
-        entity_type="PERSON",
+        entity_type=entity_type,
         text=text,
         start_offset=start,
         end_offset=end,
@@ -151,6 +153,7 @@ def test_projection_exact_across_normalized_segments_without_mutating_raw_offset
     original = _entity(0, 15, "Anna\nMustermann")
     projected = project_pii_entities_to_reading_text([original], segments)[0]
     assert projected.projection_status == "exact"
+    assert projected.projection_method == "offset_map"
     assert (projected.reading_start_offset, projected.reading_end_offset) == (0, 15)
     assert (projected.start_offset, projected.end_offset, projected.text) == (0, 15, original.text)
 
@@ -186,3 +189,76 @@ def test_projection_does_not_log_sensitive_text(caplog: pytest.LogCaptureFixture
     with caplog.at_level(logging.DEBUG):
         project_pii_entities_to_reading_text([_entity(0, 4, "Anna")], [])
     assert "Anna" not in caplog.text
+
+
+def test_unmapped_entity_projects_from_one_unique_exact_reading_match() -> None:
+    original = _entity(0, 4, "Anna")
+    projected = project_pii_entities_to_reading_text(
+        [original], [], reading_text="Kontakt: Anna"
+    )[0]
+    assert (projected.reading_start_offset, projected.reading_end_offset) == (9, 13)
+    assert (projected.projection_status, projected.projection_method) == (
+        "exact",
+        "text_match",
+    )
+    assert (projected.start_offset, projected.end_offset, projected.text) == (0, 4, "Anna")
+
+
+def test_whitespace_normalized_entity_projects_from_unique_reading_match() -> None:
+    projected = project_pii_entities_to_reading_text(
+        [_entity(0, 15, "Anna\nMustermann")],
+        [],
+        reading_text="Kontakt Anna   Mustermann",
+    )[0]
+    assert projected.projection_method == "text_match"
+    assert (projected.reading_start_offset, projected.reading_end_offset) == (8, 25)
+
+
+def test_phone_spacing_variant_projects_safely() -> None:
+    value = "+43 (1) 234-5678"
+    projected = project_pii_entities_to_reading_text(
+        [_entity(0, len(value), value, "PHONE_NUMBER")],
+        [],
+        reading_text="Telefon: +43 1 234 5678",
+    )[0]
+    assert projected.projection_method == "text_match"
+    assert projected.reading_start_offset == 9
+
+
+def test_iban_spacing_variant_projects_safely() -> None:
+    value = "AT61 3200 0000 1234 5678"
+    projected = project_pii_entities_to_reading_text(
+        [_entity(0, len(value), value, "IBAN_CODE")],
+        [],
+        reading_text="IBAN: AT613200000012345678",
+    )[0]
+    assert projected.projection_method == "text_match"
+    assert projected.reading_start_offset == 6
+
+
+@pytest.mark.parametrize(
+    "reading_text",
+    ["Anna und Anna", "Keine passende Person"],
+)
+def test_duplicate_or_absent_fallback_value_stays_unmapped(reading_text: str) -> None:
+    projected = project_pii_entities_to_reading_text(
+        [_entity(0, 4, "Anna")], [], reading_text=reading_text
+    )[0]
+    assert projected.projection_status == "unmapped"
+    assert projected.projection_method is None
+    assert projected.reading_start_offset is None
+
+
+def test_fallback_projection_does_not_log_or_add_text_to_mapping(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    segments: list[ReadingTextMapSegment] = []
+    with caplog.at_level(logging.DEBUG):
+        projected = project_pii_entities_to_reading_text(
+            [_entity(0, 9, "SAMPLE-42", "POLICY_NUMBER")],
+            segments,
+            reading_text="Polizze: SAMPLE 42",
+        )[0]
+    assert projected.projection_method == "text_match"
+    assert segments == []
+    assert "SAMPLE-42" not in caplog.text

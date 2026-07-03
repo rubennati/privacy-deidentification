@@ -261,6 +261,7 @@ export interface PiiEntity {
   reading_start_offset?: number | null;
   reading_end_offset?: number | null;
   projection_status?: "exact" | "partial" | "unmapped" | null;
+  projection_method?: "offset_map" | "text_match" | null;
 }
 
 export interface PiiValidationSummary {

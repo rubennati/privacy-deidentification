@@ -159,7 +159,9 @@ def _analyze_text(
     try:
         entities = _build_entities(text, validated_detected)
         entities = project_pii_entities_to_reading_text(
-            entities, text_artifact.content.reading_text_map
+            entities,
+            text_artifact.content.reading_text_map,
+            reading_text=text_artifact.content.reading_text,
         )
     except ApiError:
         raise

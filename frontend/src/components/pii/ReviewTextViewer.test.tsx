@@ -18,6 +18,7 @@ const entity: PiiEntity = {
   reading_start_offset: 17,
   reading_end_offset: 21,
   projection_status: "exact",
+  projection_method: "offset_map",
 };
 
 const LEGACY_READING_TEXT = Symbol("legacy-reading-text");
@@ -71,6 +72,16 @@ describe("ReviewTextViewer", () => {
     expect(html).toContain("lesefreundliche Hauptansicht");
     expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
     expect(html).toContain("projizierte Lesetext-Offsets");
+  });
+
+  it("highlights an entity projected by the unique text-match fallback", () => {
+    const fallbackEntity = { ...entity, projection_method: "text_match" as const };
+    const html = render("reading", null, undefined, "Lesefreundliches Wien", true, [
+      fallbackEntity,
+    ]);
+
+    expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
+    expect(html).toContain(">Wien</mark>");
   });
 
   it("renders the extracted text inside a centered A4 paper sheet", () => {
@@ -134,10 +145,29 @@ describe("ReviewTextViewer", () => {
       reading_start_offset: null,
       reading_end_offset: null,
       projection_status: "unmapped" as const,
+      projection_method: null,
     };
     const html = render("reading", null, undefined, "Lesefreundliches Wien", true, [unmapped]);
 
     expect(html).not.toContain("<mark");
+    expect(html).toContain("nur im technischen Rohtext sichtbar");
+  });
+
+  it("keeps the raw-only notice when projected and unmapped entities are mixed", () => {
+    const unmapped = {
+      ...entity,
+      id: "b".repeat(32),
+      reading_start_offset: null,
+      reading_end_offset: null,
+      projection_status: "unmapped" as const,
+      projection_method: null,
+    };
+    const html = render("reading", null, undefined, "Lesefreundliches Wien", true, [
+      { ...entity, projection_method: "text_match" as const },
+      unmapped,
+    ]);
+
+    expect(html).toContain(`<mark id="pii-mark-${entity.id}"`);
     expect(html).toContain("nur im technischen Rohtext sichtbar");
   });
 

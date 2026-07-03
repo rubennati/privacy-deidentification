@@ -60,9 +60,10 @@ never shift a canonical PII offset, and no layer becomes an island.
 - **UI:** User View defaults to **Kanonischer Lesetext** when present. Dev View can switch among
   **Kanonischer Lesetext**, **Technischer Rohtext**, and **Layout-Text**.
 - **Review projection:** the conservative map covers only safely matched fragments. Existing raw
-  PII entities may carry additive exact reading offsets; partial/unmapped entities stay visible in
-  raw mode only. Segments contain offsets/status/flags, never copied text, and ambiguous repeats are
-  not guessed.
+  PII entities may carry additive exact reading offsets. Otherwise-unmapped entities may fall back
+  to one unique in-memory exact/whitespace/known-identifier format match in reading text; duplicate
+  or absent values stay raw-only, and partial map projections remain partial. Segments contain
+  offsets/status/flags, never copied text, and ambiguous repeats are not guessed.
 - **Boundary:** this partial display map is **not** the active PII input and is not the complete
   round-trippable source/view lineage map. A future input switch still requires the full separation
   gate below.

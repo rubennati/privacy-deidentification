@@ -69,7 +69,9 @@
   - `reading_text_map` (non-level review bridge) — optional versioned offset-only segments map only
     unambiguous reading fragments to technical raw spans. PII artifacts add optional
     exact/partial/unmapped projection status; only exact projections highlight in Canonical Reading
-    Text, while raw offsets/input remain authoritative and legacy/ambiguous cases stay raw-only.
+    Text. Unmapped entities get a second conservative in-memory unique-value match for exact,
+    whitespace-normalized, phone, IBAN, and known ID formatting variants; duplicates stay raw-only.
+    Raw offsets/input remain authoritative and no matched text is added to mapping metadata.
   - `structured_content` (L11) — optional versioned per-page tables/cells, label/value fields, and
     heading-bound sections. Table cells and field values reference canonical/page spans rather than
     duplicating raw content; short labels/headings, source, confidence, flags, and optional L10 line
@@ -172,7 +174,9 @@ dependencies, artifact versions, and the next engine cadence are unchanged.
 **Latest reading-text projection checkpoint:** OCR/Text remains L11 and PII remains L9 done/L10
 partial. The safe display bridge adds no recognizer, detection-input, dependency, routing,
 benchmark-payload, pseudonymization, redaction, or export change. It is not the full lineage map and
-does not satisfy the PII-input separation gate. Next remains PII L11 grouping.
+does not satisfy the PII-input separation gate. A unique in-memory text-match fallback now improves
+coverage for otherwise-unmapped exact/format-normalized values without guessing duplicates or
+storing/logging copied text. Next remains PII L11 grouping.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
