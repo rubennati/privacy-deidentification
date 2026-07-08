@@ -41,8 +41,11 @@ Current runtime shape (unchanged): a React SPA behind nginx is the only public e
 proxies `/api/*` to a FastAPI backend that is not published to the host. Optional OCR/PII runtimes
 are heavy build profiles (slim / pii / ocr / full) baked into the *same* backend image, so heavy work
 runs in-process and shares the API's memory. The staged move to an isolated worker boundary — so an
-OCR/PII OOM/crash can no longer take the API down — is planned (proposed) in
-[ADR-0023](../adr/0023-runtime-worker-architecture.md) and is not implemented here.
+OCR/PII OOM/crash can no longer take the API down — is planned in
+[ADR-0023](../adr/0023-runtime-worker-architecture.md). Its **Phase 1 (internal job model
+abstraction) is implemented**: OCR/PII now run *through* an in-process `SyncJobRunner`
+(`backend/app/services/job_models.py`, `job_runner.py`), a pure refactor with no DB, queue, worker,
+or behavior change — heavy work still fate-shares with the API until Phase 3 isolates the worker.
 
 ## Design invariants the engine must keep
 

@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, status
 
 from app.config import Settings, get_settings
 from app.schemas import ErrorResponse, TextArtifact
+from app.services.job_models import JobContext, JobKind
+from app.services.job_runner import SyncJobRunner, get_job_runner
 from app.services.ocr_adapters import OcrAdapter, get_ocr_adapter
 from app.services.ocr_service import create_text_artifact, get_latest_text
 from app.services.pdf_renderer import PdfRenderer, get_pdf_renderer
@@ -39,9 +41,23 @@ def ocr_document(
     settings: Settings = Depends(get_settings),
     ocr_adapter: OcrAdapter = Depends(provide_ocr_adapter),
     pdf_renderer: PdfRenderer = Depends(get_pdf_renderer),
+    runner: SyncJobRunner = Depends(get_job_runner),
 ) -> TextArtifact:
-    """Extract text according to the latest audit and persist an immutable result."""
-    return create_text_artifact(settings, document_id, ocr_adapter, pdf_renderer)
+    """Extract text according to the latest audit and persist an immutable result.
+
+    The extraction runs through the internal job abstraction (ADR-0023 Phase 1); execution is still
+    synchronous and in-process, so the request/response and error semantics are unchanged.
+    """
+    context = JobContext.create(
+        kind=JobKind.OCR_TEXT,
+        document_id=document_id,
+        execution_mode=runner.execution_mode,
+    )
+    result = runner.run(
+        context,
+        lambda: create_text_artifact(settings, document_id, ocr_adapter, pdf_renderer),
+    )
+    return result.unwrap()
 
 
 @router.get(

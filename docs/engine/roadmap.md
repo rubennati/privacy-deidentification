@@ -218,6 +218,14 @@ benchmark maturity remains L8 until L9 lands.
 Redaction stays at L0 until reviewed decisions, stable/resolved PII spans, and OCR text-to-geometry
 mapping exist. No masking, pseudonymisation, or de-identified export is implemented today.
 
+### Runtime architecture (cross-cutting, not an engine level)
+
+[ADR-0023](../adr/0023-runtime-worker-architecture.md) stages the move from in-process OCR/PII to
+isolated worker containers. **Phase 1 (internal job model abstraction) is implemented**: OCR/PII run
+through an in-process `SyncJobRunner` seam with no DB, queue, worker, or behavior change. Phases 2+
+(SQLite job store, `ocr-worker` split, then PII/quality/LLM workers) remain proposed and must stay
+aligned with — not ahead of — the OCR/PII engine prerequisites above.
+
 ## Legacy work-package cross-reference
 
 Older documents and ADRs may refer to `Engine-0` through `Engine-9`. Those names are historical

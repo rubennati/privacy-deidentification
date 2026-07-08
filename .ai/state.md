@@ -279,6 +279,21 @@ lineage/geometry prerequisites. Next: **PII L12 overlap resolution**, formal **R
 `review_result`**, then the **PII validation transparency report**, unless benchmark/private-corpus
 evidence reprioritizes further OCR work.
 
+**Latest checkpoint (Runtime Architecture Phase 1 — internal job model):** Implements
+[ADR-0023](../docs/adr/0023-runtime-worker-architecture.md) Phase 1 only. OCR (`POST …/ocr`) and PII
+(`POST …/pii`) now execute *through* an in-process `SyncJobRunner`
+(`backend/app/services/job_models.py`, `job_runner.py`): each request builds a `JobContext`, runs the
+existing station call under a `JobRecord` lifecycle, and returns the same artifact via
+`JobResult.unwrap()`. This is a pure refactor — **no engine level changes**. Execution stays
+synchronous and in-process; there is **no DB, no queue, no worker container, no background task, and
+no new API surface**. Request/response shapes, artifact creation, error status/detail,
+canonical-vs-technical-raw text separation, PII input (technical raw text), review decisions, and
+benchmark payloads are all unchanged; heavy OCR still fate-shares with the backend until Phase 3.
+`JobRecord`s are per-request/in-memory and carry only non-sensitive lifecycle metadata plus a
+sanitized error code/message — raw document text and PII never enter job metadata or logs, and a
+failed job never reports `succeeded`. Next runtime step: **Phase 2 (SQLite job store + status API)**,
+kept aligned with — not ahead of — the OCR/PII engine sequence below.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
