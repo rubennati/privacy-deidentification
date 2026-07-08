@@ -9,11 +9,13 @@ scale**.
 ```text
 volumes/
 ├── uploads/<document_id>.<ext>                     # byte-identical original
-└── document-data/<document_id>/
-    ├── document.json                               # metadata + original artifact
-    ├── artifacts/<artifact_id>.json                # audit/text/quality/PII artifacts
-    ├── feedback/pii_feedback.jsonl                 # dev-only feedback side-channel
-    └── review/pii_review_decisions.jsonl           # review-decision overlay (see below)
+└── document-data/
+    ├── jobs.sqlite3                                # default SQLite job metadata DB (ids/status only)
+    └── <document_id>/
+        ├── document.json                           # metadata + original artifact
+        ├── artifacts/<artifact_id>.json            # audit/text/quality/PII artifacts
+        ├── feedback/pii_feedback.jsonl             # dev-only feedback side-channel
+        └── review/pii_review_decisions.jsonl       # review-decision overlay (see below)
 ```
 
 Everything under `volumes/` is local and git-ignored. No artifact, feedback log, private benchmark
@@ -42,16 +44,16 @@ input, or report may be committed.
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
 | `review_result` | 🔜 Review L8 (formal model) | the single-artifact-per-run shape this level originally described; today's decision overlay above covers much of its practical intent | yes | immutable artifact |
 | `benchmark_result` | ✅ today as private reports | routing and PII quality metrics | guarded report metadata and metrics | local report files |
-| `job_record` (ADR-0023 Phase 1) | ✅ today (transient) | in-process OCR/PII job lifecycle (id, kind, status, timestamps, safe error code/message, produced `artifact_id`); *references* immutable artifacts, never stores their bytes | no (ids, timestamps, sanitized error only) | in-memory, per-request; **never persisted** (SQLite arrives in Phase 2) |
+| `job_record` (ADR-0023 Phase 2) | ✅ today (durable metadata) | OCR/PII job lifecycle (id, document id, kind, status, execution mode, timestamps, attempt count, safe error code/message, produced artifact id/type); *references* immutable artifacts, never stores their bytes | no (ids, timestamps, sanitized error only) | SQLite metadata DB (`DOCUMENT_DATA_DIR/jobs.sqlite3` by default), deleted with document boundary |
 
 `◻ conceptual` means the concept is currently embedded in another artifact and may be separated
 only when a later station requires it.
 
-The `job_record` is not a durable artifact: it is the in-process seam
-([ADR-0023](../adr/0023-runtime-worker-architecture.md) Phase 1) that wraps synchronous OCR/PII
-execution so a later phase can move it behind a job store and workers. It carries only non-sensitive
-lifecycle metadata and references the immutable artifacts a job consumes/produces; raw document text
-and PII never enter it.
+The `job_record` is durable metadata, not an engine artifact. ADR-0023 Phase 1 introduced the
+in-process seam; Phase 2 persists that seam in SQLite while OCR/PII execution remains synchronous.
+It carries only non-sensitive lifecycle metadata and references the immutable artifacts a job
+produces; raw document text, canonical reading text, layout text, structured-content payloads, PII
+values, artifact JSON, stack traces, and raw exception text never enter it.
 
 ## Raw, canonical reading, and layout text
 

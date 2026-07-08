@@ -37,15 +37,16 @@ without its `pii_result` input — see
 - stays **local** — no bytes/text/PII leave the machine,
 - never mutates upstream artifacts; changed inputs mark downstream artifacts **stale**.
 
-Current runtime shape (unchanged): a React SPA behind nginx is the only public entry point and
-proxies `/api/*` to a FastAPI backend that is not published to the host. Optional OCR/PII runtimes
-are heavy build profiles (slim / pii / ocr / full) baked into the *same* backend image, so heavy work
-runs in-process and shares the API's memory. The staged move to an isolated worker boundary — so an
-OCR/PII OOM/crash can no longer take the API down — is planned in
+Current runtime shape (additive Phase 2 state): a React SPA behind nginx is the only public entry
+point and proxies `/api/*` to a FastAPI backend that is not published to the host. Optional OCR/PII
+runtimes are heavy build profiles (slim / pii / ocr / full) baked into the *same* backend image, so
+heavy work runs in-process and shares the API's memory. The staged move to an isolated worker
+boundary — so an OCR/PII OOM/crash can no longer take the API down — is planned in
 [ADR-0023](../adr/0023-runtime-worker-architecture.md). Its **Phase 1 (internal job model
-abstraction) is implemented**: OCR/PII now run *through* an in-process `SyncJobRunner`
-(`backend/app/services/job_models.py`, `job_runner.py`), a pure refactor with no DB, queue, worker,
-or behavior change — heavy work still fate-shares with the API until Phase 3 isolates the worker.
+abstraction) and Phase 2 (SQLite-backed job state + status API) are implemented**: OCR/PII now run
+*through* an in-process `SyncJobRunner` and every run writes durable, metadata-only job state to
+SQLite. There is still no queue, worker, background task, or execution-mode change — heavy work still
+fate-shares with the API until Phase 3 isolates the worker.
 
 ## Design invariants the engine must keep
 
@@ -102,8 +103,12 @@ spike** (Engine-8 in [`roadmap.md`](roadmap.md)), not a pipeline integration.
 
 ## Database considerations
 
-Not implemented, and **not** part of the introducing PR. No migration, no SQLAlchemy/Alembic, no
-schema change here. This section only frames the decision.
+Partially implemented for runtime job metadata only. ADR-0023 Phase 2 adds a small stdlib-SQLite
+job store (`DOCUMENT_DATA_DIR/jobs.sqlite3` by default, overrideable with `JOB_STORE_DB_PATH`) plus a
+safe status API. It stores only ids, lifecycle timestamps/status, sanitized errors, and produced
+artifact references. Artifact payloads, raw OCR/reading/layout text, structured-content contents,
+PII values, and uploaded bytes remain file-based and never enter SQLite. There is still no ORM,
+Alembic, queue, or worker.
 
 ### When does a database become worthwhile?
 
@@ -120,9 +125,11 @@ DB; the file layout serves it well.
   about them, never their raw text/PII.
 - **Immutable per-document detection artifacts** — fine as files for the current scope.
 
-### What should later move to (or be indexed in) a DB
+### What belongs in a DB over time
 
 - **Index / lookup:** document list, artifact lineage, latest-artifact resolution, routing status.
+- **Runtime jobs:** OCR/PII job status and produced-artifact references — implemented first in
+  ADR-0023 Phase 2, before the worker split, as metadata only.
 - **Run history:** benchmark runs and their aggregate metrics over time (trend, regression gate).
 - **Review state:** confirm/reject/add/comment decisions and their lineage (Review L2+).
 - **Rules:** suppression/allowlist rules with scope + version (Review L5, PII L8).

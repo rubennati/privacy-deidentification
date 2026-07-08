@@ -239,10 +239,11 @@ mapping exist. No masking, pseudonymisation, or de-identified export is implemen
 ### Runtime architecture (cross-cutting, not an engine level)
 
 [ADR-0023](../adr/0023-runtime-worker-architecture.md) stages the move from in-process OCR/PII to
-isolated worker containers. **Phase 1 (internal job model abstraction) is implemented**: OCR/PII run
-through an in-process `SyncJobRunner` seam with no DB, queue, worker, or behavior change. Phases 2+
-(SQLite job store, `ocr-worker` split, then PII/quality/LLM workers) remain proposed and must stay
-aligned with — not ahead of — the OCR/PII engine prerequisites above.
+isolated worker containers. **Phase 1 (internal job model abstraction) and Phase 2 (SQLite-backed
+job state + status API) are implemented**: OCR/PII run through an in-process `SyncJobRunner` seam and
+write durable metadata-only job rows, but there is still no queue, worker, background task, or
+execution-mode change. Phase 3 (`ocr-worker` split), then PII/quality/LLM workers remain proposed and
+must stay aligned with — not ahead of — the OCR/PII engine prerequisites above.
 
 ## Legacy work-package cross-reference
 

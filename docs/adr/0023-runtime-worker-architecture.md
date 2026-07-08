@@ -2,10 +2,10 @@
 
 ## Status
 
-Proposed — 2026-07-08. Planning-only for the overall architecture; **Phase 1 (the internal job
-model abstraction) is implemented** as a pure in-process refactor with no runtime-behavior change —
-see [Implementation status](#implementation-status) below. Phases 2+ (SQLite, workers, queue) remain
-proposed and unimplemented. Builds on
+Proposed — 2026-07-08. Planning-only for the overall worker architecture; **Phase 1 (the internal
+job model abstraction) and Phase 2 (SQLite-backed job state + status API) are implemented** while
+execution remains synchronous/in-process — see [Implementation status](#implementation-status)
+below. Phases 3+ (workers, queue, isolation) remain proposed and unimplemented. Builds on
 [ADR-0001](0001-stack-and-architecture.md) (Docker-first FastAPI + React behind nginx),
 [ADR-0003](0003-audit-station.md)/[ADR-0004](0004-ocr-workstation.md)/[ADR-0005](0005-pii-workstation.md)
 (synchronous stations behind adapters), [ADR-0007](0007-ocr-runtime-and-model-provisioning.md)
@@ -45,7 +45,10 @@ The current runtime, precisely:
 - **Config/capability model:** 12-factor env via `Settings`; read-only capability probes
   (`runtime_capabilities.py`) tell `/api/config` whether the OCR/PII runtimes are installed, so a
   missing runtime is a clean `503` rather than a crash.
-- **State:** no database. All state is files.
+- **State:** immutable artifacts remain files; Phase 2 adds one SQLite DB for durable job metadata
+  only (`jobs.sqlite3` by default under `DOCUMENT_DATA_DIR`). It stores ids, status, timestamps,
+  sanitized errors, and artifact references — never artifact payloads, raw OCR/reading text, or PII
+  values.
 
 ### Risks in the current design
 
@@ -83,10 +86,10 @@ jumping to microservices, a message broker, or Kubernetes. Concretely:
 2. **Split heavy processing into a separate worker container** so an OCR/PII OOM or crash cannot take
    the API down. The API becomes a thin scheduler/reader: it enqueues jobs and serves job status +
    immutable artifacts. This is the highest stability-per-effort move and the real point of the ADR.
-3. **Track jobs durably in SQLite**, introduced *at the worker split* (not before), because a job
-   store shared by two processes is exactly the mutable cross-process state that flat files handle
-   poorly. **Artifacts stay on the filesystem**; the DB holds only job/index metadata and, later,
-   review decisions and rules. This matches the existing SQLite-first stance in
+3. **Track jobs durably in SQLite**, introduced before the worker split as the Phase 2
+   scheduler/status foundation and reused by the later API↔worker boundary. **Artifacts stay on the
+   filesystem**; the DB holds only job/index metadata and, later, review decisions and rules. This
+   matches the existing SQLite-first stance in
    [`target-architecture.md`](../engine/target-architecture.md#sqlite-first-postgresql-later).
 4. **Use a DB-backed job table with a polling worker** as the first queue — **not** Redis/Celery.
    Add Redis + a lightweight task runner only when real queue semantics (multiple workers, visibility
@@ -234,10 +237,9 @@ stores their raw text or PII.
 
 ## Recommendation
 
-- **Do next:** Phase 1 (job model abstraction) — smallest, zero-infra step that unlocks everything
-  else — then Phase 3 (isolate the OCR worker), which is the **smallest change that yields the most
-  stability**: it removes the API's fate-sharing with OCR. Phase 2 (SQLite job store) is the natural
-  bridge and should land with, or immediately before, Phase 3.
+- **Do next:** Phase 3 (isolate the OCR worker), which is the **smallest remaining change that yields
+  the most stability**: it removes the API's fate-sharing with OCR. Phase 1 established the internal
+  job seam and Phase 2 added durable SQLite status metadata without changing synchronous execution.
 - **Do not do yet:** Redis, Celery/Dramatiq/Arq, PostgreSQL, a message broker, multi-engine OCR,
   dictionaries/domain vocabularies as workers, or the local LLM worker. Each waits for its phase and
   a concrete need.
@@ -265,7 +267,7 @@ stores their raw text or PII.
 | --- | --- |
 | 0 — document current architecture (this ADR) | Done. |
 | **1 — internal job model abstraction** | **Done.** In-process only; no runtime behavior change. |
-| 2 — SQLite job store + status API | Not started (proposed). |
+| **2 — SQLite job store + status API** | **Done.** Durable metadata/status only; OCR/PII still execute synchronously in-process. |
 | 3 — isolate `ocr-worker` | Not started (proposed). |
 | 4+ — PII worker, concurrency controls, optional Redis/RQ, quality/LLM workers | Not started (proposed). |
 
@@ -280,17 +282,17 @@ behind the existing endpoints:
   lifecycle transitions, and a generic `JobResult`. `sanitize_job_error` reduces any exception to a
   safe `(error_code, error_message)` pair.
 - `backend/app/services/job_runner.py` — `SyncJobRunner.run(context, operation)` executes the
-  station call inline, records lifecycle, and returns a `JobResult`. `get_job_runner` is the single
+  station call inline, records lifecycle, and returns a `JobResult`. `provide_job_runner` is the
   FastAPI dependency a future worker-backed runner can replace.
 - `backend/app/api/ocr.py` / `pii.py` — the `POST …/ocr` and `POST …/pii` handlers build a
   `JobContext` and call `runner.run(...)`, then `result.unwrap()`.
 
-**Intentionally unchanged** (Phase 1 is not the worker split): OCR and PII still run **synchronously
-in-process**; there is **no database, no queue, no worker container, no background task, and no new
-API surface**. `JobRecord`s are per-request and in-memory — never persisted. The API request/response
-shapes, artifact creation, error status codes/details, canonical-vs-technical-raw text separation,
-PII input (technical raw text), review decisions, and benchmark payloads are all unchanged. Heavy OCR
-still fate-shares with the backend process until Phase 3 isolates the worker.
+**Intentionally unchanged in Phase 1**: OCR and PII still run **synchronously in-process**; there is
+no queue, no worker container, and no background task. At the time of Phase 1, `JobRecord`s were
+per-request and in-memory — never persisted. The API request/response shapes, artifact creation,
+error status codes/details, canonical-vs-technical-raw text separation, PII input (technical raw
+text), review decisions, and benchmark payloads all stayed unchanged. Heavy OCR still fate-shares
+with the backend process until Phase 3 isolates the worker.
 
 **Privacy:** a `JobRecord` (the loggable/serializable half) carries only ids, timestamps, status, a
 coarse `error_code`, and a sanitized `error_message`; raw document text, OCR text, and PII never
@@ -298,3 +300,34 @@ enter it. The original exception (which may hold sensitive detail) travels only 
 in-process `JobResult.error` and is re-raised unchanged so API behavior is preserved — it is never
 logged or copied into the record. A failed job never yields a `succeeded` status, preserving the
 no-partial-result-as-final invariant.
+
+### Phase 2 — SQLite job store + status API (implemented)
+
+Phase 2 persists the same safe job lifecycle metadata in SQLite while preserving the existing
+synchronous station behavior:
+
+- `backend/app/services/job_store.py` — a stdlib `sqlite3` repository with idempotent schema
+  creation, WAL mode, short transactions, one connection per operation, and methods for
+  create/running/succeeded/failed/get/list/delete. The DB path is configurable with
+  `JOB_STORE_DB_PATH`; the default is `DOCUMENT_DATA_DIR/jobs.sqlite3`, which stays inside the
+  existing persistent application-data volume.
+- `backend/app/services/job_runner.py` — the FastAPI runner provider now attaches the configured
+  store, so OCR/PII job rows are created before inline execution and updated on success/failure.
+  Direct unit-test runners can still be created without persistence.
+- `backend/app/api/jobs.py` — additive safe status endpoints:
+  `GET /api/jobs/{job_id}` and `GET /api/documents/{document_id}/jobs`.
+- `POST /api/documents/{document_id}/ocr` and `POST /api/documents/{document_id}/pii` keep their
+  existing response bodies and add an `X-Job-Id` header on successful synchronous runs. Document job
+  listing is the fallback lookup path by document id.
+
+**Intentionally unchanged** (Phase 2 is not the worker split): OCR and PII still run synchronously in
+the backend request thread; there is no worker container, queue, Redis, Celery/RQ, background task,
+new Docker profile, OCR algorithm change, PII model change, pseudonymization, redaction, export, or
+frontend workflow change. Heavy OCR still fate-shares with the backend until Phase 3.
+
+**Privacy:** the SQLite DB stores metadata only: job/document ids, kind, status, execution mode,
+created/started/finished/updated timestamps, attempt count, sanitized `error_code`/`error_message`,
+optional produced artifact id/type, and a small string metadata map. It never stores uploaded bytes,
+raw OCR text, canonical reading text, layout text, structured content payloads, PII values, artifact
+JSON payloads, stack traces, or raw exception messages. Job rows are deleted with their document's
+document-data boundary; artifacts remain file-based and immutable.

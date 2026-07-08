@@ -13,6 +13,9 @@ services:
       ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-pdf,docx,png,jpg,jpeg}
       UPLOAD_STORAGE_DIR: ${UPLOAD_STORAGE_DIR:-/data/uploads}
       DOCUMENT_DATA_DIR: ${DOCUMENT_DATA_DIR:-/data/document-data}
+      # Optional SQLite metadata DB for OCR/PII job state. Empty/default keeps it inside
+      # DOCUMENT_DATA_DIR as jobs.sqlite3 so it uses the existing persistent bind mount.
+      JOB_STORE_DB_PATH: ${JOB_STORE_DB_PATH:-}
       # Dev-only PII review-feedback archive (ENABLE_DEV_ENGINE_SETTINGS gated). Deliberately a
       # third, separate root from DOCUMENT_DATA_DIR: unlike document data, this survives a
       # document's deletion by design, so it can later feed PII-quality improvement.

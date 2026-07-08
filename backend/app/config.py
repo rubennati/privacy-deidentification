@@ -54,6 +54,7 @@ class Settings(BaseSettings):
         default=Path("/data/document-data"),
         alias="DOCUMENT_DATA_DIR",
     )
+    job_store_db_path: Path | None = Field(default=None, alias="JOB_STORE_DB_PATH")
     # Root for the dev-only PII review-feedback archive (see feedback_service.py). Deliberately a
     # third, separate root from document_data_dir: feedback here is retained across a document's
     # deletion by design, so it can later feed PII improvement/benchmark work, whereas
@@ -151,6 +152,12 @@ class Settings(BaseSettings):
         """Treat Compose's empty optional environment value as no configured models."""
         return None if value == "" else value
 
+    @field_validator("job_store_db_path", mode="before")
+    @classmethod
+    def _empty_job_store_path_uses_default(cls, value: object) -> object:
+        """Compose may pass an empty optional DB path; keep that on the derived default."""
+        return None if value == "" else value
+
     @field_validator(
         "ocr_detection_model_name", "ocr_recognition_model_name", mode="before"
     )
@@ -193,6 +200,11 @@ class Settings(BaseSettings):
     def supported_pii_profiles(self) -> tuple[str, ...]:
         """Expose the closed profile set without leaking a mutable registry."""
         return tuple(PII_PROFILES)
+
+    @property
+    def resolved_job_store_db_path(self) -> Path:
+        """SQLite job metadata DB path. Defaults beside document-data, not inside artifacts."""
+        return self.job_store_db_path or (self.document_data_dir / "jobs.sqlite3")
 
 
 @lru_cache(maxsize=1)
