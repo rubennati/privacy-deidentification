@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L12 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L12 overlap resolution |
+| OCR / Text | **L13 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L12 overlap resolution |
 | PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -17,7 +17,7 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L12 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
+- OCR L0–L13 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
   runtime, quality routing/fallback, additive OCR confidence, an immutable metrics-only
   `quality_report` for every successful run, additive readable/layout views plus deterministic typed
   layout blocks for PDF and OCR content, and additive `text_geometry` line boxes mapping raw offset
@@ -25,9 +25,10 @@ documents.
   for future placeholder mapping toward AI-ready pseudonymized document generation — it does not
   perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
   redaction), plus canonical `reading_text` as the deterministic block-aware main document view,
-  L12 safe multi-column layout reconstruction/fused table-header rendering/label-value pairing, and
-  conservative span-backed tables, label/value fields, and sections in optional
-  `structured_content`. PII still uses raw text.
+  L12 safe multi-column layout reconstruction/fused table-header rendering/label-value pairing, L13
+  table/form reconstruction v2 (geometry-only table detection, partially fused header recovery,
+  multiline label/value continuation), and conservative span-backed tables, label/value fields, and
+  sections in optional `structured_content`. PII still uses raw text.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -158,6 +159,22 @@ only when geometry makes the relationship unambiguous. This is additive to `read
 "1"` and records non-sensitive flags; it does not change technical raw text, active PII input,
 `structured_content` schema, projection semantics, review decisions, pseudonymization, redaction, or
 export.
+
+### OCR L13 — table/form reconstruction v2 — delivered
+
+Builds on L12's row-alignment primitives to close two conservative gaps: a table with no recognized
+header vocabulary is still detected from a maximal run of 3+ rows sharing 3+ aligned columns, and a
+header fused across one *or two* text fragments (not just one) recovers when following rows provide
+safe column positions. Adjacent-row label/value pairing now extends across further rows that stay in
+the same column at normal spacing and do not themselves look like a new label, heading, or inline
+fact — closing a gap a private-corpus validation pass found (an unrelated fact being absorbed as a
+continuation) before merge. `structured_content` field detection gained the equivalent multiline
+continuation for both label/value shapes. New non-sensitive flags: `generic_table_reconstruction`
+and `multiline_value_pairing` on `reading_text`; `multiline_value` on `StructuredField.flags`. No new
+artifact or schema version; technical raw text, active PII input, review decisions,
+pseudonymization, redaction, export, dependencies, and public APIs are unchanged. Document-type/zone
+classification (L13's earlier placeholder meaning) remains open and deferred — see
+[ADR-0024](../adr/0024-ocr-l13-table-form-reconstruction-v2.md).
 
 ### PII L11 — entity grouping — delivered
 

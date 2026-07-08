@@ -30,12 +30,12 @@ input, or report may be committed.
 | `ocr_result` / `text_layer_result` | ◻ conceptual | source-specific page output | yes | folded into `text_result` today |
 | `quality_report` | ✅ OCR L7 | source mix, coverage, audit quality counts, confidence summary, exact input lineage | metrics only | immutable artifact |
 | `readable_text` | ✅ OCR L8 (field on `text_result`) | earlier human-readable normalization of technical raw text, with conservative paragraph/whitespace cleanup and visible page boundaries | yes | additive optional field on `text_result` |
-| `reading_text` | ✅ OCR L10.5 + L12 (field on `text_result`) | canonical reading text: deterministic block-aware main document text with heuristic/fallback metadata; L12 adds safe multi-column layout reconstruction, fused table-header rendering, and geometry-bound label/value pairing; future PII/placeholder candidate, not active today | yes | additive optional versioned field on `text_result` |
+| `reading_text` | ✅ OCR L10.5 + L12 + L13 (field on `text_result`) | canonical reading text: deterministic block-aware main document text with heuristic/fallback metadata; L12 adds safe multi-column layout reconstruction, fused table-header rendering, and geometry-bound label/value pairing; L13 adds geometry-only table detection with no header-keyword requirement, partially fused header recovery, and multiline label/value continuation; future PII/placeholder candidate, not active today | yes | additive optional versioned field on `text_result` |
 | `layout_text_result` | ✅ OCR L9 (field on `text_result`) | readable layout plain-text for PDF text layers; Review UI alternative | yes | additive optional field on `text_result` |
 | `layout_blocks` | ✅ OCR L9 (field on `text_result`) | ordered typed review blocks with coarse normalized page bounds and extraction source | yes | additive optional versioned field on `text_result` |
 | `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
 | `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping technical raw spans (persisted `canonical_*` compatibility names) to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; source-anchoring/traceability only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
-| `structured_content` | ✅ OCR L11 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
+| `structured_content` | ✅ OCR L11 + L13 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags; L13 adds multiline label/value field continuation | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
@@ -58,9 +58,10 @@ Distinct text layers, structured layout blocks, and a lineage map are fixed by t
   text** and product-facing main text. It deterministically uses trustworthy position/geometry,
   layout blocks, layout text, then raw-order fallback; it carries `reading_text_status` and
   non-sensitive `reading_text_flags`. OCR L12 extends this same field with bounded multi-column
-  reconstruction, fused-header table rendering, and safe label/value pairing flags. It has no offset
-  guarantee yet and is only an intended future PII/placeholder input candidate after tested lineage
-  exists.
+  reconstruction, fused-header table rendering, and safe label/value pairing flags. OCR L13 further
+  extends it with geometry-only table detection (no header keyword required), partially fused header
+  recovery, and multiline label/value continuation. It has no offset guarantee yet and is only an
+  intended future PII/placeholder input candidate after tested lineage exists.
 - **`pii_input_text`** (new, optional, additive; internal) is a **detection-optimised** view that
   preserves logical blocks/roles/table structure. v1 (PDF text layer) delivers a real, geometric
   left/right block grouping and row-wise table reconstruction — but it is **not** the active PII
@@ -97,8 +98,9 @@ Distinct text layers, structured layout blocks, and a lineage map are fixed by t
   Table cells and field values reference half-open canonical/page spans rather than duplicating raw
   content; short labels/headings support interpretation. Optional bounds come from L10 line
   geometry, L9 heading blocks can support section detection, and explicit source/confidence/flags
-  describe fallback or partial structure. It is not a PII input or a pseudonymization/redaction/
-  export artifact.
+  describe fallback or partial structure. OCR L13 adds a `multiline_value` field flag when a
+  label/value field's value spans more than one line. It is not a PII input or a
+  pseudonymization/redaction/export artifact.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
   its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.

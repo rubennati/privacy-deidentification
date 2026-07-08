@@ -395,6 +395,196 @@ def test_fused_table_header_uses_following_row_positions_without_fake_columns() 
     assert "multi_column_reconstruction" not in result.flags
 
 
+def test_generic_table_with_aligned_columns_and_no_known_header_is_reconstructed_row_wise() -> None:
+    """OCR/Text L13: a table with no recognized header vocabulary is still detected from repeated
+    row geometry alone — 3+ aligned columns repeated across 3+ rows."""
+    rows = [
+        _row(0.10, (0.07, "Datum"), (0.35, "Ort"), (0.65, "Ansprechpartner")),
+        _row(0.13, (0.07, "01.01.2026"), (0.35, "Wien"), (0.65, "Frau Muster")),
+        _row(0.16, (0.07, "02.01.2026"), (0.35, "Graz"), (0.65, "Herr Beispiel")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Datum | Ort | Ansprechpartner\n"
+        "01.01.2026 | Wien | Frau Muster\n"
+        "02.01.2026 | Graz | Herr Beispiel"
+    )
+    assert "generic_table_reconstruction" in result.flags
+    assert "table_row_reconstruction" in result.flags
+
+
+def test_generic_table_multiline_description_stays_attached_to_its_row() -> None:
+    rows = [
+        _row(0.10, (0.07, "Datum"), (0.35, "Beschreibung"), (0.75, "Betrag")),
+        _row(0.13, (0.07, "01.01.2026"), (0.35, "Erste Position mit"), (0.75, "10,00")),
+        _row(0.148, (0.35, "kurzer Fortsetzung")),
+        _row(0.16, (0.07, "02.01.2026"), (0.35, "Zweite Position"), (0.75, "20,00")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Datum | Beschreibung | Betrag\n"
+        "01.01.2026 | Erste Position mit kurzer Fortsetzung | 10,00\n"
+        "02.01.2026 | Zweite Position | 20,00"
+    )
+    assert "generic_table_reconstruction" in result.flags
+
+
+def test_generic_table_totals_row_stays_grouped_as_summen_block() -> None:
+    rows = [
+        _row(0.10, (0.07, "Datum"), (0.35, "Ort"), (0.65, "Betrag")),
+        _row(0.13, (0.07, "01.01.2026"), (0.35, "Wien"), (0.65, "10,00")),
+        _row(0.16, (0.07, "02.01.2026"), (0.35, "Graz"), (0.65, "20,00")),
+        _row(0.20, (0.35, "Gesamtbetrag:"), (0.65, "30,00")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Datum | Ort | Betrag\n"
+        "01.01.2026 | Wien | 10,00\n"
+        "02.01.2026 | Graz | 20,00\n\n"
+        "SUMMEN\n"
+        "Gesamtbetrag: 30,00"
+    )
+
+
+def test_partially_fused_two_cell_table_header_uses_following_row_positions() -> None:
+    """OCR/Text L13: a header fused into two cells (not just one) still reconstructs when the
+    following rows provide safe column-position evidence for every recognized marker."""
+    rows = [
+        _row(0.10, (0.07, "Pos. Beschreibung"), (0.55, "Menge Gesamt")),
+        _row(0.13, (0.07, "1"), (0.18, "Arbeit"), (0.55, "2"), (0.70, "20,00")),
+        _row(0.16, (0.07, "2"), (0.18, "Material"), (0.55, "1"), (0.70, "10,00")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Pos. | Beschreibung | Menge | Gesamt\n"
+        "1 | Arbeit | 2 | 20,00\n"
+        "2 | Material | 1 | 10,00"
+    )
+    assert "dense_table_reconstruction" in result.flags
+
+
+def test_short_geometric_run_below_minimum_rows_falls_back_safely() -> None:
+    """Must-not-trigger: only 2 rows of aligned columns is below the L13 generic-table row
+    minimum, so low confidence keeps the existing safe row order instead of guessing."""
+    rows = [
+        _row(0.10, (0.07, "A"), (0.35, "B"), (0.65, "C")),
+        _row(0.13, (0.07, "1"), (0.35, "2"), (0.65, "3")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == raw
+    assert "generic_table_reconstruction" not in result.flags
+
+
+def test_three_column_prose_is_not_misclassified_as_a_generic_table() -> None:
+    """Must-not-trigger: three columns of genuine prose keep taking the multi-column reading path
+    instead of being swept into the new geometric table detector."""
+    rows = [
+        _row(
+            0.10,
+            (0.07, "1. Allgemeines regelt die grundlegenden Bedingungen dieses Vertrages"),
+            (0.38, "2. Datenschutz behandelt den Umgang mit personenbezogenen Daten"),
+            (0.69, "3. Haftung beschreibt die Grenzen der vertraglichen Verantwortung"),
+        ),
+        _row(
+            0.12,
+            (0.07, "und gilt fuer alle Leistungen die im Rahmen dieses Vertrages erbracht werden."),
+            (
+                0.38,
+                "Personenbezogene Daten werden ausschliesslich zur Vertragsabwicklung verarbeitet.",
+            ),
+            (0.69, "Der Auftragnehmer haftet nur bei grober Fahrlaessigkeit oder Vorsatz."),
+        ),
+        _row(
+            0.14,
+            (0.07, "Aenderungen bedürfen der Schriftform und der Zustimmung beider Parteien."),
+            (0.38, "Weitere Hinweise erhalten Sie in der separaten Datenschutzerklaerung."),
+            (0.69, "Ausgenommen hiervon sind gesetzlich zwingende Haftungstatbestaende."),
+        ),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert "multi_column_reconstruction" in result.flags
+    assert "generic_table_reconstruction" not in result.flags
+
+
+def test_adjacent_label_value_pairing_joins_a_multiline_value() -> None:
+    """OCR/Text L13: a label alone on its row pairs with a value that itself wraps across
+    multiple following rows in the same column (e.g. a multiline address)."""
+    rows = [
+        _row(0.10, (0.07, "Anschrift:")),
+        _row(0.118, (0.30, "Musterstraße 1")),
+        _row(0.136, (0.30, "1010 Wien")),
+        _row(0.16, (0.07, "Telefon:")),
+        _row(0.178, (0.30, "+43 1 2345678")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == ("Anschrift: Musterstraße 1 1010 Wien\nTelefon: +43 1 2345678")
+    assert "multiline_value_pairing" in result.flags
+
+
+def test_adjacent_label_value_continuation_stops_before_the_next_label() -> None:
+    """Must-not-trigger: a following row that is itself a new standalone label must not be
+    absorbed as a value continuation."""
+    rows = [
+        _row(0.10, (0.07, "Kundennummer:")),
+        _row(0.118, (0.25, "KD-9981")),
+        _row(0.136, (0.07, "Aktenzeichen:")),
+        _row(0.154, (0.25, "AZ-4471")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == ("Kundennummer: KD-9981\nAktenzeichen: AZ-4471")
+    assert "multiline_value_pairing" not in result.flags
+
+
+def test_adjacent_label_value_continuation_stops_before_an_inline_label_value_line() -> None:
+    """Regression for a real corpus bug: an unrelated "Label: value" fact immediately following a
+    paired value, in the same column, was being absorbed as a continuation of that value instead
+    of staying its own line."""
+    rows = [
+        _row(0.10, (0.07, "Kundennummer:")),
+        _row(0.118, (0.07, "KD-9981")),
+        _row(0.136, (0.07, "Hinweis: Bitte Referenznummer angeben")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == "Kundennummer: KD-9981\nHinweis: Bitte Referenznummer angeben"
+    assert "multiline_value_pairing" not in result.flags
+
+
 def test_aligned_label_value_facts_are_not_misclassified_as_a_table() -> None:
     rows = [
         _row(0.10, (0.07, "Position:"), (0.35, "Technik")),

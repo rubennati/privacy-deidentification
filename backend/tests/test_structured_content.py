@@ -157,6 +157,53 @@ def test_next_line_field_is_conservative_and_ambiguous_lines_are_ignored() -> No
     assert structured.pages[0].fields[0].flags == ["value_on_next_line"]
 
 
+def test_multiline_value_on_next_line_is_attached() -> None:
+    """OCR/Text L13: a value below its label may itself span multiple following lines."""
+    text = "Anschrift\nMusterstraße 1\n1010 Wien"
+    structured = build_structured_content(text, [_page(text)], [], None)
+
+    assert structured is not None
+    field = structured.pages[0].fields[0]
+    assert field.label == "Anschrift"
+    assert "multiline_value" in field.flags
+    assert (
+        text[field.value_span.canonical_start : field.value_span.canonical_end]
+        == "Musterstraße 1\n1010 Wien"
+    )
+
+
+def test_multiline_inline_value_continuation_is_attached() -> None:
+    """OCR/Text L13: an inline label/value line may still wrap onto a following plain line."""
+    text = "Adresse: Musterstraße 1\n1010 Wien"
+    structured = build_structured_content(text, [_page(text)], [], None)
+
+    assert structured is not None
+    field = structured.pages[0].fields[0]
+    assert field.label == "Adresse"
+    assert "multiline_value" in field.flags
+    assert (
+        text[field.value_span.canonical_start : field.value_span.canonical_end]
+        == "Musterstraße 1\n1010 Wien"
+    )
+
+
+def test_multiline_value_continuation_stops_before_the_next_field() -> None:
+    """Must-not-trigger: a following line that is itself a recognizable field must not be
+    absorbed into the previous field's value."""
+    text = "Anschrift\nMusterstraße 1\nTelefon: +43 1 2345678"
+    structured = build_structured_content(text, [_page(text)], [], None)
+
+    assert structured is not None
+    labels = [field.label for field in structured.pages[0].fields]
+    assert labels == ["Anschrift", "Telefon"]
+    anschrift = structured.pages[0].fields[0]
+    assert "multiline_value" not in anschrift.flags
+    assert (
+        text[anschrift.value_span.canonical_start : anschrift.value_span.canonical_end]
+        == "Musterstraße 1"
+    )
+
+
 @pytest.mark.parametrize(
     "text",
     [

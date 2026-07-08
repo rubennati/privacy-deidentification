@@ -56,3 +56,8 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   no longer take the API down: internal job model first, then SQLite job state + a slim scheduler
   API, then an isolated `ocr-worker`, with a DB-backed polling queue (not Redis/Celery) and
   Compose profiles. Artifacts stay file-based; no Kubernetes/microservices/broker near-term.
+- [ADR-0024](../docs/adr/0024-ocr-l13-table-form-reconstruction-v2.md) — OCR/Text L13 is table/form
+  reconstruction v2 (geometry-only table detection, partially fused header recovery, multiline
+  label/value continuation) inside `reading_text`/`structured_content`; the older
+  document-understanding placeholder is deferred and technical raw text/active PII input remain
+  unchanged.
