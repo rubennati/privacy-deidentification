@@ -540,7 +540,11 @@ def _detect_multi_column_layout(
 def _multi_column_starts(rows: Sequence[ReadingRow]) -> list[float] | None:
     if len(rows) < _COLUMN_MIN_CELLS:
         return None
-    if _has_existing_structural_owner(rows) or _looks_table_dense(rows):
+    if (
+        _has_existing_structural_owner(rows)
+        or _looks_table_dense(rows)
+        or _looks_like_label_value_form(rows)
+    ):
         return None
     clusters = _column_start_clusters(rows)
     if not (2 <= len(clusters) <= _COLUMN_MAX_COUNT):
@@ -594,6 +598,42 @@ def _looks_table_dense(rows: Sequence[ReadingRow]) -> bool:
     if too_many_cell_rows >= 1:
         return True
     return data_rows >= 2
+
+
+def _looks_like_label_value_form(rows: Sequence[ReadingRow]) -> bool:
+    candidate_rows = [row for row in rows if len(row.cells) == 2]
+    if len(candidate_rows) < _COLUMN_MIN_CELLS:
+        return False
+
+    paired_rows: list[ReadingRow] = []
+    label_starts: list[float] = []
+    value_starts: list[float] = []
+    for row in candidate_rows:
+        label_cell, value_cell = row.cells
+        label = _normalize_line(label_cell.text)
+        value = _normalize_line(value_cell.text)
+        if (
+            _is_standalone_field_label(label)
+            and value
+            and not _is_standalone_field_label(value)
+            and value_cell.x0 - label_cell.x0 >= 0.08
+        ):
+            paired_rows.append(row)
+            label_starts.append(label_cell.x0)
+            value_starts.append(value_cell.x0)
+
+    if len(paired_rows) < _COLUMN_MIN_CELLS:
+        return False
+    if len(paired_rows) / len(candidate_rows) < 0.6:
+        return False
+    return _starts_are_aligned(label_starts) and _starts_are_aligned(value_starts)
+
+
+def _starts_are_aligned(starts: Sequence[float]) -> bool:
+    if not starts:
+        return False
+    center = median(starts)
+    return all(abs(start - center) <= _COLUMN_START_TOLERANCE for start in starts)
 
 
 def _column_start_clusters(

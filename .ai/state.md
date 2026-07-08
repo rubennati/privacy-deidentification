@@ -241,6 +241,13 @@ OCR lineage/geometry prerequisites. Next: **PII L12 overlap resolution**, formal
 `review_result`**, then the **PII validation transparency report**, unless benchmark/private-corpus
 evidence reprioritizes OCR L13 document understanding.
 
+**Latest stabilization checkpoint (OCR L12 PR-readiness audit):** A local private-corpus audit found
+and fixed one release-blocking L12 regression: form-style aligned label/value rows could be
+misclassified as prose columns, separating labels from their values in canonical reading text. The
+stabilization adds a generic form-column confidence guard and synthetic regression coverage; it does
+not change technical raw text, active PII input, review decisions, pseudonymization, redaction,
+export, dependencies, or public APIs.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
