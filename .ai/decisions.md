@@ -47,3 +47,7 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   derived (non-persisted) PII entity grouping plus a lineage-bound, JSONL-based review-decision
   overlay (default `pseudonymize`; opt out via `keep`/`false_positive`) that never mutates
   `pii_result`.
+- [ADR-0022](../docs/adr/0022-ocr-l12-multi-column-layout-reconstruction.md) — OCR/Text L12 is
+  deterministic multi-column layout reconstruction inside canonical `reading_text`; the older
+  multi-engine-selection placeholder is deferred and technical raw text/active PII input remain
+  unchanged.

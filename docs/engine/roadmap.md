@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L11 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L12 overlap resolution |
+| OCR / Text | **L12 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L12 overlap resolution |
 | PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -17,14 +17,15 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L11 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
+- OCR L0–L12 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
   runtime, quality routing/fallback, additive OCR confidence, an immutable metrics-only
   `quality_report` for every successful run, additive readable/layout views plus deterministic typed
   layout blocks for PDF and OCR content, and additive `text_geometry` line boxes mapping raw offset
   spans to page-local geometry (source anchoring and traceability for review/debug, and a foundation
   for future placeholder mapping toward AI-ready pseudonymized document generation — it does not
   perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
-  redaction), plus canonical `reading_text` as the deterministic block-aware main document view and
+  redaction), plus canonical `reading_text` as the deterministic block-aware main document view,
+  L12 safe multi-column layout reconstruction/fused table-header rendering/label-value pairing, and
   conservative span-backed tables, label/value fields, and sections in optional
   `structured_content`. PII still uses raw text.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
@@ -145,6 +146,18 @@ common German/English field heuristics run for PDF text-layer, OCR/image, and DO
 new dependency. Canonical/page text, active PII input, `quality_report`, benchmark summaries, and UI
 remain unchanged. This supports future context-preserving pseudonymization but does not implement
 placeholders, mappings, pseudonymized output, redaction, or export.
+
+### OCR L12 — multi-column layout reconstruction — delivered
+
+Canonical `reading_text` now uses a bounded layout reconstruction pass for complex dense pages:
+confident prose columns are detected from x-position clusters and overlapping vertical ranges, then
+rendered left-to-right and top-to-bottom. Normal tables, table-owned regions, party/header blocks,
+and low-confidence layouts stay on existing conservative paths. Fused table headers render row-wise
+only when following rows provide safe column positions, and adjacent label/value pairs are joined
+only when geometry makes the relationship unambiguous. This is additive to `reading_text_version =
+"1"` and records non-sensitive flags; it does not change technical raw text, active PII input,
+`structured_content` schema, projection semantics, review decisions, pseudonymization, redaction, or
+export.
 
 ### PII L11 — entity grouping — delivered
 

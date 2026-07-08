@@ -127,8 +127,9 @@ invocation, OCR runtime columns, trend/history, and a CI gate are open.
 
 ## Level 12 — Multi-engine comparison metrics  ⛔ *open*
 
-- **Description:** compare OCR engines (CER/WER on synthetic GT, runtime, memory) to support OCR L12
-  selection.
+- **Description:** compare OCR engines (CER/WER on synthetic GT, runtime, memory) for a later
+  OCR-quality/benchmark spike. OCR/Text L12 is now multi-column layout reconstruction, not
+  multi-engine selection.
 - **Acceptance:** per-engine quality/cost metrics let the pipeline justify a per-page selection.
 - **Boundary to L13:** L12 compares within a run; L13 compares across time.
 

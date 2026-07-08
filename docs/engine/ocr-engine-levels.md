@@ -19,17 +19,20 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L11 reached (L0–L10 done plus the required L10.5 contract step, then L11);
-L12 is next.** Each successful OCR/Text run now persists additive readable/layout views, versioned
+**Current standing:** **L12 reached (L0–L10 done plus the required L10.5 contract step, then L11 and
+L12).** Each successful OCR/Text run now persists additive readable/layout views, versioned
 ordered/typed `layout_blocks` with coarse normalized page bounds, and additive `text_geometry` that
 maps technical raw line spans to page-local line boxes (`pdf_points` for text-layer, `image_pixels`
 for OCR). L10.5 added versioned `reading_text`, its heuristic/fallback status and non-sensitive
 flags, and made it the default product reading view. L11 adds optional versioned
 `structured_content` with span-backed tables, fields, and sections for PDF, OCR/image, and DOCX
-content. Technical raw text, routing, active PII input, and `quality_report` remain unchanged; L10
-geometry provides source anchoring and traceability for review/debug and future placeholder mapping,
-and L11 structure supports future context-preserving pseudonymization — neither performs
-pseudonymization, placeholder mapping, document export, or pixel-perfect visual redaction.
+content. L12 adds deterministic multi-column reading-order reconstruction, fused table-header
+handling, and conservative geometry-bound label/value pairing in canonical `reading_text`.
+Technical raw text, routing, active PII input, public API shape, and `quality_report` remain
+unchanged; L10 geometry provides source anchoring and traceability for review/debug and future
+placeholder mapping, and L11/L12 structure supports future context-preserving pseudonymization —
+neither performs pseudonymization, placeholder mapping, document export, or pixel-perfect visual
+redaction.
 
 ---
 
@@ -40,7 +43,7 @@ pseudonymization, placeholder mapping, document export, or pixel-perfect visual 
 | Extraction basics | 0–3 | Store bytes, get embedded text, lineage, OCR runtime |
 | Quality routing | 4–7 | Text-layer quality gate, page routing, confidence, `quality_report` |
 | Readable & structured | 8–11 | Human-readable text, layout order, bounding boxes, tables/forms |
-| Understanding & assist | 12–14 | Multi-engine selection, document understanding, local AI assist |
+| Understanding & assist | 12–14 | Layout reconstruction, document understanding, local AI assist |
 | De-identification readiness | 15–19 | Redaction-ready geometry, reproducibility, observability, regression gate, production |
 
 ---
@@ -263,18 +266,45 @@ pseudonymization, placeholder mapping, document export, or pixel-perfect visual 
 - **Acceptance:** representative tables round-trip into rows/cells usable downstream without
   corrupting canonical text; legacy artifacts validate, benchmark summaries ignore the structured
   payload, and PII still receives canonical text only.
-- **Boundary to L12:** L11 reconstructs structure with one engine; L12 compares engines and selects
-  the best per page.
+- **Boundary to L12:** L11 reconstructs explicit tables/forms; L12 improves the document-level
+  reading order that feeds those display and structure layers without changing the raw-text contract.
 
-## Level 12 — Multi-engine benchmark / selection  ⛔ *open*
+## Level 12 — Multi-column layout reconstruction  ✅ *done*
 
-- **Description:** compare OCR/extraction engines and pick the best per page/document with evidence.
-- **Engine must:** run more than one extraction path (e.g. PaddleOCR vs OCRmyPDF/Tesseract) behind
-  the same adapter, score outputs, and select per page; record which engine won and why.
-- **Artifacts:** `benchmark_result` (per-engine metrics), engine-selection annotation on pages.
-- **Acceptance:** the benchmark shows, per engine, quality/runtime/memory, and the pipeline picks the
-  best local engine per page reproducibly.
-- **Boundary to L13:** L12 optimises *text quality*; L13 adds *document-level semantics*.
+- **Description:** improve canonical reading order for complex multi-column and dense-layout
+  documents before any PII, review, pseudonymization, or export use.
+- **Engine must:** use existing row/line geometry to detect confident 2+ column prose regions,
+  render each page-local column top-to-bottom, avoid treating ordinary tables or party/header blocks
+  as prose columns, handle fused table headers only when following rows provide safe column
+  positions, and pair form labels/values only when adjacent geometry is safe.
+- **Artifacts:** no new artifact or schema version. Existing `reading_text` remains version `1` and
+  gains non-sensitive flags such as `multi_column_reconstruction`, `dense_table_reconstruction`,
+  and `label_value_pairing` when those deterministic paths run. `structured_content` remains the L11
+  span-backed structure layer and stays compatible with the canonical/raw text model.
+- **Delivered:** bounded heuristics cluster normalized x positions, require overlapping vertical
+  ranges and prose-like density before column ordering, skip table-owned and party-heading-owned
+  regions, split generic fused table headers only with real row positions, and keep low-confidence
+  layouts in existing row order. Repeated margin cleanup remains document-level and additive.
+- **Quality philosophy:** L12 is stability-first. Improvements must combine multiple weak signals,
+  remain confidence-aware, and fall back rather than silently discard source information. A private
+  corpus improvement is not acceptable when it risks unrelated document types; such gaps should be
+  classified with the missing evidence documented for a later quality signal.
+- **Acceptance:** synthetic tests cover two-column AGB/prose ordering, ordinary two-column tables
+  that must not become prose columns, low-confidence fallback, fused table headers, adjacent
+  label/value pairing, existing party columns, line-item tables, filename lists, and margin cleanup.
+  Technical raw text, page text, active PII input, PII projection, review decisions,
+  pseudonymization, redaction, export, dependencies, and public APIs remain unchanged.
+- **Future evidence:** dictionary/lexicon checks, domain vocabulary, PDF-text-layer versus OCR
+  comparison, second-engine agreement, OCR and layout confidence, document-type hints, review
+  feedback, and benchmark gates are deferred additive signals. They should increase or decrease
+  confidence, not make downstream PII/review/pseudonymization depend on unstable OCR guesses.
+- **Boundary to L13:** L12 improves geometric reading order; L13 adds document/zone semantics rather
+  than merely ordering text.
+
+> Migration note: earlier planning placeholders described OCR/Text L12 as multi-engine benchmark /
+> selection. That capability is deferred to a later OCR-quality/benchmark spike. L12 now means the
+> deterministic multi-column layout reconstruction described here; this avoids mixing the older
+> placeholder meaning with the active 0–19 engine level.
 
 ## Level 13 — Document understanding  ⛔ *open*
 
@@ -386,7 +416,7 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 9 Layout-aware text | ✅ done | ordered typed `layout_blocks` with coarse normalized bounds; existing layout string preserved |
 | 10 Bounding boxes / geometry | ✅ done | additive `text_geometry` line boxes mapping canonical spans to page-local bounds; `resolve_span_geometry` lookup; canonical unchanged |
 | 11 Table / form reconstruction | ✅ done | optional span-backed `structured_content` for tables, fields, and sections; canonical/PII input unchanged |
-| 12 Multi-engine selection | ⛔ open | single engine (PaddleOCR) |
+| 12 Multi-column layout reconstruction | ✅ done | safe column ordering, fused table headers, and geometry-bound label/value pairing in `reading_text`; raw/PII input unchanged |
 | 13 Document understanding | ⛔ open | — |
 | 14 Local AI assist | ⛔ open | — |
 | 15 Redaction-ready geometry | ⛔ open | prerequisite for [Redaction](redaction-engine-levels.md) |
@@ -400,11 +430,11 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next level (L12):**
+**What is missing for the next level (L13):**
 
-1. Benchmark multiple replaceable OCR/extraction engines and select the best output per page with
-   reproducible evidence. Word-level/redaction-ready geometry, placeholder mapping, and export stay
-   open at their later levels; L11 only adds semantic structure.
+1. Document-type, section, and zone semantics that build on the L12 reading-order foundation without
+   switching PII input or inventing values. Word-level/redaction-ready geometry, placeholder
+   mapping, export, and multi-engine selection stay open at later levels/spikes.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.
@@ -425,6 +455,6 @@ The engine previously used a 0–10 ladder. Historical citations can be translat
 | L5 Human-readable text | readable rendering | **L8** |
 | L6 Layout-aware text | reading order/blocks | **L9** (+ **L10** geometry) |
 | L7 Table reconstruction | tables/forms | **L11** |
-| L8 Multi-engine selection | engine comparison | **L12** |
+| L8 Multi-engine selection | engine comparison | deferred later OCR-quality/benchmark spike; no longer active **L12** |
 | L9 Local AI assist | hard-page assist | **L14** (+ **L13** understanding) |
 | L10 Production-grade | production | **L19** (+ **L15–L18** readiness/observability/gate) |

@@ -265,6 +265,8 @@ Anchored to the existing 0–19 ladder in [`ocr-engine-levels.md`](ocr-engine-le
 - **OCR L10.5:** `reading_text` establishes the canonical reading-text / technical-raw contract and
   the product-facing main text before structured content.
 - **OCR L11:** span-backed table / form reconstruction in additive `structured_content`.
+- **OCR L12:** deterministic multi-column layout reconstruction in canonical `reading_text`; no new
+  schema, artifact, raw-text, or PII-input change.
 - **Higher levels:** document understanding / redaction-ready geometry (the lineage map's long-term
   payoff for bounding boxes and redaction).
 
@@ -333,7 +335,19 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   conservative tables/cells, label/value fields, and sections across PDF text-layer, OCR/image, and
   DOCX paths. Values and cells remain canonical/page spans, partial structures are flagged, and
   benchmark loaders ignore the payload. Technical raw text and active PII input are unchanged.
-- **Not in L11:** `text_lineage_map`, word-level/redaction-ready geometry, a PII-input switch, a
+- **Delivered (L12):** the canonical `reading_text` builder now applies a bounded layout
+  reconstruction pass for confident multi-column prose: x-position clusters must have distinct
+  starts, overlapping vertical ranges, and prose-like density before columns render left-to-right,
+  top-to-bottom. Table-owned and party-heading-owned regions stay on their existing paths, fused
+  table headers reconstruct only when following rows provide safe column positions, and adjacent
+  label/value pairs join only when geometry is close enough to be unambiguous. New non-sensitive
+  flags include `multi_column_reconstruction`, `dense_table_reconstruction`, and
+  `label_value_pairing`. Low-confidence layouts keep the existing row order. L12 deliberately
+  favors stable, measurable quality gains over aggressive correction: future dictionary, domain,
+  OCR-comparison, second-engine, confidence, document-type, review-feedback, and benchmark signals
+  should be added as optional confidence evidence, not as destructive rewrites or downstream PII
+  dependencies.
+- **Not in L12:** `text_lineage_map`, word-level/redaction-ready geometry, a PII-input switch, a
   structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
   customer) for `pii_input_text` blocks, active PII use of `pii_input_text`, pseudonymization,
   placeholder mapping, document export, and pixel-perfect visual redaction.

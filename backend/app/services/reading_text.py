@@ -17,6 +17,7 @@ import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from statistics import median
 from typing import Any, Literal
 
@@ -102,6 +103,15 @@ _PAIRED_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 _LABEL_VALUE_RE = re.compile(r"^[^:]{1,40}:\s*\S")
+_STANDALONE_FIELD_LABEL_RE = re.compile(
+    r"^[^\W\d_][\wÄÖÜäöüß .()/&-]{0,48}:\s*$", re.UNICODE
+)
+_SHORT_FIELD_VALUE_RE = re.compile(
+    r"^(?:[\wÄÖÜäöüß./@+()&-]{1,40}|"
+    r"\d{1,2}[.]\d{1,2}[.]\d{2,4}|"
+    r"[A-Z]{1,6}[-/ ]?\d[\wÄÖÜäöüß./ -]{0,34})$",
+    re.UNICODE,
+)
 _PAGE_NUMBER_SUFFIX_RE = re.compile(
     r"(?:^|\s+)(?:seite|page)\s*:?[ ]*\d+(?:\s*(?:von|of|/)\s*\d+)?\s*$",
     re.IGNORECASE,
@@ -121,6 +131,19 @@ _WORD_START_RE = re.compile(r"^[A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]")
 # The trailing negative lookahead keeps a DD.MM.YYYY date (e.g. "13.06.2025") from being misread
 # as a decimal amount: without it, "13.06" alone would match and count towards the amount total.
 _DECIMAL_AMOUNT_RE = re.compile(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\b(?!\.\d{4})")
+_HEADER_LABEL_RE = re.compile(
+    r"\b("
+    r"gesamtpreis|einzelpreis|beschreibung|bezeichnung|position|betrag\s+eur|"
+    r"betrag|forderung|ergebnis|differenz|diff\.|neuwert|zeitwert|ablöse|abloese|"
+    r"steuer|ersteller|leistung|menge|einheit|gesamt|gewerk|vorlage|pos\.?"
+    r")\b",
+    re.IGNORECASE,
+)
+_COLUMN_START_TOLERANCE = 0.08
+_COLUMN_MIN_GAP = 0.22
+_COLUMN_MIN_OVERLAP = 0.45
+_COLUMN_MAX_COUNT = 3
+_COLUMN_MIN_CELLS = 3
 # A common attachment/photo/document file extension. Used to keep an attachment-list line (e.g. a
 # photo caption naming its file) from being absorbed as a prose wrap continuation: such lines never
 # end in sentence punctuation, so without this guard a preceding long line would keep swallowing
@@ -410,7 +433,9 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
     flags: list[str] = []
     body_cursor = 0
     if party_index is not None:
-        blocks.extend(_plain_blocks(ordered[:party_index]))
+        pre_party_blocks, pre_party_flags = _body_blocks(ordered[:party_index])
+        blocks.extend(pre_party_blocks)
+        flags.extend(pre_party_flags)
         metadata_index = next(
             (
                 index
@@ -439,24 +464,31 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
             ),
             body_end,
         )
-        blocks.extend(_plain_blocks(ordered[:metadata_index]))
+        body_blocks, body_flags = _body_blocks(ordered[:metadata_index])
+        blocks.extend(body_blocks)
+        flags.extend(body_flags)
         body_cursor = metadata_index
 
     metadata_rows = ordered[body_cursor:body_end]
     if metadata_rows:
-        blocks.extend(_render_metadata(metadata_rows))
+        metadata_blocks, metadata_flags = _render_metadata(metadata_rows)
+        blocks.extend(metadata_blocks)
+        flags.extend(metadata_flags)
 
     table_end = body_end
     if table_index is not None:
-        table_block, table_end = _render_table(ordered, table_index)
+        table_block, table_end, table_flags = _render_table(ordered, table_index)
         if table_block:
             section_heading = _table_section_heading(ordered[table_index])
             blocks.append([*([section_heading] if section_heading else []), *table_block])
             flags.append("table_row_reconstruction")
+            flags.extend(table_flags)
             if section_heading:
                 flags.append("document_sections")
         else:
-            blocks.extend(_plain_blocks(ordered[table_index : table_index + 1]))
+            fallback_blocks, fallback_flags = _body_blocks(ordered[table_index : table_index + 1])
+            blocks.extend(fallback_blocks)
+            flags.extend(fallback_flags)
             table_end = table_index + 1
 
     if table_end < len(ordered):
@@ -467,8 +499,173 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
 
 
 def _plain_blocks(rows: Sequence[ReadingRow]) -> list[list[str]]:
+    blocks, _ = _plain_blocks_with_flags(rows)
+    return blocks
+
+
+def _body_blocks(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
+    column_blocks = _multi_column_blocks(rows)
+    if column_blocks is not None:
+        return column_blocks, ["multi_column_reconstruction"]
+    return _plain_blocks_with_flags(rows)
+
+
+def _multi_column_blocks(rows: Sequence[ReadingRow]) -> list[list[str]] | None:
+    columns = _detect_multi_column_layout(rows)
+    if columns is None:
+        return None
+    blocks: list[list[str]] = []
+    for column_rows in columns:
+        column_blocks, _ = _plain_blocks_with_flags(column_rows)
+        blocks.extend(column_blocks)
+    return blocks or None
+
+
+def _detect_multi_column_layout(
+    rows: Sequence[ReadingRow],
+) -> tuple[tuple[ReadingRow, ...], ...] | None:
+    row_list = [row for row in rows if row.cells]
+    starts = _multi_column_starts(row_list)
+    if starts is None:
+        return None
+    column_rows = _column_rows(row_list, [(left + right) / 2 for left, right in pairwise(starts)])
+    if any(len(column) < _COLUMN_MIN_CELLS for column in column_rows):
+        return None
+    return tuple(
+        tuple(sorted(column, key=lambda row: (row.y0, row.cells[0].x0)))
+        for column in column_rows
+    )
+
+
+def _multi_column_starts(rows: Sequence[ReadingRow]) -> list[float] | None:
+    if len(rows) < _COLUMN_MIN_CELLS:
+        return None
+    if _has_existing_structural_owner(rows) or _looks_table_dense(rows):
+        return None
+    clusters = _column_start_clusters(rows)
+    if not (2 <= len(clusters) <= _COLUMN_MAX_COUNT):
+        return None
+    if any(len(cluster) < _COLUMN_MIN_CELLS for cluster in clusters):
+        return None
+    starts = [median(cell.x0 for _row, cell in cluster) for cluster in clusters]
+    if any(right - left < _COLUMN_MIN_GAP for left, right in pairwise(starts)):
+        return None
+    if not _columns_overlap_vertically(clusters):
+        return None
+    if not _columns_look_like_prose(clusters):
+        return None
+    return starts
+
+
+def _column_rows(rows: Sequence[ReadingRow], boundaries: Sequence[float]) -> list[list[ReadingRow]]:
+    column_rows: list[list[ReadingRow]] = [[] for _ in range(len(boundaries) + 1)]
+    for row in rows:
+        assigned: list[list[ReadingCell]] = [[] for _ in column_rows]
+        for cell in row.cells:
+            index = _column_index(cell, boundaries)
+            assigned[index].append(cell)
+        for index, cells in enumerate(assigned):
+            if not cells:
+                continue
+            column_rows[index].append(
+                ReadingRow(
+                    page_number=row.page_number,
+                    y0=row.y0,
+                    y1=row.y1,
+                    cells=(
+                        ReadingCell(
+                            text=_join_cell_texts(cell.text for cell in cells),
+                            x0=min(cell.x0 for cell in cells),
+                            x1=max(cell.x1 for cell in cells),
+                        ),
+                    ),
+                )
+            )
+    return column_rows
+
+
+def _has_existing_structural_owner(rows: Sequence[ReadingRow]) -> bool:
+    return any(_is_party_heading_row(row) or _is_table_header(row.cells) for row in rows)
+
+
+def _looks_table_dense(rows: Sequence[ReadingRow]) -> bool:
+    too_many_cell_rows = sum(1 for row in rows if len(row.cells) > _COLUMN_MAX_COUNT)
+    data_rows = sum(1 for row in rows if _looks_like_data_row(_row_text(row)))
+    if too_many_cell_rows >= 1:
+        return True
+    return data_rows >= 2
+
+
+def _column_start_clusters(
+    rows: Sequence[ReadingRow],
+) -> list[list[tuple[ReadingRow, ReadingCell]]]:
+    clusters: list[list[tuple[ReadingRow, ReadingCell]]] = []
+    for cluster_row, cell in sorted(
+        ((candidate_row, cell) for candidate_row in rows for cell in candidate_row.cells),
+        key=lambda item: item[1].x0,
+    ):
+        if not cell.text.strip():
+            continue
+        if not clusters:
+            clusters.append([(cluster_row, cell)])
+            continue
+        previous_start = median(existing.x0 for _existing_row, existing in clusters[-1])
+        if cell.x0 - previous_start > _COLUMN_START_TOLERANCE:
+            clusters.append([(cluster_row, cell)])
+        else:
+            clusters[-1].append((cluster_row, cell))
+    return clusters
+
+
+def _columns_overlap_vertically(
+    clusters: Sequence[Sequence[tuple[ReadingRow, ReadingCell]]],
+) -> bool:
+    ranges = [
+        (
+            min(row.y0 for row, _cell in cluster),
+            max(row.y1 for row, _cell in cluster),
+        )
+        for cluster in clusters
+    ]
+    for left, right in pairwise(ranges):
+        overlap = max(0.0, min(left[1], right[1]) - max(left[0], right[0]))
+        left_height = max(left[1] - left[0], 0.001)
+        right_height = max(right[1] - right[0], 0.001)
+        if overlap / min(left_height, right_height) < _COLUMN_MIN_OVERLAP:
+            return False
+    return True
+
+
+def _columns_look_like_prose(
+    clusters: Sequence[Sequence[tuple[ReadingRow, ReadingCell]]],
+) -> bool:
+    for cluster in clusters:
+        texts = [_normalize_line(cell.text) for _row, cell in cluster if cell.text.strip()]
+        prose_like = sum(1 for text in texts if _is_column_prose_fragment(text))
+        average_words = sum(_word_count(text) for text in texts) / max(len(texts), 1)
+        if prose_like < 2 and average_words < 3.0:
+            return False
+    return True
+
+
+def _is_column_prose_fragment(text: str) -> bool:
+    return len(text) >= 28 or _word_count(text) >= 4
+
+
+def _word_count(text: str) -> int:
+    return sum(1 for token in re.findall(r"\w+", text) if any(char.isalpha() for char in token))
+
+
+def _column_index(cell: ReadingCell, boundaries: Sequence[float]) -> int:
+    for index, boundary in enumerate(boundaries):
+        if cell.x0 < boundary:
+            return index
+    return len(boundaries)
+
+
+def _plain_blocks_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
     if not rows:
-        return []
+        return [], []
     groups: list[list[ReadingRow]] = [[]]
     heights = [max(0.001, row.y1 - row.y0) for row in rows]
     gap_limit = median(heights) * 2.2
@@ -483,7 +680,15 @@ def _plain_blocks(rows: Sequence[ReadingRow]) -> list[list[str]]:
         groups[-1].append(row)
         previous = row
         previous_is_letter_marker = is_letter_marker
-    return [_join_continuations(group) for group in groups if group]
+    blocks: list[list[str]] = []
+    flags: list[str] = []
+    for group in groups:
+        if not group:
+            continue
+        lines, group_flags = _join_continuations_with_flags(group)
+        blocks.append(lines)
+        flags.extend(group_flags)
+    return blocks, flags
 
 
 def _is_letter_marker_row(row: ReadingRow) -> bool:
@@ -498,6 +703,11 @@ def _is_letter_marker_row(row: ReadingRow) -> bool:
 
 
 def _join_continuations(rows: Sequence[ReadingRow]) -> list[str]:
+    lines, _ = _join_continuations_with_flags(rows)
+    return lines
+
+
+def _join_continuations_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[str], list[str]]:
     """Render one gap-grouped block, joining bullet/prose wrap continuations conservatively.
 
     A bulleted item or long prose line keeps absorbing the next row while it has not yet reached a
@@ -511,9 +721,24 @@ def _join_continuations(rows: Sequence[ReadingRow]) -> list[str]:
     row_list = list(rows)
     rendered = [_row_text(row) for row in row_list]
     lines: list[str] = []
+    flags: list[str] = []
     cursor = 0
     while cursor < len(rendered):
+        paired = _paired_cell_lines(row_list[cursor])
+        if paired:
+            lines.extend(paired)
+            flags.append("label_value_pairing")
+            cursor += 1
+            continue
         line = rendered[cursor]
+        if (
+            cursor + 1 < len(rendered)
+            and _safe_adjacent_label_value(row_list[cursor], row_list[cursor + 1])
+        ):
+            lines.append(f"{line.rstrip().rstrip(':')}: {rendered[cursor + 1]}")
+            flags.append("label_value_pairing")
+            cursor += 2
+            continue
         is_bullet = line.startswith("- ")
         if is_bullet or _is_long_prose_line(line):
             paragraph = line
@@ -533,7 +758,71 @@ def _join_continuations(rows: Sequence[ReadingRow]) -> list[str]:
             continue
         lines.append(line)
         cursor += 1
-    return lines
+    return lines, flags
+
+
+def _paired_cell_lines(row: ReadingRow) -> list[str]:
+    if len(row.cells) < 4 or len(row.cells) % 2 != 0:
+        return []
+    pairs: list[str] = []
+    for index in range(0, len(row.cells), 2):
+        label = _normalize_line(row.cells[index].text)
+        value = _normalize_line(row.cells[index + 1].text)
+        if not _is_standalone_field_label(label) or _is_standalone_field_label(value):
+            return []
+        pairs.append(f"{label.rstrip(':')}: {value}")
+    return pairs
+
+
+def _safe_adjacent_label_value(label_row: ReadingRow, value_row: ReadingRow) -> bool:
+    label = _row_text(label_row)
+    value = _row_text(value_row)
+    if (
+        not _is_standalone_field_label(label)
+        or not value
+        or _is_standalone_field_label(value)
+        or _looks_like_heading_text(value)
+        or not _rows_are_close(label_row, value_row)
+    ):
+        return False
+    label_x = label_row.cells[0].x0
+    value_x = value_row.cells[0].x0
+    horizontal_offset = value_x - label_x
+    if 0.08 <= horizontal_offset <= 0.45:
+        return True
+    return abs(horizontal_offset) <= 0.05 and _looks_like_short_field_value(value)
+
+
+def _is_standalone_field_label(text: str) -> bool:
+    stripped = text.strip()
+    return bool(
+        _STANDALONE_FIELD_LABEL_RE.fullmatch(stripped)
+        and 1 <= _word_count(stripped.rstrip(":")) <= 5
+    )
+
+
+def _looks_like_short_field_value(text: str) -> bool:
+    stripped = text.strip()
+    return (
+        bool(stripped)
+        and len(stripped) <= 60
+        and not stripped.endswith((".", "!", "?"))
+        and bool(_SHORT_FIELD_VALUE_RE.match(stripped))
+    )
+
+
+def _looks_like_heading_text(text: str) -> bool:
+    stripped = text.strip().rstrip(":")
+    if not stripped or len(stripped) > 80 or any(char in stripped for char in "|;\t"):
+        return False
+    words = stripped.split()
+    if len(words) > 8 or any(char.isdigit() for char in stripped):
+        return False
+    letters = [char for char in stripped if char.isalpha()]
+    return bool(letters) and (
+        stripped.isupper()
+        or (len(words) <= 5 and all(word[:1].isupper() for word in words if word))
+    )
 
 
 def _join_wrapped_line(previous: str, current: str) -> str:
@@ -552,9 +841,15 @@ def _join_wrapped_line(previous: str, current: str) -> str:
 def _is_party_heading_row(row: ReadingRow) -> bool:
     if len(row.cells) < 2:
         return False
-    markers = [cell.text.upper() for cell in row.cells]
-    matches = sum(any(marker in text for marker in _PARTY_HEADING_MARKERS) for text in markers)
+    matches = sum(_is_party_heading_cell(cell.text) for cell in row.cells)
     return matches >= 2 and row.cells[-1].x0 - row.cells[0].x0 >= 0.25
+
+
+def _is_party_heading_cell(text: str) -> bool:
+    normalized = _normalize_line(text).upper().rstrip(":")
+    if len(normalized) > 36:
+        return False
+    return normalized in _PARTY_HEADING_MARKERS
 
 
 def _party_columns(rows: Sequence[ReadingRow]) -> tuple[list[str], list[str]]:
@@ -582,27 +877,48 @@ def _party_gap_end(rows: Sequence[ReadingRow], start: int, limit: int) -> int:
     return limit
 
 
-def _render_metadata(rows: Sequence[ReadingRow]) -> list[list[str]]:
+def _render_metadata(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
     lines = [part for row in rows for part in _split_paired_labels(_row_text(row))]
     if not lines:
-        return []
+        return [], []
     has_offer = any(
         line.casefold().startswith(("angebot", "datum:", "bauvorhaben:"))
         for line in lines
     )
     if has_offer:
-        return [["ANGEBOT", *lines]]
-    return [lines]
+        return [["ANGEBOT", *lines]], []
+    return [lines], []
 
 
 def _is_table_header(cells: Sequence[ReadingCell]) -> bool:
-    if len(cells) < 3:
+    if len(cells) == 1:
+        texts = [
+            _normalized_header_text(label)
+            for label in _split_fused_table_header(cells[0].text)
+        ]
+    elif len(cells) >= 3:
+        texts = [_normalized_header_text(cell.text) for cell in cells]
+    else:
         return False
-    texts = [_normalized_header_text(cell.text) for cell in cells]
+    if len(texts) < 3:
+        return False
     if not texts[0].startswith(_TABLE_HEADER_LEADERS):
         return False
     marker_count = sum(any(marker in text for marker in _TABLE_HEADER_MARKERS) for text in texts)
     return marker_count >= min(3, len(texts))
+
+
+def _split_fused_table_header(text: str) -> list[str]:
+    matches = list(_HEADER_LABEL_RE.finditer(text))
+    if len(matches) < 3:
+        return []
+    labels: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        label = text[match.start() : end].strip(" |:;,-")
+        if label:
+            labels.append(label)
+    return labels
 
 
 def _normalized_header_text(text: str) -> str:
@@ -614,12 +930,13 @@ def _table_section_heading(header: ReadingRow) -> str | None:
     return "LEISTUNGEN" if first.startswith("pos") and len(header.cells) >= 5 else None
 
 
-def _render_table(rows: Sequence[ReadingRow], start: int) -> tuple[list[str], int]:
+def _render_table(rows: Sequence[ReadingRow], start: int) -> tuple[list[str], int, list[str]]:
     header = rows[start]
-    if len(header.cells) < 3:
-        return [], start
-    column_x = [cell.x0 for cell in header.cells]
-    aligned_rows = [_align_table_cells(header, column_x)]
+    header_labels = _table_header_labels(header)
+    column_x = _table_column_positions(rows, start, len(header_labels))
+    if len(header_labels) < 3 or column_x is None:
+        return [], start, []
+    aligned_rows = [header_labels]
     end = start + 1
     while end < len(rows):
         aligned, occupied = _align_table_cells_with_occupied(rows[end], column_x)
@@ -637,7 +954,29 @@ def _render_table(rows: Sequence[ReadingRow], start: int) -> tuple[list[str], in
                 end += 1
                 continue
         break
-    return [" | ".join(cells) for cells in aligned_rows], end
+    flags = ["dense_table_reconstruction"] if len(header.cells) == 1 else []
+    return [" | ".join(cells) for cells in aligned_rows], end, flags
+
+
+def _table_header_labels(header: ReadingRow) -> list[str]:
+    if len(header.cells) == 1:
+        return _split_fused_table_header(header.cells[0].text)
+    return [cell.text for cell in header.cells]
+
+
+def _table_column_positions(
+    rows: Sequence[ReadingRow], start: int, expected_count: int
+) -> list[float] | None:
+    header = rows[start]
+    if len(header.cells) >= expected_count:
+        return [cell.x0 for cell in header.cells[:expected_count]]
+    for row in rows[start + 1 :]:
+        if len(row.cells) >= expected_count:
+            return [cell.x0 for cell in row.cells[:expected_count]]
+        if len(row.cells) == 1:
+            continue
+        break
+    return None
 
 
 def _align_table_cells(row: ReadingRow, column_x: Sequence[float]) -> list[str]:
