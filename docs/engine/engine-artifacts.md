@@ -36,6 +36,7 @@ input, or report may be committed.
 | `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
 | `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping technical raw spans (persisted `canonical_*` compatibility names) to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; source-anchoring/traceability only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
 | `structured_content` | ✅ OCR L11 + L13 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags; L13 adds multiline label/value field continuation | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
+| `quality_evidence` | ✅ OCR L14 (field on `text_result`) | metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence for the run: a list of `QualityEvidenceItem`s plus a `QualityEvidenceSummary` with `QualityLineageCoverage`; explains where text came from and how well it maps back, without changing any text | no raw text (offsets, counts, flags, page zones, coarse bounds, stable reason codes; `details` is `dict[str, int]`) | additive optional versioned field on `text_result` |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
@@ -108,6 +109,17 @@ Distinct text layers, structured layout blocks, and a lineage map are fixed by t
   describe fallback or partial structure. OCR L13 adds a `multiline_value` field flag when a
   label/value field's value spans more than one line. It is not a PII input or a
   pseudonymization/redaction/export artifact.
+- **`quality_evidence`** (new, optional, additive; `quality_evidence_version = "1"`) records OCR L14
+  quality evidence and lineage coverage: a list of `QualityEvidenceItem`s (each with a stable
+  `evidence_id`, `level`, `type`, `status`, optional bounded `confidence`, stable `reason_code`,
+  optional offset ranges / page number / page zone / coarse bounds / `related_artifact`, non-sensitive
+  `flags`, and an integer-only `details` map) plus a `QualityEvidenceSummary` (`overall_status`,
+  advisory `overall_score`, status/type counts, `warnings`, `blockers`, `reconstruction_summary`,
+  `fallback_summary`, and a `QualityLineageCoverage` block). It explains where text came from (PDF
+  text layer, OCR, or fallback), which parts were confidently reconstructed versus fell back,
+  conservative page zones from existing geometry, and how well canonical reading text maps back to
+  technical raw text and source geometry. It carries **no raw text** (`details` is `dict[str, int]`
+  by construction) and changes no text layer, PII input, or PII decision.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
   its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.
@@ -141,6 +153,21 @@ values, layout output, or detection input. Its contract uses `artifact_type = qu
 Rerunning OCR/Text creates a new `text_result` and a new matching `quality_report`; previous audit,
 text, and quality artifacts remain byte-immutable. The benchmark uses a report only when its
 lineage matches the latest available inputs and otherwise falls back to legacy audit/text summaries.
+
+## Quality evidence boundary (OCR L14)
+
+OCR L14 attaches additive `quality_evidence` to every new `text_result`. Unlike the separate,
+lineage-bound, benchmark-consumed `quality_report` (which summarizes routing/confidence), this field
+travels with the text artifact and explains the reading/reconstruction/lineage of *that* artifact:
+provenance (text layer / OCR / fallback), reconstruction paths used, conservative page zones, and how
+much canonical reading text maps back to technical raw text and source geometry. It is derived
+deterministically from already-computed inputs, re-runs nothing, and classifies missing signals as
+`unavailable`/`not_applicable` rather than inventing them. It contains no raw page text, OCR line
+text, PII, or entity values — only offsets, counts, flags, page zones, coarse bounds, and stable
+reason codes, with an integer-only `details` map. It is not a PII input and never changes PII
+detection or review decisions; benchmark loaders ignore it, and it follows the same sensitive-artifact
+handling as the other text-artifact fields (never logged, never committed). Legacy `text_result`
+artifacts without it remain valid.
 
 ## Dev feedback side-channel
 
@@ -194,7 +221,10 @@ short:
   stores only offsets and page-local bounds (no raw line text); `structured_content` stores offsets
   plus short labels/headings but no duplicated field values or table contents. Both follow the same
   sensitive-artifact handling — geometry offsets/bounds and structured labels must never be logged —
-  and benchmark loaders do not copy their payloads into summaries.
+  and benchmark loaders do not copy their payloads into summaries. Additive `quality_evidence`
+  (OCR L14) is metrics-only by construction — offsets, counts, flags, page zones, coarse bounds, and
+  stable reason codes, with an integer-only `details` map — so it carries no raw text; it still lives
+  inside the sensitive text artifact and is never logged or committed, and benchmark loaders ignore it.
 - **PII and review artifacts** contain spans and may contain raw entity values. They remain local and
   are never written to application logs.
 - **Private benchmark reports** remain under `volumes/` and pass through `privacy_guard.py` before

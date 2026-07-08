@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -518,6 +518,190 @@ class ReadingTextMapSegment(BaseModel):
         return self
 
 
+# OCR/Text L14 quality evidence and lineage coverage. This is additive, metrics-only evidence about
+# how the OCR/Text chain produced its artifact — where the text came from, how it was reconstructed,
+# and how well the derived reading text maps back to technical raw text. It never carries raw
+# document text: every locator is an offset range, page zone, coarse bound, count, flag, or stable
+# reason code. It does not change PII input, PII decisions, or any existing text layer.
+QualityEvidenceLevel = Literal[
+    "document",
+    "page",
+    "block",
+    "row",
+    "span",
+    "table",
+    "form",
+    "reading_text",
+    "structured_content",
+    "projection_lineage",
+]
+QualityEvidenceType = Literal[
+    "source_text",
+    "pdf_text_layer",
+    "ocr_engine",
+    "positioned_rows",
+    "page_geometry",
+    "page_zone",
+    "reading_order",
+    "reading_text_map",
+    "multi_column_reconstruction",
+    "table_reconstruction",
+    "form_reconstruction",
+    "structured_content",
+    "fallback",
+    "skipped_reconstruction",
+    "low_confidence",
+    "lineage_coverage",
+    "projection_lineage",
+]
+QualityEvidenceStatus = Literal[
+    "confident",
+    "partial",
+    "low_confidence",
+    "skipped",
+    "fallback",
+    "unavailable",
+    "not_applicable",
+]
+QualityPageZone = Literal[
+    "header",
+    "footer",
+    "left_margin",
+    "right_margin",
+    "body",
+    "unknown",
+]
+_QUALITY_STATUS_VALUES = frozenset(get_args(QualityEvidenceStatus))
+_QUALITY_TYPE_VALUES = frozenset(get_args(QualityEvidenceType))
+
+
+class QualityOffsetRange(BaseModel):
+    """A half-open offset range used only to *locate* evidence; it never carries the text itself."""
+
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> QualityOffsetRange:
+        if self.end < self.start:
+            raise ValueError("quality evidence range end must be at least its start")
+        return self
+
+
+class QualityEvidenceBounds(BaseModel):
+    """Coarse page-local bounds for a geometry/zone evidence item. Geometry only, no text."""
+
+    x0: float = Field(ge=0.0)
+    y0: float = Field(ge=0.0)
+    x1: float = Field(ge=0.0)
+    y1: float = Field(ge=0.0)
+    coordinate_unit: Literal["pdf_points", "image_pixels", "normalized"]
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> QualityEvidenceBounds:
+        if self.x1 < self.x0 or self.y1 < self.y0:
+            raise ValueError("quality evidence bounds must have x1>=x0 and y1>=y0")
+        return self
+
+
+class QualityEvidenceItem(BaseModel):
+    """One additive quality-evidence signal about the OCR/Text chain.
+
+    Every locator is structural: offsets, a page number, a page zone, coarse bounds, counts, flags,
+    and a stable machine-readable ``reason_code``. ``details`` is intentionally ``dict[str, int]``
+    so no raw document text, snippet, or PII value can ever be stored here by construction.
+    """
+
+    evidence_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
+    level: QualityEvidenceLevel
+    type: QualityEvidenceType
+    status: QualityEvidenceStatus
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    reason_code: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    page_number: int | None = Field(default=None, ge=1)
+    source_range: QualityOffsetRange | None = None
+    raw_text_range: QualityOffsetRange | None = None
+    reading_text_range: QualityOffsetRange | None = None
+    bbox: QualityEvidenceBounds | None = None
+    page_zone: QualityPageZone | None = None
+    related_artifact: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    flags: list[str] = Field(default_factory=list)
+    details: dict[str, int] = Field(default_factory=dict)
+
+
+class QualityLineageCoverage(BaseModel):
+    """How well canonical reading text maps back to technical raw text and source geometry."""
+
+    reading_text_length: int = Field(ge=0)
+    mapped_reading_text_chars: int = Field(ge=0)
+    unmapped_reading_text_chars: int = Field(ge=0)
+    mapping_coverage_ratio: float = Field(ge=0.0, le=1.0)
+    exact_span_count: int = Field(ge=0)
+    partial_span_count: int = Field(ge=0)
+    unmapped_span_count: int = Field(ge=0)
+    source_geometry_coverage_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    structured_content_reference_count: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_coverage(self) -> QualityLineageCoverage:
+        if (
+            self.mapped_reading_text_chars + self.unmapped_reading_text_chars
+            != self.reading_text_length
+        ):
+            raise ValueError("mapped and unmapped reading chars must sum to reading text length")
+        return self
+
+
+class QualityEvidenceSummary(BaseModel):
+    """Document-level roll-up of the evidence items plus lineage coverage.
+
+    ``overall_score`` is an advisory 0.0-1.0 confidence blend, never a gate. ``counts_by_status``
+    and ``counts_by_type`` are derived from the items and validated for consistency by
+    :class:`QualityEvidence`.
+    """
+
+    overall_status: QualityEvidenceStatus
+    overall_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    counts_by_status: dict[str, int] = Field(default_factory=dict)
+    counts_by_type: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    reconstruction_summary: dict[str, int] = Field(default_factory=dict)
+    fallback_summary: dict[str, int] = Field(default_factory=dict)
+    lineage_summary: QualityLineageCoverage
+
+    @model_validator(mode="after")
+    def _validate_count_keys(self) -> QualityEvidenceSummary:
+        if any(status not in _QUALITY_STATUS_VALUES for status in self.counts_by_status):
+            raise ValueError("counts_by_status has an unknown status key")
+        if any(type_ not in _QUALITY_TYPE_VALUES for type_ in self.counts_by_type):
+            raise ValueError("counts_by_type has an unknown type key")
+        return self
+
+
+class QualityEvidence(BaseModel):
+    """Additive OCR/Text L14 quality evidence and lineage coverage beside canonical text."""
+
+    items: list[QualityEvidenceItem] = Field(default_factory=list)
+    summary: QualityEvidenceSummary
+
+    @model_validator(mode="after")
+    def _validate_items(self) -> QualityEvidence:
+        ids = [item.evidence_id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("quality evidence items must have unique ids")
+        status_counts: dict[str, int] = {}
+        type_counts: dict[str, int] = {}
+        for item in self.items:
+            status_counts[item.status] = status_counts.get(item.status, 0) + 1
+            type_counts[item.type] = type_counts.get(item.type, 0) + 1
+        if self.summary.counts_by_status != dict(sorted(status_counts.items())):
+            raise ValueError("quality evidence status counts do not match items")
+        if self.summary.counts_by_type != dict(sorted(type_counts.items())):
+            raise ValueError("quality evidence type counts do not match items")
+        return self
+
+
 class TextContent(BaseModel):
     """Versioned text output produced by the OCR workstation."""
 
@@ -575,6 +759,34 @@ class TextContent(BaseModel):
     # pseudonymization layer, placeholder map, redaction model, or export format.
     structured_content_version: Literal["1"] | None = None
     structured_content: StructuredContent | None = None
+    # OCR L14 additive quality evidence and lineage coverage. Metrics-only: it records where the
+    # text came from, how it was reconstructed, and how well the derived reading text maps back to
+    # technical raw text — using offsets, counts, flags, page zones, and stable reason codes, never
+    # raw text. It is not a PII input, does not change PII decisions, and reorders/deletes nothing.
+    # Both fields are optional/defaulted so artifacts written before L14 remain valid.
+    quality_evidence_version: Literal["1"] | None = None
+    quality_evidence: QualityEvidence | None = None
+
+    @model_validator(mode="after")
+    def _validate_quality_evidence(self) -> TextContent:
+        if (self.quality_evidence is not None) != (self.quality_evidence_version == "1"):
+            raise ValueError("quality evidence and version must be present together")
+        if self.quality_evidence is None:
+            return self
+        reading_length = len(self.reading_text or "")
+        lineage = self.quality_evidence.summary.lineage_summary
+        if lineage.reading_text_length != reading_length:
+            raise ValueError("quality evidence reading length does not match reading text")
+        raw_length = len(self.text)
+        for item in self.quality_evidence.items:
+            if item.raw_text_range is not None and item.raw_text_range.end > raw_length:
+                raise ValueError("quality evidence raw range exceeds technical raw text length")
+            if (
+                item.reading_text_range is not None
+                and item.reading_text_range.end > reading_length
+            ):
+                raise ValueError("quality evidence reading range exceeds reading text length")
+        return self
 
     @model_validator(mode="after")
     def _validate_structured_content(self) -> TextContent:

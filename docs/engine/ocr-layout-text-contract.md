@@ -271,8 +271,12 @@ Anchored to the existing 0–19 ladder in [`ocr-engine-levels.md`](ocr-engine-le
   required), partially fused header recovery, and multiline label/value continuation, in both
   canonical `reading_text` and `structured_content`; no new schema, artifact, raw-text, or PII-input
   change.
-- **Higher levels:** document understanding / redaction-ready geometry (the lineage map's long-term
-  payoff for bounding boxes and redaction).
+- **OCR L14:** quality evidence and lineage coverage — additive, optional, versioned
+  `quality_evidence` on `text_result` recording metrics-only provenance, reconstruction, page-zone,
+  and reading↔raw lineage-coverage evidence; no new artifact, raw-text, or PII-input change, and it
+  never changes PII decisions.
+- **Higher levels:** local AI assist / redaction-ready geometry (the lineage map's long-term payoff
+  for bounding boxes and redaction).
 
 `layout_text_result` v1, `pii_input_text` v1, and the structured layout blocks complete OCR L9 —
 visible layout, internal experimental reading order, and review-oriented typed regions. A full
@@ -372,6 +376,22 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   non-sensitive flags: `generic_table_reconstruction` and `multiline_value_pairing` on `reading_text`;
   `multiline_value` on `StructuredField.flags`. All are additive; legacy artifacts without them
   remain valid.
+- **Delivered (L14):** quality evidence and lineage coverage as an additive, optional, versioned
+  `quality_evidence` field on `text_result`. A deterministic builder (`ocr_quality.py`) derives, from
+  already-computed inputs, metrics-only evidence items (source_text, pdf_text_layer, ocr_engine,
+  positioned_rows, page_geometry, page_zone, reading_order, the reconstruction/fallback strategies,
+  structured_content, reading_text_map, lineage_coverage, projection_lineage) plus a summary with
+  `QualityLineageCoverage`. Page zones are classified conservatively from existing geometry and are
+  evidence only (they never delete, reorder, or reclassify text). `details` is `dict[str, int]` so no
+  raw text can be stored; the schema validates that evidence offsets stay inside the actual
+  raw/reading text. Technical raw text, active PII input, PII projection/decisions, the
+  `quality_report` artifact, benchmark payloads, dependencies, and public APIs are unchanged.
+- **Not in L14:** local AI assist for hard pages (the deferred earlier placeholder meaning; see
+  [ADR-0025](../adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md)), dictionary/lexicon
+  checks, multi-OCR, and local-LLM structure/quality hints (all deferred, additive *evidence, not
+  truth*), automatic OCR correction, a PII-input switch, `text_lineage_map`,
+  word-level/redaction-ready geometry, pseudonymization, placeholder mapping, document export, and
+  pixel-perfect visual redaction.
 - **Not in L13:** document-type/section/zone classification (deferred, see
   [ADR-0024](../adr/0024-ocr-l13-table-form-reconstruction-v2.md)), a fix for the pre-existing
   row-geometry-collection gap that makes some dense/complex table pages fall back to plain raw order

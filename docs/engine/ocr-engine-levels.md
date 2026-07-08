@@ -19,8 +19,8 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L13 reached (L0–L10 done plus the required L10.5 contract step, then L11,
-L12, and L13).** Each successful OCR/Text run now persists additive readable/layout views, versioned
+**Current standing:** **L14 reached (L0–L10 done plus the required L10.5 contract step, then L11,
+L12, L13, and L14).** Each successful OCR/Text run now persists additive readable/layout views, versioned
 ordered/typed `layout_blocks` with coarse normalized page bounds, and additive `text_geometry` that
 maps technical raw line spans to page-local line boxes (`pdf_points` for text-layer, `image_pixels`
 for OCR). L10.5 added versioned `reading_text`, its heuristic/fallback status and non-sensitive
@@ -30,11 +30,15 @@ content. L12 adds deterministic multi-column reading-order reconstruction, fused
 handling, and conservative geometry-bound label/value pairing in canonical `reading_text`. L13 adds
 table/form reconstruction v2: geometry-only table detection with no header-keyword requirement,
 partially fused (not just fully fused) header recovery, and multiline label/value continuation for
-both `reading_text` and `structured_content` fields. Technical raw text, routing, active PII input,
-public API shape, and `quality_report` remain unchanged; L10 geometry provides source anchoring and
-traceability for review/debug and future placeholder mapping, and L11/L12/L13 structure supports
-future context-preserving pseudonymization — none of them perform pseudonymization, placeholder
-mapping, document export, or pixel-perfect visual redaction.
+both `reading_text` and `structured_content` fields. L14 adds additive, optional, versioned
+`quality_evidence`: metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence
+for every run (offsets, counts, flags, page zones, coarse bounds, and stable reason codes — never raw
+text), so quality is measurable and regression-safe without changing any text. Technical raw text,
+routing, active PII input, PII decisions, public API shape, and the `quality_report` artifact remain
+unchanged; L10 geometry provides source anchoring and traceability for review/debug and future
+placeholder mapping, and L11/L12/L13 structure supports future context-preserving pseudonymization —
+none of them perform pseudonymization, placeholder mapping, document export, or pixel-perfect visual
+redaction.
 
 ---
 
@@ -358,8 +362,8 @@ mapping, document export, or pixel-perfect visual redaction.
   gap on some dense/complex table pages, not a table/form-reconstruction-logic gap, and remains open
   for a future OCR/Text level. Document-type/zone classification (the earlier placeholder meaning of
   this level) remains open and is not part of this L13 scope; see the migration note below.
-- **Boundary to L14:** L13 improves table/form structure quality; L14 introduces a *local model* for
-  genuinely hard pages that structure alone cannot recover.
+- **Boundary to L14:** L13 improves table/form structure quality; L14 makes that quality — and the
+  whole extraction chain's provenance and lineage — *measurable and explainable* without changing it.
 
 > Migration note: earlier planning placeholders described OCR/Text L13 as document understanding
 > (document type/section/zone classification). That capability remains open and is deferred to a
@@ -367,18 +371,52 @@ mapping, document export, or pixel-perfect visual redaction.
 > reconstruction v2 described here, mirroring how ADR-0022 previously re-scoped L12. See
 > [ADR-0024](../adr/0024-ocr-l13-table-form-reconstruction-v2.md).
 
-## Level 14 — Local AI assist for hard pages  ⛔ *open, optional*
+## Level 14 — Quality evidence and lineage coverage  ✅ *done*
 
-- **Description:** use a **local** model to help on genuinely hard pages (bad scans, handwriting,
-  marginalia) — assistive only.
-- **Engine must:** run a local vision/OCR model behind an adapter, mark its output as
-  low-confidence/assistive, and **never silently overwrite** canonical text; results are auditable
-  and stay local.
-- **Artifacts:** assistive text/annotations flagged `assistive = true`.
-- **Acceptance:** on a hard-page set, assistive output is offered, clearly labelled, fully local, and
-  only promoted to canonical through an explicit (reviewer/rule) decision. See the
-  [local-AI chapter](target-architecture.md#optional-local-ai--vision--document-understanding).
-- **Boundary to L15:** L0–L14 produce and understand text; L15 makes text+geometry *redaction-ready*.
+- **Description:** make OCR/Text quality *measurable, auditable, and regression-safe* by recording
+  conservative quality evidence, provenance, and lineage coverage — **evidence before correction**,
+  not automatic correction.
+- **Engine must:** attach additive, optional, versioned `quality_evidence` to every new
+  `text_result` that answers, from the artifact alone, where the text came from (PDF text layer,
+  OCR, or fallback), whether page position/geometry and page zone were known, which parts were
+  confidently reconstructed (table/form/multi-column) versus fell back, and how much of canonical
+  reading text maps back to technical raw text and source geometry — using offsets, counts, flags,
+  page zones, coarse bounds, and stable reason codes only, **never raw text**.
+- **Artifacts:** additive `quality_evidence_version = "1"` and `quality_evidence` on `text_result`.
+  It is a flat list of `QualityEvidenceItem`s (each with `evidence_id`, `level`, `type`, `status`,
+  optional bounded `confidence`, stable `reason_code`, optional ranges/page/zone/bounds/related
+  artifact, `flags`, and an integer-only `details` map) plus a `QualityEvidenceSummary`
+  (`overall_status`, advisory `overall_score`, status/type counts, `warnings`, `blockers`,
+  `reconstruction_summary`, `fallback_summary`, and a `QualityLineageCoverage` block). Legacy
+  artifacts without it remain valid.
+- **Delivered:** a deterministic builder (`ocr_quality.py`) derives evidence from already-computed
+  inputs (source, pages, the reading result and its strategy flags, the reading↔raw map, span
+  geometry, and structured content). Page zones (`header`/`footer`/`left_margin`/`right_margin`/
+  `body`/`unknown`) are classified conservatively from existing geometry and are evidence only — they
+  never delete, reorder, or reclassify text. Lineage coverage measures mapped/unmapped reading-text
+  chars, mapping coverage ratio, exact/partial/unmapped span counts, source-geometry coverage, and
+  structured-content references. `details` is `dict[str, int]` so no snippet or PII value can be
+  stored by construction, and the schema validates that offsets stay inside the actual raw/reading
+  text. Technical raw text, active PII input, PII projection/decisions, the `quality_report`
+  artifact, benchmark payloads, dependencies, and public API shape are unchanged.
+- **Acceptance:** synthetic tests cover normal/empty/fallback artifacts, table/form/multi-column
+  reconstruction evidence, structured-content summaries, conservative header/footer/body/margin page
+  zones, bounded confidence, stable reason codes, determinism, a no-raw-text guard, and lineage
+  exact/partial/unmapped/coverage cases; a local metrics-only private-corpus pass confirmed coherent,
+  leak-free evidence with byte-identical reading text.
+- **Future evidence sources (deferred, additive):** dictionary/lexicon OCR-quality checks, multi-OCR
+  agreement, and a local LLM for document-type/section/structure/quality-explanation hints are
+  **evidence, not truth** — they may raise or lower confidence but must never silently rewrite
+  OCR/Text or change PII decisions. See [ADR-0025](../adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md).
+- **Boundary to L15:** L0–L14 produce, understand, and now *explain* text; L15 makes text+geometry
+  *redaction-ready*.
+
+> Migration note: earlier planning placeholders described OCR/Text L14 as local AI assist for hard
+> pages (a local vision/OCR model behind an adapter; see the
+> [local-AI chapter](target-architecture.md#optional-local-ai--vision--document-understanding)).
+> That capability is deferred to a later level once a concrete need justifies it; L14 now means the
+> quality evidence and lineage coverage described here, mirroring how ADR-0022/ADR-0024 re-scoped
+> L12/L13. See [ADR-0025](../adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md).
 
 ## Level 15 — Redaction-ready text/geometry mapping  ⛔ *open*
 
@@ -467,7 +505,7 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 11 Table / form reconstruction | ✅ done | optional span-backed `structured_content` for tables, fields, and sections; canonical/PII input unchanged |
 | 12 Multi-column layout reconstruction | ✅ done | safe column ordering, fused table headers, and geometry-bound label/value pairing in `reading_text`; raw/PII input unchanged |
 | 13 Table / form reconstruction v2 | ✅ done | geometry-only table detection, partially fused header recovery, and multiline label/value continuation in `reading_text` and `structured_content`; raw/PII input unchanged |
-| 14 Local AI assist | ⛔ open | — |
+| 14 Quality evidence & lineage coverage | ✅ done | additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage); no raw text; raw/PII input, `quality_report`, and benchmark unchanged |
 | 15 Redaction-ready geometry | ⛔ open | prerequisite for [Redaction](redaction-engine-levels.md) |
 | 16 Reproducible settings | ⛔ open | OCR `engine_settings` not recorded yet |
 | 17 Observability / budget | ⛔ open | — |
@@ -479,12 +517,14 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next level (L14 and beyond):**
+**What is missing for the next level (L15 and beyond):**
 
-1. A local-model assist for genuinely hard pages that structure alone cannot recover (L14). Document
-   type/section/zone classification (the earlier placeholder meaning of L13, now deferred — see the
-   migration note under L13), word-level/redaction-ready geometry, placeholder mapping, export, and
-   multi-engine selection stay open at later levels/spikes.
+1. Redaction-ready text↔pixel geometry (L15), reproducible OCR engine settings (L16), observability
+   budgets (L17), a regression gate (L18), and production hardening (L19). Local AI assist for hard
+   pages (the earlier placeholder meaning of L14, now deferred — see the migration note under L14),
+   document type/section/zone classification (the earlier placeholder meaning of L13, deferred),
+   word-level/redaction-ready geometry, placeholder mapping, export, dictionary/lexicon OCR-quality
+   checks, and multi-OCR stay open at later levels/spikes, and are additive **evidence, not truth**.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.
@@ -506,5 +546,5 @@ The engine previously used a 0–10 ladder. Historical citations can be translat
 | L6 Layout-aware text | reading order/blocks | **L9** (+ **L10** geometry) |
 | L7 Table reconstruction | tables/forms | **L11** |
 | L8 Multi-engine selection | engine comparison | deferred later OCR-quality/benchmark spike; no longer active **L12** |
-| L9 Local AI assist | hard-page assist | **L14** (+ **L13** understanding) |
+| L9 Local AI assist | hard-page assist | deferred later spike; no longer active **L14** (now quality evidence & lineage coverage) |
 | L10 Production-grade | production | **L19** (+ **L15–L18** readiness/observability/gate) |
