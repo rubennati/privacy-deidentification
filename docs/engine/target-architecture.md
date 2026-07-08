@@ -39,7 +39,10 @@ without its `pii_result` input — see
 
 Current runtime shape (unchanged): a React SPA behind nginx is the only public entry point and
 proxies `/api/*` to a FastAPI backend that is not published to the host. Optional OCR/PII runtimes
-are heavy build profiles (slim / pii / ocr / full).
+are heavy build profiles (slim / pii / ocr / full) baked into the *same* backend image, so heavy work
+runs in-process and shares the API's memory. The staged move to an isolated worker boundary — so an
+OCR/PII OOM/crash can no longer take the API down — is planned (proposed) in
+[ADR-0023](../adr/0023-runtime-worker-architecture.md) and is not implemented here.
 
 ## Design invariants the engine must keep
 
