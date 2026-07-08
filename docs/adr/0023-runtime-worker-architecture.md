@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed — 2026-07-08. Planning-only; **no runtime change ships with this ADR.** Builds on
+Proposed — 2026-07-08. Planning-only for the overall architecture; **Phase 1 (the internal job
+model abstraction) is implemented** as a pure in-process refactor with no runtime-behavior change —
+see [Implementation status](#implementation-status) below. Phases 2+ (SQLite, workers, queue) remain
+proposed and unimplemented. Builds on
 [ADR-0001](0001-stack-and-architecture.md) (Docker-first FastAPI + React behind nginx),
 [ADR-0003](0003-audit-station.md)/[ADR-0004](0004-ocr-workstation.md)/[ADR-0005](0005-pii-workstation.md)
 (synchronous stations behind adapters), [ADR-0007](0007-ocr-runtime-and-model-provisioning.md)
@@ -255,4 +258,43 @@ stores their raw text or PII.
   pseudonymization, redaction, or export behavior changes as a result of this ADR.
 - Future OCR/AI quality signals are added as bounded, additive, labelled workers/steps behind
   confidence gates, consistent with ADR-0022 and the AI hard-rules.
-```
+
+## Implementation status
+
+| Phase | State |
+| --- | --- |
+| 0 — document current architecture (this ADR) | Done. |
+| **1 — internal job model abstraction** | **Done.** In-process only; no runtime behavior change. |
+| 2 — SQLite job store + status API | Not started (proposed). |
+| 3 — isolate `ocr-worker` | Not started (proposed). |
+| 4+ — PII worker, concurrency controls, optional Redis/RQ, quality/LLM workers | Not started (proposed). |
+
+### Phase 1 — internal job model abstraction (implemented)
+
+Phase 1 introduces the "schedule work" ↔ "do work" seam and nothing else. It is a pure refactor
+behind the existing endpoints:
+
+- `backend/app/services/job_models.py` — `JobKind` (`ocr_text`, `pii_detection`), `JobStatus`
+  (`pending`/`running`/`succeeded`/`failed`/`canceled`), `JobExecutionMode`
+  (`synchronous_inline`/`future_worker`), an immutable `JobContext`, a mutable `JobRecord` with
+  lifecycle transitions, and a generic `JobResult`. `sanitize_job_error` reduces any exception to a
+  safe `(error_code, error_message)` pair.
+- `backend/app/services/job_runner.py` — `SyncJobRunner.run(context, operation)` executes the
+  station call inline, records lifecycle, and returns a `JobResult`. `get_job_runner` is the single
+  FastAPI dependency a future worker-backed runner can replace.
+- `backend/app/api/ocr.py` / `pii.py` — the `POST …/ocr` and `POST …/pii` handlers build a
+  `JobContext` and call `runner.run(...)`, then `result.unwrap()`.
+
+**Intentionally unchanged** (Phase 1 is not the worker split): OCR and PII still run **synchronously
+in-process**; there is **no database, no queue, no worker container, no background task, and no new
+API surface**. `JobRecord`s are per-request and in-memory — never persisted. The API request/response
+shapes, artifact creation, error status codes/details, canonical-vs-technical-raw text separation,
+PII input (technical raw text), review decisions, and benchmark payloads are all unchanged. Heavy OCR
+still fate-shares with the backend process until Phase 3 isolates the worker.
+
+**Privacy:** a `JobRecord` (the loggable/serializable half) carries only ids, timestamps, status, a
+coarse `error_code`, and a sanitized `error_message`; raw document text, OCR text, and PII never
+enter it. The original exception (which may hold sensitive detail) travels only in the transient,
+in-process `JobResult.error` and is re-raised unchanged so API behavior is preserved — it is never
+logged or copied into the record. A failed job never yields a `succeeded` status, preserving the
+no-partial-result-as-final invariant.
