@@ -30,7 +30,7 @@ input, or report may be committed.
 | `ocr_result` / `text_layer_result` | ◻ conceptual | source-specific page output | yes | folded into `text_result` today |
 | `quality_report` | ✅ OCR L7 | source mix, coverage, audit quality counts, confidence summary, exact input lineage | metrics only | immutable artifact |
 | `readable_text` | ✅ OCR L8 (field on `text_result`) | earlier human-readable normalization of technical raw text, with conservative paragraph/whitespace cleanup and visible page boundaries | yes | additive optional field on `text_result` |
-| `reading_text` | ✅ OCR L10.5 (field on `text_result`) | canonical reading text: deterministic block-aware main document text with heuristic/fallback metadata; future PII/placeholder candidate, not active today | yes | additive optional versioned field on `text_result` |
+| `reading_text` | ✅ OCR L10.5 + L12 (field on `text_result`) | canonical reading text: deterministic block-aware main document text with heuristic/fallback metadata; L12 adds safe multi-column layout reconstruction, fused table-header rendering, and geometry-bound label/value pairing; future PII/placeholder candidate, not active today | yes | additive optional versioned field on `text_result` |
 | `layout_text_result` | ✅ OCR L9 (field on `text_result`) | readable layout plain-text for PDF text layers; Review UI alternative | yes | additive optional field on `text_result` |
 | `layout_blocks` | ✅ OCR L9 (field on `text_result`) | ordered typed review blocks with coarse normalized page bounds and extraction source | yes | additive optional versioned field on `text_result` |
 | `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
@@ -57,8 +57,10 @@ Distinct text layers, structured layout blocks, and a lineage map are fixed by t
 - **`reading_text`** (optional, additive; `reading_text_version = "1"`) is the **canonical reading
   text** and product-facing main text. It deterministically uses trustworthy position/geometry,
   layout blocks, layout text, then raw-order fallback; it carries `reading_text_status` and
-  non-sensitive `reading_text_flags`. It has no offset guarantee yet and is only an intended future
-  PII/placeholder input candidate after tested lineage exists.
+  non-sensitive `reading_text_flags`. OCR L12 extends this same field with bounded multi-column
+  reconstruction, fused-header table rendering, and safe label/value pairing flags. It has no offset
+  guarantee yet and is only an intended future PII/placeholder input candidate after tested lineage
+  exists.
 - **`pii_input_text`** (new, optional, additive; internal) is a **detection-optimised** view that
   preserves logical blocks/roles/table structure. v1 (PDF text layer) delivers a real, geometric
   left/right block grouping and row-wise table reconstruction — but it is **not** the active PII

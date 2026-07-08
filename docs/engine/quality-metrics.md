@@ -10,7 +10,7 @@ Legend: ✅ covered today · ⏳ partially covered · ⛔ not yet measured.
 
 | Metric | Meaning | Today |
 | --- | --- | --- |
-| CER / WER | character/word error against a reference transcript | ⛔ — planned for synthetic ground truth at OCR L12 |
+| CER / WER | character/word error against a reference transcript | ⛔ — planned for a later OCR-quality/benchmark spike |
 | Character-count deviation | extracted vs expected character count | ⏳ — final count reported; no expected baseline |
 | Word-count deviation | extracted vs expected word count | ⏳ — final count reported; no expected baseline |
 | Page coverage | pages with/without final text | ✅ — persisted in `quality_report` and benchmarked |
@@ -19,9 +19,9 @@ Legend: ✅ covered today · ⏳ partially covered · ⛔ not yet measured.
 | Routing correctness | actual routing vs expected category | ✅ |
 | Page-status distribution | GOOD/LOW_CONFIDENCE/BROKEN/EMPTY counts | ✅ |
 | Document quality summary | source mix, coverage, low-confidence counts | ✅ — immutable OCR L7 `quality_report` |
-| Readability | paragraphs, line breaks, de-hyphenation | ⛔ — OCR L8 |
-| Layout order | blocks, columns, headings | ⛔ — OCR L9 |
-| Table/form reconstruction | structured region quality | ⛔ — OCR L11 |
+| Readability | paragraphs, line breaks, de-hyphenation | ✅ — OCR L8/L10.5 |
+| Layout order | blocks, columns, headings | ✅ — OCR L9/L12 |
+| Table/form reconstruction | structured region quality | ✅ — OCR L11 |
 | Runtime / memory | wall-clock time and peak memory | ⛔ — OCR L17 |
 
 CER/WER requires reference text. Real customer-document transcripts are not stored for this purpose;

@@ -27,7 +27,7 @@ and geometry it depends on.
   is the next PR still valid) and a deeper review after every third PR (confirm/adjust the next three
   PRs against feedback and benchmark evidence).
 - Record the operative sequence, cadence (standard **2 OCR/Text : 1 PII/Review**), and the concrete
-  next-12-PR list in [`docs/engine/ocr-pii-implementation-plan.md`](../engine/ocr-pii-implementation-plan.md),
+  next-PR list in [`docs/engine/ocr-pii-implementation-plan.md`](../engine/ocr-pii-implementation-plan.md),
   which stays consistent with the authoritative [`roadmap.md`](../engine/roadmap.md) and invents no
   new level numbers.
 

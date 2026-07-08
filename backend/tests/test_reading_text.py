@@ -274,6 +274,95 @@ Gesamtbetrag: 30,00"""
     assert "document_sections" in result.flags
 
 
+def test_two_column_agb_prose_reads_left_column_then_right_column() -> None:
+    rows = [
+        _row(
+            0.10,
+            (0.07, "1. Allgemeines"),
+            (0.54, "2. Datenschutz"),
+        ),
+        _row(
+            0.12,
+            (0.07, "Diese Bedingungen gelten fuer alle Leistungen dieses Vertrages und"),
+            (0.54, "Personenbezogene Daten werden nur fuer die Abwicklung dieses"),
+        ),
+        _row(
+            0.138,
+            (0.07, "werden Bestandteil jeder Bestellung."),
+            (0.54, "Auftrags verarbeitet."),
+        ),
+        _row(
+            0.17,
+            (0.07, "Der Auftragnehmer informiert den Kunden rechtzeitig ueber Aenderungen."),
+            (0.54, "Weitere Hinweise werden dem Kunden in Textform bereitgestellt."),
+        ),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "1. Allgemeines\n"
+        "Diese Bedingungen gelten fuer alle Leistungen dieses Vertrages und "
+        "werden Bestandteil jeder Bestellung.\n"
+        "Der Auftragnehmer informiert den Kunden rechtzeitig ueber Aenderungen.\n\n"
+        "2. Datenschutz\n"
+        "Personenbezogene Daten werden nur fuer die Abwicklung dieses Auftrags verarbeitet.\n"
+        "Weitere Hinweise werden dem Kunden in Textform bereitgestellt."
+    )
+    assert "multi_column_reconstruction" in result.flags
+
+
+def test_short_two_column_table_is_not_mistaken_for_prose_columns() -> None:
+    rows = [
+        _row(0.10, (0.07, "Name"), (0.54, "Betrag")),
+        _row(0.13, (0.07, "Alpha"), (0.54, "10,00")),
+        _row(0.16, (0.07, "Beta"), (0.54, "20,00")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == raw
+    assert "multi_column_reconstruction" not in result.flags
+
+
+def test_low_confidence_column_layout_falls_back_to_raw_order() -> None:
+    rows = [
+        _row(0.10, (0.07, "Linke kurze Notiz"), (0.54, "Rechte kurze Notiz")),
+        _row(0.13, (0.07, "Nur eine Folgezeile")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == raw
+    assert "multi_column_reconstruction" not in result.flags
+
+
+def test_fused_table_header_uses_following_row_positions_without_fake_columns() -> None:
+    rows = [
+        _row(0.10, (0.07, "Pos. Beschreibung Betrag EUR")),
+        _row(0.13, (0.07, "1"), (0.18, "Arbeitsleistung"), (0.82, "10,00")),
+        _row(0.16, (0.07, "2"), (0.18, "Material"), (0.82, "20,00")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "Pos. | Beschreibung | Betrag EUR\n"
+        "1 | Arbeitsleistung | 10,00\n"
+        "2 | Material | 20,00"
+    )
+    assert "dense_table_reconstruction" in result.flags
+    assert "multi_column_reconstruction" not in result.flags
+
+
 def test_aligned_label_value_facts_are_not_misclassified_as_a_table() -> None:
     rows = [
         _row(0.10, (0.07, "Position:"), (0.35, "Technik")),
@@ -288,6 +377,42 @@ def test_aligned_label_value_facts_are_not_misclassified_as_a_table() -> None:
     assert result.text == raw
     assert "table_row_reconstruction" not in result.flags
     assert "document_sections" not in result.flags
+
+
+def test_adjacent_label_value_pair_joins_only_when_geometry_is_safe() -> None:
+    rows = [
+        _row(0.10, (0.07, "Kundennummer:")),
+        _row(0.118, (0.25, "KD-9981")),
+        _row(0.16, (0.07, "Hinweis:")),
+        _row(0.178, (0.07, "Dieser lange Satz bleibt als eigener Hinweistext erhalten.")),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert "Kundennummer: KD-9981" in result.text
+    assert "Hinweis:\nDieser lange Satz bleibt" in result.text
+    assert "label_value_pairing" in result.flags
+
+
+def test_column_paired_label_value_form_renders_one_pair_per_line() -> None:
+    rows = [
+        _row(
+            0.10,
+            (0.07, "Datum:"),
+            (0.22, "01.01.2026"),
+            (0.54, "Aktenzeichen:"),
+            (0.74, "AZ-42"),
+        ),
+    ]
+    raw = "Datum: 01.01.2026 Aktenzeichen: AZ-42"
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == "Datum: 01.01.2026\nAktenzeichen: AZ-42"
+    assert "label_value_pairing" in result.flags
 
 
 def test_right_aligned_table_values_follow_cell_order_not_nearest_header() -> None:

@@ -101,7 +101,7 @@ benchmark run (12-document corpus; aggregate figures only, see
 
 | Area | Current level (0–19) | Basis | Next level |
 | --- | --- | --- | --- |
-| OCR / Text engine | **L8 done** | text extraction, lineage, OCR runtime, quality routing, OCR confidence, lineage-bound metrics-only `quality_report`, and additive `readable_text` shipped | complete L9 layout-aware text → PII L12 overlap |
+| OCR / Text engine | **L12 done** | text extraction, lineage, OCR runtime, quality routing, OCR confidence, lineage-bound metrics-only `quality_report`, additive readable/layout views, L10 geometry, L11 structured content, and L12 multi-column reading-order reconstruction shipped | PII L12 overlap resolution |
 | PII / sensitive-data engine | **L11 done, L10 partial** | structured + AT/DE + domain recognizers, profiles, benchmark, candidate validation, context hardening, address/contact-line, reproducible `engine_settings`; **dev-only** feedback capture landed; derived entity grouping + a review-decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | L12 overlap resolution |
 | Review / human-feedback engine | **L2 done; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review + lineage-safe highlights (prod); clickable offsets, legend, dev engine-settings override, per-entity dev feedback capture (behind `ENABLE_DEV_ENGINE_SETTINGS`); grouped occurrences + a lineage-bound decision overlay | formal `review_result` artifact model |
 | Benchmark / regression | **L8 done; L10 slice delivered out of order** | matching, routing correctness, PII P/R/F1, privacy guard, determinism, validation counts, safe OCR confidence/coverage columns | L9 per-profile in one run |
