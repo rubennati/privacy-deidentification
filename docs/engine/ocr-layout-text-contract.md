@@ -267,6 +267,10 @@ Anchored to the existing 0–19 ladder in [`ocr-engine-levels.md`](ocr-engine-le
 - **OCR L11:** span-backed table / form reconstruction in additive `structured_content`.
 - **OCR L12:** deterministic multi-column layout reconstruction in canonical `reading_text`; no new
   schema, artifact, raw-text, or PII-input change.
+- **OCR L13:** table/form reconstruction v2 — geometry-only table detection (no header keyword
+  required), partially fused header recovery, and multiline label/value continuation, in both
+  canonical `reading_text` and `structured_content`; no new schema, artifact, raw-text, or PII-input
+  change.
 - **Higher levels:** document understanding / redaction-ready geometry (the lineage map's long-term
   payoff for bounding boxes and redaction).
 
@@ -351,6 +355,29 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
   customer) for `pii_input_text` blocks, active PII use of `pii_input_text`, pseudonymization,
   placeholder mapping, document export, and pixel-perfect visual redaction.
+- **Delivered (L13):** table/form reconstruction v2 builds on L12's row-alignment primitives rather
+  than replacing them. A shared row-extension helper now backs both the keyword-header table
+  renderer and a new geometry-only detector: a maximal run of 3+ consecutive rows sharing 3+ aligned
+  columns renders row-wise even with no recognized header vocabulary, gated by the same
+  party-heading/label-value-form ownership checks L12 already used to keep prose and forms out of
+  table detection. A 1- or 2-cell fused table header is recovered by concatenating cell text and
+  reusing the existing marker-based header split, generalizing what previously only worked for a
+  single fused cell. Adjacent-row label/value pairing (a label alone on its row, paired with a value
+  on the next row) now extends across further following rows that stay in the same column, at normal
+  line spacing, and do not themselves look like a new label, heading, bullet, data row, filename row,
+  or another inline "label: value" fact — the last check closes a gap a private-corpus validation
+  pass found where an unrelated fact was being absorbed as a continuation. `structured_content` field
+  detection gained the equivalent multiline continuation for both the inline (`Label: value`) and
+  next-line (`Label` then `value` below it) shapes, bounded by the same kind of stop conditions. New
+  non-sensitive flags: `generic_table_reconstruction` and `multiline_value_pairing` on `reading_text`;
+  `multiline_value` on `StructuredField.flags`. All are additive; legacy artifacts without them
+  remain valid.
+- **Not in L13:** document-type/section/zone classification (deferred, see
+  [ADR-0024](../adr/0024-ocr-l13-table-form-reconstruction-v2.md)), a fix for the pre-existing
+  row-geometry-collection gap that makes some dense/complex table pages fall back to plain raw order
+  before any table detector runs, `text_lineage_map`, word-level/redaction-ready geometry, a
+  PII-input switch, pseudonymization, placeholder mapping, document export, and pixel-perfect visual
+  redaction.
 
 ## Future implementation direction
 

@@ -19,20 +19,22 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L12 reached (L0–L10 done plus the required L10.5 contract step, then L11 and
-L12).** Each successful OCR/Text run now persists additive readable/layout views, versioned
+**Current standing:** **L13 reached (L0–L10 done plus the required L10.5 contract step, then L11,
+L12, and L13).** Each successful OCR/Text run now persists additive readable/layout views, versioned
 ordered/typed `layout_blocks` with coarse normalized page bounds, and additive `text_geometry` that
 maps technical raw line spans to page-local line boxes (`pdf_points` for text-layer, `image_pixels`
 for OCR). L10.5 added versioned `reading_text`, its heuristic/fallback status and non-sensitive
 flags, and made it the default product reading view. L11 adds optional versioned
 `structured_content` with span-backed tables, fields, and sections for PDF, OCR/image, and DOCX
 content. L12 adds deterministic multi-column reading-order reconstruction, fused table-header
-handling, and conservative geometry-bound label/value pairing in canonical `reading_text`.
-Technical raw text, routing, active PII input, public API shape, and `quality_report` remain
-unchanged; L10 geometry provides source anchoring and traceability for review/debug and future
-placeholder mapping, and L11/L12 structure supports future context-preserving pseudonymization —
-neither performs pseudonymization, placeholder mapping, document export, or pixel-perfect visual
-redaction.
+handling, and conservative geometry-bound label/value pairing in canonical `reading_text`. L13 adds
+table/form reconstruction v2: geometry-only table detection with no header-keyword requirement,
+partially fused (not just fully fused) header recovery, and multiline label/value continuation for
+both `reading_text` and `structured_content` fields. Technical raw text, routing, active PII input,
+public API shape, and `quality_report` remain unchanged; L10 geometry provides source anchoring and
+traceability for review/debug and future placeholder mapping, and L11/L12/L13 structure supports
+future context-preserving pseudonymization — none of them perform pseudonymization, placeholder
+mapping, document export, or pixel-perfect visual redaction.
 
 ---
 
@@ -298,25 +300,72 @@ redaction.
   comparison, second-engine agreement, OCR and layout confidence, document-type hints, review
   feedback, and benchmark gates are deferred additive signals. They should increase or decrease
   confidence, not make downstream PII/review/pseudonymization depend on unstable OCR guesses.
-- **Boundary to L13:** L12 improves geometric reading order; L13 adds document/zone semantics rather
-  than merely ordering text.
+- **Boundary to L13:** L12 improves geometric reading order; L13 improves table/form reconstruction
+  quality on top of that stabilized order.
 
 > Migration note: earlier planning placeholders described OCR/Text L12 as multi-engine benchmark /
 > selection. That capability is deferred to a later OCR-quality/benchmark spike. L12 now means the
 > deterministic multi-column layout reconstruction described here; this avoids mixing the older
 > placeholder meaning with the active 0–19 engine level.
 
-## Level 13 — Document understanding  ⛔ *open*
+## Level 13 — Table / form reconstruction v2  ✅ *done*
 
-- **Description:** classify the document and its regions (document type, sections, semantic zones) to
-  inform PII, review, and later redaction.
-- **Engine must:** derive a document type/section model (deterministic or local-model based) and
-  attach it to the artifact chain; assistive, never overwriting canonical text.
-- **Artifacts:** document-classification/section annotations.
-- **Acceptance:** representative documents receive a plausible type/section labelling that downstream
-  stages can consume.
-- **Boundary to L14:** L13 is rule/structure driven; L14 introduces a *local model* for the genuinely
-  hard pages.
+- **Description:** improve table and form/label-value reconstruction in canonical `reading_text` and
+  `structured_content` after L12 reading-order stabilization, without regressing any L11/L12 safeguard.
+- **Engine must:** detect repeated row structures from geometry/x-position alignment alone (no header
+  keyword required), recover headers that are fused across more than one text fragment when following
+  rows provide safe column evidence, keep multiline table descriptions and multiline label/value
+  values attached to their owning row/field, and fall back to the existing safe behavior whenever
+  evidence is not strong enough — never inventing columns, cells, or structure.
+- **Artifacts:** no new artifact or schema version. Existing `reading_text` remains version `1` and
+  gains non-sensitive flags `generic_table_reconstruction` and `multiline_value_pairing` alongside
+  the existing L12 flags. `structured_content` remains version `1`; `StructuredField.flags` gains
+  `multiline_value` for a value spanning more than one line. Both changes are additive and backward
+  compatible — legacy artifacts without these flags remain valid.
+- **Delivered:** a shared row-alignment helper extends both the keyword-header table renderer and a
+  new geometry-only table detector, so a maximal run of 3+ consecutive rows sharing 3+ aligned
+  columns is rendered row-wise even with no recognized header vocabulary; a 1- or 2-cell fused header
+  is recovered from concatenated cell text using the same marker-based split already used for a
+  single fused cell; an adjacent-row label/value pairing extends across following rows that stay in
+  the same column, at normal line spacing, and do not themselves look like a new label, heading, or
+  inline "label: value" fact; `structured_content` field detection gained the equivalent multiline
+  continuation for both the inline and next-line label/value shapes.
+- **Quality philosophy:** L13 keeps L12's stability-first bar. A private-corpus validation pass (see
+  [`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md)) found and fixed one real
+  regression risk before merge: an unrelated inline "Label: value" fact directly following a paired
+  value, in the same column, was being absorbed as a value continuation. The fix adds an explicit
+  stop condition (the same "starts a new label/value fact" check already used elsewhere in the
+  module) and is covered by a synthetic regression test. After the fix, the full available private
+  corpus (all documents pypdf could open; one encrypted document could not be opened, unrelated to
+  this change) produces byte-identical `reading_text` before and after L13 — the new geometry-only
+  table and multiline-continuation paths did not fire elsewhere in that corpus, which is expected:
+  L13 does not force a capability to fire just to show a corpus improvement, and remains available,
+  tested, for future documents matching those patterns.
+- **Acceptance:** synthetic tests cover a header-keyword-free table detected from geometry alone, a
+  partially fused (2-cell) header recovered from row evidence, a multiline table description staying
+  attached to its row, totals/subtotals staying grouped after a geometry-only table, numeric rows not
+  collapsing into prose, a multiline adjacent-row label/value value, must-not-trigger coverage for a
+  short run below the row minimum, three-column prose staying on the L12 prose path instead of being
+  reclassified as a table, an inline label/value line correctly stopping value continuation, and
+  `structured_content` multiline field values for both inline and next-line label shapes plus a
+  must-not-trigger case where a following recognizable field is not absorbed. All existing L11/L12
+  regression tests continue to pass unmodified. Technical raw text, page text, active PII input, PII
+  projection, review decisions, pseudonymization, redaction, export, dependencies, and public APIs
+  remain unchanged.
+- **Known limitation / deferred:** a page whose positioned-row extraction fails the existing
+  raw-coverage safety check still falls back to plain raw order, and no version of table
+  reconstruction (v1 or v2) can apply there — this is a pre-existing L10/L12 row-geometry-collection
+  gap on some dense/complex table pages, not a table/form-reconstruction-logic gap, and remains open
+  for a future OCR/Text level. Document-type/zone classification (the earlier placeholder meaning of
+  this level) remains open and is not part of this L13 scope; see the migration note below.
+- **Boundary to L14:** L13 improves table/form structure quality; L14 introduces a *local model* for
+  genuinely hard pages that structure alone cannot recover.
+
+> Migration note: earlier planning placeholders described OCR/Text L13 as document understanding
+> (document type/section/zone classification). That capability remains open and is deferred to a
+> later level once a private-corpus or product need justifies it; L13 now means the table/form
+> reconstruction v2 described here, mirroring how ADR-0022 previously re-scoped L12. See
+> [ADR-0024](../adr/0024-ocr-l13-table-form-reconstruction-v2.md).
 
 ## Level 14 — Local AI assist for hard pages  ⛔ *open, optional*
 
@@ -417,7 +466,7 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 10 Bounding boxes / geometry | ✅ done | additive `text_geometry` line boxes mapping canonical spans to page-local bounds; `resolve_span_geometry` lookup; canonical unchanged |
 | 11 Table / form reconstruction | ✅ done | optional span-backed `structured_content` for tables, fields, and sections; canonical/PII input unchanged |
 | 12 Multi-column layout reconstruction | ✅ done | safe column ordering, fused table headers, and geometry-bound label/value pairing in `reading_text`; raw/PII input unchanged |
-| 13 Document understanding | ⛔ open | — |
+| 13 Table / form reconstruction v2 | ✅ done | geometry-only table detection, partially fused header recovery, and multiline label/value continuation in `reading_text` and `structured_content`; raw/PII input unchanged |
 | 14 Local AI assist | ⛔ open | — |
 | 15 Redaction-ready geometry | ⛔ open | prerequisite for [Redaction](redaction-engine-levels.md) |
 | 16 Reproducible settings | ⛔ open | OCR `engine_settings` not recorded yet |
@@ -430,11 +479,12 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next level (L13):**
+**What is missing for the next level (L14 and beyond):**
 
-1. Document-type, section, and zone semantics that build on the L12 reading-order foundation without
-   switching PII input or inventing values. Word-level/redaction-ready geometry, placeholder
-   mapping, export, and multi-engine selection stay open at later levels/spikes.
+1. A local-model assist for genuinely hard pages that structure alone cannot recover (L14). Document
+   type/section/zone classification (the earlier placeholder meaning of L13, now deferred — see the
+   migration note under L13), word-level/redaction-ready geometry, placeholder mapping, export, and
+   multi-engine selection stay open at later levels/spikes.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.

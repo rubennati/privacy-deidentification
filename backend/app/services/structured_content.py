@@ -64,6 +64,9 @@ _INLINE_FIELD = re.compile(
 )
 _MULTISPACE_FIELD = re.compile(r"^(?P<label>\S(?:.*?\S)?) {2,}(?P<value>\S.*)$")
 _MULTISPACE_SEPARATOR = re.compile(r" {2,}")
+# OCR/Text L13: how many extra lines a field value may absorb when a value wraps onto more than
+# one line (e.g. a multiline address). Bounded so an unrelated following line cannot be swept in.
+_MAX_FIELD_VALUE_CONTINUATION_LINES = 3
 
 
 @dataclass(frozen=True)
@@ -193,64 +196,152 @@ def _lines(page_text: str, canonical_base: int) -> list[_Line]:
     return result
 
 
+def _looks_like_value_continuation(text: str) -> bool:
+    """OCR/Text L13: a following line only extends a field value when it stays value-shaped.
+
+    A recognizable field, a heading, or a sentence ending in terminal punctuation is never
+    absorbed — those are far more likely to be the start of unrelated content than a wrapped
+    value line (e.g. the second line of a multiline address).
+    """
+
+    stripped = text.strip()
+    if (
+        not stripped
+        or _INLINE_FIELD.match(stripped)
+        or _MULTISPACE_FIELD.match(stripped)
+        or _looks_like_heading(stripped)
+        or stripped.endswith((".", "!", "?"))
+    ):
+        return False
+    return len(stripped.split()) <= 8
+
+
+def _field_value_continuation_end(lines: list[_Line], start_index: int) -> int:
+    end = start_index + 1
+    limit = min(len(lines), start_index + 1 + _MAX_FIELD_VALUE_CONTINUATION_LINES)
+    while end < limit and _looks_like_value_continuation(lines[end].text):
+        end += 1
+    return end
+
+
+_FieldDraft = tuple[_Line, int, int, int, int, str, float, list[str]]
+
+
+def _inline_field_draft(
+    index: int,
+    line: _Line,
+    lines: list[_Line],
+    match: re.Match[str],
+    confidence: float,
+    flags: list[str],
+) -> tuple[_FieldDraft, set[int]] | None:
+    label = match.group("label").strip()
+    value = match.group("value").strip()
+    label_key = _label_key(label)
+    if not _valid_label(label) or (
+        ":" not in match.group(0) and label_key not in _COMMON_LABEL_HINTS
+    ):
+        return None
+    stripped_offset = len(line.text) - len(line.text.lstrip())
+    label_start = stripped_offset + match.start("label")
+    label_end = stripped_offset + match.end("label")
+    value_start = stripped_offset + match.start("value")
+    value_end = value_start + len(value)
+    consumed: set[int] = set()
+    # OCR/Text L13: an inline label/value line may still wrap onto following lines (e.g. a
+    # multiline address after "Adresse: Hauptstraße 1"). Only absorb lines that read as a plain
+    # value continuation, never another recognizable field or heading.
+    cont_end = _field_value_continuation_end(lines, index)
+    if cont_end > index + 1:
+        last_line = lines[cont_end - 1]
+        last_value = last_line.text.strip()
+        value_end = (
+            last_line.page_start
+            - line.page_start
+            + last_line.text.index(last_value)
+            + len(last_value)
+        )
+        flags = [*flags, "multiline_value"]
+        consumed = set(range(index + 1, cont_end))
+    draft: _FieldDraft = (
+        line, label_start, label_end, value_start, value_end, label, confidence, flags
+    )
+    return draft, consumed
+
+
+def _next_line_field_draft(
+    index: int, line: _Line, lines: list[_Line]
+) -> tuple[_FieldDraft, set[int]] | None:
+    label = line.text.strip().rstrip(":").strip()
+    if _label_key(label) not in _COMMON_LABEL_HINTS or not _valid_label(label):
+        return None
+    next_index = index + 1
+    if next_index >= len(lines):
+        return None
+    value_line = lines[next_index]
+    value = value_line.text.strip()
+    if not value or _looks_like_heading(value) or _INLINE_FIELD.match(value):
+        return None
+    label_start = line.text.index(label)
+    value_start = value_line.text.index(value)
+    field_confidence = 0.7
+    field_flags = ["value_on_next_line"]
+    value_end_index = next_index + 1
+    # OCR/Text L13: a value placed on the line below its label may itself span several lines
+    # (e.g. a wrapped multiline address); extend through following plain continuation lines.
+    cont_end = _field_value_continuation_end(lines, next_index)
+    if cont_end > value_end_index:
+        value_end_index = cont_end
+        field_confidence = 0.6
+        field_flags = [*field_flags, "multiline_value"]
+    last_line = lines[value_end_index - 1]
+    last_value = last_line.text.strip()
+    value_end = (
+        last_line.page_start
+        - line.page_start
+        + last_line.text.index(last_value)
+        + len(last_value)
+    )
+    draft: _FieldDraft = (
+        line,
+        label_start,
+        label_start + len(label),
+        value_line.page_start - line.page_start + value_start,
+        value_end,
+        label,
+        field_confidence,
+        field_flags,
+    )
+    return draft, set(range(next_index, value_end_index))
+
+
 def _detect_fields(
     page_number: int, lines: list[_Line], text_geometry: TextGeometry | None
 ) -> list[StructuredField]:
-    drafts: list[tuple[_Line, int, int, int, int, str, float, list[str]]] = []
+    drafts: list[_FieldDraft] = []
     consumed_value_lines: set[int] = set()
     for index, line in enumerate(lines):
         if index in consumed_value_lines or not line.text.strip():
             continue
-        match = _INLINE_FIELD.match(line.text.strip())
+        stripped = line.text.strip()
+        match = _INLINE_FIELD.match(stripped)
         confidence = 0.9
         flags: list[str] = []
         if match is None:
-            match = _MULTISPACE_FIELD.match(line.text.strip())
+            match = _MULTISPACE_FIELD.match(stripped)
             confidence = 0.78
             flags = ["aligned_text_pair"]
         if match is not None:
-            label = match.group("label").strip()
-            value = match.group("value").strip()
-            label_key = _label_key(label)
-            if not _valid_label(label) or (
-                ":" not in match.group(0) and label_key not in _COMMON_LABEL_HINTS
-            ):
-                continue
-            stripped_offset = len(line.text) - len(line.text.lstrip())
-            label_start = stripped_offset + match.start("label")
-            label_end = stripped_offset + match.end("label")
-            value_start = stripped_offset + match.start("value")
-            value_end = value_start + len(value)
-            drafts.append(
-                (line, label_start, label_end, value_start, value_end, label, confidence, flags)
-            )
+            result = _inline_field_draft(index, line, lines, match, confidence, flags)
+            if result is not None:
+                drafts.append(result[0])
+                consumed_value_lines.update(result[1])
             continue
 
-        label = line.text.strip().rstrip(":").strip()
-        if _label_key(label) not in _COMMON_LABEL_HINTS or not _valid_label(label):
-            continue
-        next_index = index + 1
-        if next_index >= len(lines):
-            continue
-        value_line = lines[next_index]
-        value = value_line.text.strip()
-        if not value or _looks_like_heading(value) or _INLINE_FIELD.match(value):
-            continue
-        label_start = line.text.index(label)
-        value_start = value_line.text.index(value)
-        drafts.append(
-            (
-                line,
-                label_start,
-                label_start + len(label),
-                value_line.page_start - line.page_start + value_start,
-                value_line.page_start - line.page_start + value_start + len(value),
-                label,
-                0.7,
-                ["value_on_next_line"],
-            )
-        )
-        consumed_value_lines.add(next_index)
+        result = _next_line_field_draft(index, line, lines)
+        if result is not None:
+            drafts.append(result[0])
+            consumed_value_lines.update(result[1])
 
     fields: list[StructuredField] = []
     for field_index, draft in enumerate(drafts, start=1):

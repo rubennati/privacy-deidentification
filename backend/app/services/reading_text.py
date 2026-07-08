@@ -144,6 +144,13 @@ _COLUMN_MIN_GAP = 0.22
 _COLUMN_MIN_OVERLAP = 0.45
 _COLUMN_MAX_COUNT = 3
 _COLUMN_MIN_CELLS = 3
+# OCR/Text L13: shared threshold for treating a row as "occupying" a table's columns, and the
+# minimum row count (the candidate row plus two more) before a run of aligned rows is trusted as a
+# table without a recognized header keyword. Both keyword-header and generic geometric tables use
+# the same conservative bar.
+_TABLE_MIN_OCCUPIED_COLUMNS = 3
+_GENERIC_TABLE_MIN_ROWS = 3
+_MAX_LABEL_VALUE_CONTINUATION_LINES = 4
 # A common attachment/photo/document file extension. Used to keep an attachment-list line (e.g. a
 # photo caption naming its file) from being absorbed as a prose wrap continuation: such lines never
 # end in sentence punctuation, so without this guard a preceding long line would keep swallowing
@@ -507,7 +514,59 @@ def _body_blocks(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]
     column_blocks = _multi_column_blocks(rows)
     if column_blocks is not None:
         return column_blocks, ["multi_column_reconstruction"]
+    table_blocks = _generic_table_blocks(rows)
+    if table_blocks is not None:
+        return table_blocks
     return _plain_blocks_with_flags(rows)
+
+
+def _generic_table_blocks(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[list[str]], list[str]] | None:
+    """OCR/Text L13: detect a table from repeated row geometry alone, without header keywords.
+
+    Only a maximal run of 3+ consecutive rows that all align on the same 3+ column x-positions
+    counts as evidence — the same geometric bar the keyword-header table path already uses for its
+    body rows. A shorter or less consistent run is left on the existing safe paths (plain rows, or
+    multi-column prose when it already matched) instead of guessing at structure. Row order, cell
+    text, and multiline continuation handling all reuse the same primitives as the keyword-header
+    table renderer.
+    """
+
+    row_list = [row for row in rows if row.cells]
+    if _has_existing_structural_owner(row_list) or _looks_like_label_value_form(row_list):
+        return None
+    run = _find_generic_table_run(row_list)
+    if run is None:
+        return None
+    start, end, column_x = run
+    body_rows, _ = _extend_aligned_table_rows(row_list, start + 1, column_x)
+    aligned_rows = [_align_table_cells(row_list[start], column_x), *body_rows]
+    table_block = [" | ".join(cells) for cells in aligned_rows]
+
+    prefix_blocks, prefix_flags = (
+        _plain_blocks_with_flags(row_list[:start]) if start else ([], [])
+    )
+    blocks = [*prefix_blocks, table_block]
+    flags = [*prefix_flags, "table_row_reconstruction", "generic_table_reconstruction"]
+    if end < len(row_list):
+        post_blocks, post_flags = _render_post_table(row_list[end:])
+        blocks.extend(post_blocks)
+        flags.extend(post_flags)
+    return blocks, flags
+
+
+def _find_generic_table_run(
+    rows: Sequence[ReadingRow],
+) -> tuple[int, int, list[float]] | None:
+    for index, row in enumerate(rows):
+        if len(row.cells) < _TABLE_MIN_OCCUPIED_COLUMNS:
+            continue
+        column_x = [cell.x0 for cell in row.cells]
+        body_rows, end = _extend_aligned_table_rows(rows, index + 1, column_x)
+        if 1 + len(body_rows) >= _GENERIC_TABLE_MIN_ROWS:
+            return index, end, column_x
+    return None
 
 
 def _multi_column_blocks(rows: Sequence[ReadingRow]) -> list[list[str]] | None:
@@ -775,9 +834,15 @@ def _join_continuations_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[str
             cursor + 1 < len(rendered)
             and _safe_adjacent_label_value(row_list[cursor], row_list[cursor + 1])
         ):
-            lines.append(f"{line.rstrip().rstrip(':')}: {rendered[cursor + 1]}")
+            value_end = _label_value_continuation_end(row_list, cursor + 1)
+            value_text = rendered[cursor + 1]
+            for extra in rendered[cursor + 2 : value_end]:
+                value_text = _join_wrapped_line(value_text, extra)
+            lines.append(f"{line.rstrip().rstrip(':')}: {value_text}")
             flags.append("label_value_pairing")
-            cursor += 2
+            if value_end > cursor + 2:
+                flags.append("multiline_value_pairing")
+            cursor = value_end
             continue
         is_bullet = line.startswith("- ")
         if is_bullet or _is_long_prose_line(line):
@@ -831,6 +896,41 @@ def _safe_adjacent_label_value(label_row: ReadingRow, value_row: ReadingRow) -> 
     if 0.08 <= horizontal_offset <= 0.45:
         return True
     return abs(horizontal_offset) <= 0.05 and _looks_like_short_field_value(value)
+
+
+def _label_value_continuation_end(row_list: Sequence[ReadingRow], value_index: int) -> int:
+    """OCR/Text L13: extend a paired adjacent-row value across following continuation rows.
+
+    Each extra row must sit in the same column as the first value row, stay at normal line
+    spacing, and not itself look like a new label, heading, bullet, or data/filename row —
+    otherwise the original single-row value is kept, matching the existing conservative
+    adjacent-pairing rule this extends. A hard cap bounds how many extra rows can join so a
+    genuinely unrelated but superficially value-like run of short lines cannot be absorbed
+    indefinitely.
+    """
+
+    value_row = row_list[value_index]
+    end = value_index + 1
+    limit = min(len(row_list), value_index + 1 + _MAX_LABEL_VALUE_CONTINUATION_LINES)
+    while end < limit:
+        candidate = row_list[end]
+        if len(candidate.cells) != 1:
+            break
+        text = _row_text(candidate)
+        if (
+            not text
+            or _is_standalone_field_label(text)
+            or _starts_new_post_block(text)
+            or _looks_like_heading_text(text)
+            or _looks_like_data_row(text)
+            or _looks_like_filename_row(text)
+            or text.startswith("- ")
+            or abs(candidate.cells[0].x0 - value_row.cells[0].x0) > _COLUMN_START_TOLERANCE
+            or not _rows_are_close(row_list[end - 1], candidate)
+        ):
+            break
+        end += 1
+    return end
 
 
 def _is_standalone_field_label(text: str) -> bool:
@@ -931,13 +1031,17 @@ def _render_metadata(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[
 
 
 def _is_table_header(cells: Sequence[ReadingCell]) -> bool:
-    if len(cells) == 1:
-        texts = [
-            _normalized_header_text(label)
-            for label in _split_fused_table_header(cells[0].text)
-        ]
-    elif len(cells) >= 3:
+    if len(cells) >= _TABLE_MIN_OCCUPIED_COLUMNS:
         texts = [_normalized_header_text(cell.text) for cell in cells]
+    elif cells:
+        # OCR/Text L13: a 1- or 2-cell header row may be fused (a PDF/OCR run boundary landed
+        # mid-header) or partially fused (only some columns fused). Concatenating whatever cells
+        # exist and re-splitting on known markers handles both the already-supported single fused
+        # cell and a new partially fused 2-cell case with the same regex-based evidence.
+        combined = " ".join(cell.text for cell in cells)
+        texts = [
+            _normalized_header_text(label) for label in _split_fused_table_header(combined)
+        ]
     else:
         return False
     if len(texts) < 3:
@@ -976,11 +1080,28 @@ def _render_table(rows: Sequence[ReadingRow], start: int) -> tuple[list[str], in
     column_x = _table_column_positions(rows, start, len(header_labels))
     if len(header_labels) < 3 or column_x is None:
         return [], start, []
-    aligned_rows = [header_labels]
-    end = start + 1
+    body_rows, end = _extend_aligned_table_rows(rows, start + 1, column_x)
+    aligned_rows = [header_labels, *body_rows]
+    flags = ["dense_table_reconstruction"] if len(header.cells) in (1, 2) else []
+    return [" | ".join(cells) for cells in aligned_rows], end, flags
+
+
+def _extend_aligned_table_rows(
+    rows: Sequence[ReadingRow], start: int, column_x: Sequence[float]
+) -> tuple[list[list[str]], int]:
+    """Row-align rows from ``start`` onward while column occupancy stays safe.
+
+    Shared by the keyword-header table renderer and the OCR/Text L13 generic geometric table
+    detector below. A lone single-cell row landing in an already-used column is treated as a
+    wrapped multiline continuation of the previous row's cell in that column rather than a new
+    row, keeping a multiline table description attached to its owning row.
+    """
+
+    aligned_rows: list[list[str]] = []
+    end = start
     while end < len(rows):
         aligned, occupied = _align_table_cells_with_occupied(rows[end], column_x)
-        if len(occupied) >= min(3, len(column_x)):
+        if len(occupied) >= min(_TABLE_MIN_OCCUPIED_COLUMNS, len(column_x)):
             aligned_rows.append(aligned)
             end += 1
             continue
@@ -994,14 +1115,14 @@ def _render_table(rows: Sequence[ReadingRow], start: int) -> tuple[list[str], in
                 end += 1
                 continue
         break
-    flags = ["dense_table_reconstruction"] if len(header.cells) == 1 else []
-    return [" | ".join(cells) for cells in aligned_rows], end, flags
+    return aligned_rows, end
 
 
 def _table_header_labels(header: ReadingRow) -> list[str]:
-    if len(header.cells) == 1:
-        return _split_fused_table_header(header.cells[0].text)
-    return [cell.text for cell in header.cells]
+    if len(header.cells) >= _TABLE_MIN_OCCUPIED_COLUMNS:
+        return [cell.text for cell in header.cells]
+    combined = " ".join(cell.text for cell in header.cells)
+    return _split_fused_table_header(combined)
 
 
 def _table_column_positions(
