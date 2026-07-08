@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L13 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), plus additive span-backed `structured_content` tables, fields, and sections | PII L12 overlap resolution |
+| OCR / Text | **L14 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, and L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage) | PII L12 overlap resolution |
 | PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -17,7 +17,7 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L13 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
+- OCR L0–L14 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
   runtime, quality routing/fallback, additive OCR confidence, an immutable metrics-only
   `quality_report` for every successful run, additive readable/layout views plus deterministic typed
   layout blocks for PDF and OCR content, and additive `text_geometry` line boxes mapping raw offset
@@ -27,8 +27,10 @@ documents.
   redaction), plus canonical `reading_text` as the deterministic block-aware main document view,
   L12 safe multi-column layout reconstruction/fused table-header rendering/label-value pairing, L13
   table/form reconstruction v2 (geometry-only table detection, partially fused header recovery,
-  multiline label/value continuation), and conservative span-backed tables, label/value fields, and
-  sections in optional `structured_content`. PII still uses raw text.
+  multiline label/value continuation), conservative span-backed tables, label/value fields, and
+  sections in optional `structured_content`, and L14 additive metrics-only `quality_evidence`
+  (provenance, reconstruction, page zones, and reading↔raw lineage coverage; no raw text). PII still
+  uses raw text.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -175,6 +177,22 @@ artifact or schema version; technical raw text, active PII input, review decisio
 pseudonymization, redaction, export, dependencies, and public APIs are unchanged. Document-type/zone
 classification (L13's earlier placeholder meaning) remains open and deferred — see
 [ADR-0024](../adr/0024-ocr-l13-table-form-reconstruction-v2.md).
+
+### OCR L14 — quality evidence and lineage coverage — delivered
+
+Every new `text_result` now carries additive, optional, versioned `quality_evidence`: a deterministic
+`ocr_quality.py` builder derives metrics-only evidence items (provenance — text layer / OCR /
+fallback; positioned rows; page geometry; conservative page zones; reading order; the
+reconstruction/fallback strategies; structured content; and reading↔raw map coverage) plus a summary
+with lineage coverage (mapped/unmapped reading chars, mapping coverage ratio, exact/partial/unmapped
+span counts, source-geometry coverage, structured-content references). It answers, from the artifact
+alone, where the text came from, which parts were confidently reconstructed versus fell back, and how
+well the derived reading text maps back to technical raw text — **evidence before correction**. It
+carries no raw text (`details` is `dict[str, int]`), classifies missing signals rather than inventing
+them, and changes no text layer, active PII input, PII decision, the `quality_report` artifact,
+benchmark payload, dependency, or public API. Dictionary/lexicon checks, multi-OCR, and a local LLM
+are deferred additive *evidence, not truth*, and local AI assist (L14's earlier placeholder meaning)
+is deferred — see [ADR-0025](../adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md).
 
 ### PII L11 — entity grouping — delivered
 

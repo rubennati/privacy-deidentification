@@ -2,12 +2,14 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **OCR/Text L13 table/form reconstruction v2**.
-- Current objective: OCR/Text L13 is now delivered on top of the completed L12 multi-column
-  reading-order foundation. Canonical `reading_text` and `structured_content` gain geometry-only
-  table detection (no header keyword required), partially fused (1- or 2-cell) header recovery, and
-  multiline label/value continuation, without changing technical raw text, active PII input, review
-  decisions, pseudonymization, redaction, export, dependencies, or public APIs. PII L12 overlap
+- Current phase: **OCR/Text L14 quality evidence and lineage coverage**.
+- Current objective: OCR/Text L14 is now delivered on top of L13. Every new `text_result` carries
+  additive, optional, versioned `quality_evidence`: deterministic, metrics-only provenance,
+  reconstruction, page-zone, and reading↔raw lineage-coverage evidence (offsets, counts, flags, page
+  zones, coarse bounds, stable reason codes; `details` is `dict[str, int]` so no raw text). It makes
+  OCR/Text quality measurable and regression-safe **without changing** technical raw text, canonical
+  `reading_text`, `structured_content`, active PII input, PII projection/decisions, the
+  `quality_report` artifact, benchmark payloads, dependencies, or public APIs. PII L12 overlap
   resolution remains the next planned engine step.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
@@ -32,7 +34,7 @@
 
 ## Engine maturity snapshot (0–19)
 
-- **OCR/Text: L13 done (built on the required L10.5 step).** Each successful PDF/image/DOCX OCR/Text
+- **OCR/Text: L14 done (built on the required L10.5 step).** Each successful PDF/image/DOCX OCR/Text
   run now stores additive views beside immutable technical raw `text_result.text`: canonical
   `reading_text` (L10.5), `readable_text` (L8), `layout_text_result` (L9 slice), and
   `pii_input_text` (internal L9 slice). The existing
@@ -102,6 +104,18 @@
     label/value fields. Partial structures are flagged rather than invented. It supports future
     context-preserving pseudonymization but does not perform placeholder generation, mapping,
     pseudonymization, redaction, export, or any PII-input switch. Benchmark loaders ignore it.
+  - `quality_evidence` (L14) — optional versioned additive field on `text_result` carrying
+    deterministic, metrics-only quality evidence and lineage coverage. A `ocr_quality.py` builder
+    derives evidence items (source_text, pdf_text_layer, ocr_engine, positioned_rows, page_geometry,
+    conservative page zones, reading_order, the reconstruction/fallback strategies, structured_content,
+    reading_text_map, lineage_coverage, projection_lineage) plus a summary with a
+    `QualityLineageCoverage` block (mapped/unmapped reading chars, mapping coverage ratio,
+    exact/partial/unmapped span counts, source-geometry coverage, structured references). It explains
+    where text came from and how well reading text maps back to technical raw text, using offsets,
+    counts, flags, page zones, coarse bounds, and stable reason codes — `details` is `dict[str, int]`
+    so no raw text is stored. Page zones are evidence only (never delete/reorder text). It changes no
+    text layer, active PII input, or PII decision; benchmark loaders ignore it. See
+    [ADR-0025](../docs/adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md).
 - **PII/Sensitive-Data: L11 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
   entity grouping (L11) is delivered as a derived view (`pii_grouping.py`) over `pii_result`, paired
   with a lineage-bound review-decision overlay: every detected entity defaults to `pseudonymize`
@@ -148,11 +162,11 @@ See [`docs/engine/`](../docs/engine/README.md),
 
 The binding OCR/PII sequence, cadence, and next-PR list live in
 [`docs/engine/ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md)
-([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after OCR L13:
+([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after OCR L14:
 PII/Sensitive-Data L12 overlap resolution**, now that entity grouping and a review-decision overlay
 build on L12/L13 reading and structure order, the L10.5 canonical-reading/raw-text contract, L10
-span geometry, L9 layout-aware blocks, readable text (L8), confidence capture (L6), and
-`quality_report` (L7).
+span geometry, L9 layout-aware blocks, readable text (L8), confidence capture (L6),
+`quality_report` (L7), and L14 quality-evidence/lineage-coverage observability.
 
 The OCR L8/L9 text-layer work is contract-first: the output model and invariants are fixed in
 [`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Technical raw
@@ -169,7 +183,7 @@ detection-input switch. `pii_input_text` may become the
 runs exclusively on technical raw text today, regardless of other views. The reading/readable/
 layout/PII-input layers are additive and never a standalone PII input.
 
-The checkpoint leaves OCR/Text at L13 (built on the L10.5 prerequisite), PII at L11 done/L10
+The checkpoint leaves OCR/Text at L14 (built on the L10.5 prerequisite), PII at L11 done/L10
 partial, and Redaction L0; after reconfirming the next-three cadence, the plan is:
 
 1. Advance PII **L12 — overlap resolution** (deterministic engine-level precedence for
@@ -278,6 +292,26 @@ PII (L11) again; before advancing PII beyond L12, re-run the checkpoint loop for
 lineage/geometry prerequisites. Next: **PII L12 overlap resolution**, formal **Review L8
 `review_result`**, then the **PII validation transparency report**, unless benchmark/private-corpus
 evidence reprioritizes further OCR work.
+
+**Latest checkpoint (OCR L14 quality evidence and lineage coverage):** OCR/Text advances from L13 to
+**L14 done** with additive, metrics-only `quality_evidence` on `text_result`. The older
+document-understanding/local-AI-assist placeholder for OCR L14 is explicitly deferred; L14 now means
+quality evidence and lineage coverage (see
+[ADR-0025](../docs/adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md)), mirroring how
+ADR-0022/ADR-0024 re-scoped L12/L13. A deterministic `ocr_quality.py` builder derives, from
+already-computed inputs, provenance/reconstruction/page-zone/reading-order evidence plus a
+`QualityLineageCoverage` block, and classifies missing signals as `unavailable`/`not_applicable`
+rather than inventing them. Privacy is by construction: `details` is `dict[str, int]`, all locators
+are offsets/counts/flags/zones/reason codes, and the schema validates evidence offsets stay inside the
+actual raw/reading text. A local metrics-only private-corpus pass (never committed; `.local` outputs)
+confirmed coherent, leak-free evidence for every text-layer document with byte-identical reading text;
+scanned/image documents with no text layer are correctly reported `unavailable` pending the OCR
+runtime (a pre-existing limitation, not an L14 regression). The PR introduces no dependency, OCR
+routing, technical raw/page text, active PII input, PII projection/decision, public API,
+review-decision, `quality_report`, benchmark-payload, pseudonymization, redaction, or export change.
+Dictionary/lexicon checks, multi-OCR, and a local LLM remain deferred additive *evidence, not truth*.
+Next: **PII L12 overlap resolution**, formal **Review L8 `review_result`**, then the **PII validation
+transparency report**.
 
 **Latest checkpoint (Runtime Architecture Phase 1 — internal job model):** Implements
 [ADR-0023](../docs/adr/0023-runtime-worker-architecture.md) Phase 1 only. OCR (`POST …/ocr`) and PII

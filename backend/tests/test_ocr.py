@@ -1086,6 +1086,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     payload["content"].pop("layout_blocks", None)
     payload["content"].pop("structured_content_version", None)
     payload["content"].pop("structured_content", None)
+    payload["content"].pop("quality_evidence_version", None)
+    payload["content"].pop("quality_evidence", None)
     for page in payload["content"]["pages"]:
         page.pop("ocr_confidence", None)
         page.pop("ocr_line_confidences", None)
@@ -1094,6 +1096,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     response = client.get(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 200
+    assert response.json()["content"]["quality_evidence_version"] is None
+    assert response.json()["content"]["quality_evidence"] is None
     assert response.json()["content"]["readable_text"] is None
     assert response.json()["content"]["reading_text_version"] is None
     assert response.json()["content"]["reading_text"] is None
@@ -1124,6 +1128,54 @@ def test_readable_text_absent_for_empty_text_result(
     assert content["text"] == ""
     assert content["readable_text"] is None
     assert content["reading_text"] is None
+
+
+def test_pdf_text_layer_emits_quality_evidence(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    evidence = content["quality_evidence"]
+    assert content["quality_evidence_version"] == "1"
+    assert evidence is not None
+    assert evidence["summary"]["overall_status"] == "confident"
+    types = {item["type"]: item for item in evidence["items"]}
+    assert types["source_text"]["status"] == "confident"
+    assert types["reading_order"]["status"] == "confident"
+    lineage = evidence["summary"]["lineage_summary"]
+    assert lineage["reading_text_length"] == len(content["reading_text"])
+    # Metrics-only: the extracted words must never appear in the additive evidence metadata.
+    assert "Digital" not in json.dumps(evidence)
+
+
+def test_legacy_text_artifact_without_quality_evidence_remains_valid(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    created = client.post(f"/api/documents/{upload['id']}/ocr").json()
+    path = _artifact_path(document_data_dir, upload["id"], created["id"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    # Simulate an artifact written before OCR/Text L14 existed.
+    payload["content"].pop("quality_evidence_version", None)
+    payload["content"].pop("quality_evidence", None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = client.get(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 200
+    assert response.json()["content"]["quality_evidence_version"] is None
+    assert response.json()["content"]["quality_evidence"] is None
 
 
 def _pdf_contact_blocks_and_table_bytes() -> bytes:
