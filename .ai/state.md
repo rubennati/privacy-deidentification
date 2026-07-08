@@ -232,7 +232,10 @@ dependency, OCR routing, technical raw/page text, active PII input, public API, 
 `quality_report`, benchmark-payload, pseudonymization, redaction, or export change. The older
 multi-engine-selection placeholder for OCR L12 is explicitly deferred; L12 now means deterministic
 multi-column layout reconstruction (see
-[ADR-0022](../docs/adr/0022-ocr-l12-multi-column-layout-reconstruction.md)). OCR/Text is ahead of
+[ADR-0022](../docs/adr/0022-ocr-l12-multi-column-layout-reconstruction.md)). Its quality bar is
+stability-first: confidence-aware layout improvements must combine conservative evidence, preserve
+fallback/raw views, and classify missing evidence rather than encode private-corpus-specific guesses.
+OCR/Text is ahead of
 PII L11/Redaction L0 again; before advancing PII beyond L12, re-run the checkpoint loop for missing
 OCR lineage/geometry prerequisites. Next: **PII L12 overlap resolution**, formal **Review L8
 `review_result`**, then the **PII validation transparency report**, unless benchmark/private-corpus

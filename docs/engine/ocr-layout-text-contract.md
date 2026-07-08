@@ -342,7 +342,11 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   table headers reconstruct only when following rows provide safe column positions, and adjacent
   label/value pairs join only when geometry is close enough to be unambiguous. New non-sensitive
   flags include `multi_column_reconstruction`, `dense_table_reconstruction`, and
-  `label_value_pairing`. Low-confidence layouts keep the existing row order.
+  `label_value_pairing`. Low-confidence layouts keep the existing row order. L12 deliberately
+  favors stable, measurable quality gains over aggressive correction: future dictionary, domain,
+  OCR-comparison, second-engine, confidence, document-type, review-feedback, and benchmark signals
+  should be added as optional confidence evidence, not as destructive rewrites or downstream PII
+  dependencies.
 - **Not in L12:** `text_lineage_map`, word-level/redaction-ready geometry, a PII-input switch, a
   structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
   customer) for `pii_input_text` blocks, active PII use of `pii_input_text`, pseudonymization,

@@ -285,11 +285,19 @@ redaction.
   ranges and prose-like density before column ordering, skip table-owned and party-heading-owned
   regions, split generic fused table headers only with real row positions, and keep low-confidence
   layouts in existing row order. Repeated margin cleanup remains document-level and additive.
+- **Quality philosophy:** L12 is stability-first. Improvements must combine multiple weak signals,
+  remain confidence-aware, and fall back rather than silently discard source information. A private
+  corpus improvement is not acceptable when it risks unrelated document types; such gaps should be
+  classified with the missing evidence documented for a later quality signal.
 - **Acceptance:** synthetic tests cover two-column AGB/prose ordering, ordinary two-column tables
   that must not become prose columns, low-confidence fallback, fused table headers, adjacent
   label/value pairing, existing party columns, line-item tables, filename lists, and margin cleanup.
   Technical raw text, page text, active PII input, PII projection, review decisions,
   pseudonymization, redaction, export, dependencies, and public APIs remain unchanged.
+- **Future evidence:** dictionary/lexicon checks, domain vocabulary, PDF-text-layer versus OCR
+  comparison, second-engine agreement, OCR and layout confidence, document-type hints, review
+  feedback, and benchmark gates are deferred additive signals. They should increase or decrease
+  confidence, not make downstream PII/review/pseudonymization depend on unstable OCR guesses.
 - **Boundary to L13:** L12 improves geometric reading order; L13 adds document/zone semantics rather
   than merely ordering text.
 

@@ -23,11 +23,17 @@ addressed with bounded heuristics over geometry the system already extracts.
 - Re-scope OCR/Text L12 to **multi-column layout reconstruction**.
 - Keep the implementation inside the existing `reading_text` layer: `reading_text_version` remains
   `"1"` and no new artifact/schema is introduced.
+- Optimize for stable, measurable quality improvements rather than theoretical layout perfection.
+  L12 accepts only confidence-aware improvements from multiple conservative signals; when evidence
+  is weak, it preserves the existing order and records uncertainty instead of guessing.
 - Use deterministic geometry-based heuristics only:
   - x-position clustering plus overlapping vertical ranges for confident multi-column prose;
   - explicit skips for table-owned, party-heading-owned, low-confidence, and data-dense regions;
   - fused table-header rendering only when following rows provide safe column positions;
   - label/value pairing only when adjacent geometry is unambiguous.
+- Do not add private-corpus-specific rules. If a corpus gap lacks enough generic evidence, classify
+  the gap, document the missing signal, and add a must-not-trigger test only when the risk is already
+  known.
 - Preserve all boundaries from ADR-0019: technical raw `text_result.text` and `pages[].text` remain
   byte-stable, PII still runs only on technical raw text, and no pseudonymization, redaction,
   reconstruction/export, or review-decision behavior is added.
@@ -43,5 +49,10 @@ addressed with bounded heuristics over geometry the system already extracts.
 - New non-sensitive `reading_text_flags` may include `multi_column_reconstruction`,
   `dense_table_reconstruction`, and `label_value_pairing`.
 - Low-confidence layouts deliberately keep existing row order instead of inventing structure.
+- Future OCR/Text quality signals should be additive evidence sources, not hard dependencies for
+  PII/review/pseudonymization. Candidate signals include dictionary or domain-vocabulary checks,
+  PDF-text-layer versus OCR comparison, optional second-OCR-engine agreement, OCR confidence, layout
+  confidence, document-type hints, review feedback, and benchmark regression gates. They can be
+  introduced later as additional confidence gates without rewriting the L12 reading-text pipeline.
 - The migration note avoids mixing the older L12 multi-engine placeholder with the active 0–19 OCR
   level definition.
