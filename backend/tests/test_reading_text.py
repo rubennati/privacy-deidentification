@@ -343,6 +343,38 @@ def test_low_confidence_column_layout_falls_back_to_raw_order() -> None:
     assert "multi_column_reconstruction" not in result.flags
 
 
+def test_label_value_form_columns_are_not_split_into_labels_then_values() -> None:
+    rows = [
+        _row(0.10, (0.07, "Geburtsdatum:"), (0.37, "22.11.1985")),
+        _row(0.13, (0.07, "Wohnadresse:"), (0.37, "Beispielstrasse 12/4, 1020 Wien")),
+        _row(0.16, (0.07, "Mobilnummer:"), (0.37, "+43 676 444 55 66")),
+        _row(0.19, (0.07, "E-Mail:"), (0.37, "person@example.test")),
+        _row(0.22, (0.07, "Steuernummer (privat):"), (0.37, "12 345/67890")),
+        _row(0.25, (0.07, "IP-Adresse (letzter Login):"), (0.37, "92.103.211.17")),
+        _row(0.28, (0.07, "Benutzerkennung Portal:"), (0.37, "person.portal")),
+        _row(
+            0.34,
+            (
+                0.10,
+                "Muster GmbH | FN 123456a | UID ATU12345678 | IBAN AT00 0000 0000 0000 0000",
+            ),
+        ),
+    ]
+    raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
+
+    result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
+
+    assert result is not None
+    assert result.text == (
+        "\n".join(" ".join(cell.text for cell in row.cells) for row in rows[:7])
+        + "\n\n"
+        + rows[7].cells[0].text
+    )
+    assert "Geburtsdatum: 22.11.1985" in result.text
+    assert "Benutzerkennung Portal: person.portal" in result.text
+    assert "multi_column_reconstruction" not in result.flags
+
+
 def test_fused_table_header_uses_following_row_positions_without_fake_columns() -> None:
     rows = [
         _row(0.10, (0.07, "Pos. Beschreibung Betrag EUR")),
