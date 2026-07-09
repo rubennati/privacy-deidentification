@@ -51,11 +51,12 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   deterministic multi-column layout reconstruction inside canonical `reading_text`; the older
   multi-engine-selection placeholder is deferred and technical raw text/active PII input remain
   unchanged.
-- [ADR-0023](../docs/adr/0023-runtime-worker-architecture.md) — *Proposed, planning-only.* Staged
-  move from in-process synchronous OCR/PII to an isolated worker boundary so an OCR/PII OOM/crash can
-  no longer take the API down: internal job model first, then SQLite job state + a slim scheduler
-  API, then an isolated `ocr-worker`, with a DB-backed polling queue (not Redis/Celery) and
-  Compose profiles. Artifacts stay file-based; no Kubernetes/microservices/broker near-term.
+- [ADR-0023](../docs/adr/0023-runtime-worker-architecture.md) — *Proposed for the overall worker
+  architecture; Phase 1 and Phase 2 implemented.* Staged move from in-process synchronous OCR/PII to
+  an isolated worker boundary so an OCR/PII OOM/crash can no longer take the API down: internal job
+  model first, then SQLite-backed metadata-only job state + a safe status API, then an isolated
+  `ocr-worker`, with a DB-backed polling queue (not Redis/Celery) and Compose profiles. Artifacts
+  stay file-based; no Kubernetes/microservices/broker near-term.
 - [ADR-0024](../docs/adr/0024-ocr-l13-table-form-reconstruction-v2.md) — OCR/Text L13 is table/form
   reconstruction v2 (geometry-only table detection, partially fused header recovery, multiline
   label/value continuation) inside `reading_text`/`structured_content`; the older

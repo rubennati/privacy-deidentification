@@ -222,6 +222,7 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     response = client.post(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 201
+    job_id = response.headers["x-job-id"]
     artifact = response.json()
     content = artifact["content"]
     assert artifact["artifact_type"] == "text_result"
@@ -251,6 +252,18 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     assert adapter.calls == []
     assert renderer.calls == []
     assert _artifact_path(document_data_dir, upload["id"], artifact["id"]).is_file()
+    job_response = client.get(f"/api/jobs/{job_id}")
+    assert job_response.status_code == 200
+    job = job_response.json()
+    assert job["kind"] == "ocr_text"
+    assert job["status"] == "succeeded"
+    assert job["execution_mode"] == "synchronous_inline"
+    assert job["document_id"] == upload["id"]
+    assert job["result_artifact_id"] == artifact["id"]
+    assert job["result_artifact_type"] == "text_result"
+    document_jobs = client.get(f"/api/documents/{upload['id']}/jobs")
+    assert document_jobs.status_code == 200
+    assert [item["job_id"] for item in document_jobs.json()] == [job_id]
     quality_report = get_latest_quality_report_artifact(settings, str(upload["id"]))
     assert quality_report is not None
     assert quality_report.artifact_type == "quality_report"

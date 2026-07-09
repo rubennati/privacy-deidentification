@@ -6,6 +6,8 @@ privacy invariant that raw exception text never reaches a job record. All data i
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.errors import ApiError
@@ -19,6 +21,7 @@ from app.services.job_models import (
     sanitize_job_error,
 )
 from app.services.job_runner import SyncJobRunner, get_job_runner
+from app.services.job_store import JobStore
 
 
 def _context(kind: JobKind = JobKind.OCR_TEXT) -> JobContext:
@@ -116,6 +119,24 @@ def test_runner_success_returns_artifact_and_record() -> None:
     assert result.record.attempt_count == 1
 
 
+def test_runner_persists_succeeded_job_when_store_is_attached(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    runner = SyncJobRunner(store)
+
+    class _Artifact:
+        id = "a" * 32
+        artifact_type = "text_result"
+
+    result = runner.run(_context(), lambda: _Artifact())
+
+    loaded = store.get_job(result.record.job_id)
+    assert loaded is not None
+    assert loaded.status is JobStatus.SUCCEEDED
+    assert loaded.artifact_id == "a" * 32
+    assert loaded.artifact_type == "text_result"
+    assert loaded.attempt_count == 1
+
+
 def test_runner_captures_api_error_and_unwrap_reraises() -> None:
     runner = SyncJobRunner()
     raised = ApiError("Document has no valid text result.", 409)
@@ -130,6 +151,27 @@ def test_runner_captures_api_error_and_unwrap_reraises() -> None:
     assert result.artifact is None
     assert result.record.error_code == "api_error_409"
     assert result.record.error_message == "Document has no valid text result."
+    with pytest.raises(ApiError) as excinfo:
+        result.unwrap()
+    assert excinfo.value is raised
+
+
+def test_runner_persists_failed_job_and_reraises_original_error(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    runner = SyncJobRunner(store)
+    raised = ApiError("Document has no valid text result.", 409)
+
+    def _operation() -> object:
+        raise raised
+
+    result = runner.run(_context(JobKind.PII_DETECTION), _operation)
+
+    loaded = store.get_job(result.record.job_id)
+    assert loaded is not None
+    assert loaded.status is JobStatus.FAILED
+    assert loaded.error_code == "api_error_409"
+    assert loaded.error_message == "Document has no valid text result."
+    assert loaded.artifact_id is None
     with pytest.raises(ApiError) as excinfo:
         result.unwrap()
     assert excinfo.value is raised

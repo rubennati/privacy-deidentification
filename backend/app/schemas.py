@@ -1250,6 +1250,36 @@ class PiiArtifact(BaseModel):
         return self
 
 
+JobKindValue = Literal["ocr_text", "pii_detection"]
+JobStatusValue = Literal["pending", "running", "succeeded", "failed", "canceled"]
+JobExecutionModeValue = Literal["synchronous_inline", "future_worker"]
+
+
+class JobStatusResponse(BaseModel):
+    """Safe public status view for one OCR/PII job.
+
+    The SQLite record stores metadata only: ids, lifecycle timestamps, sanitized error metadata, and
+    a reference to the produced immutable artifact. It never returns raw document text, PII values,
+    artifact payloads, or stack traces.
+    """
+
+    job_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    kind: JobKindValue
+    status: JobStatusValue
+    execution_mode: JobExecutionModeValue
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    updated_at: str
+    attempt_count: int = Field(ge=0)
+    error_code: str | None = Field(default=None, max_length=120)
+    error_message: str | None = Field(default=None, max_length=1000)
+    result_artifact_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    result_artifact_type: str | None = Field(default=None, max_length=80)
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
 class PiiEntityGroupProjectionSummary(BaseModel):
     """Aggregate reading-text projection coverage across one entity group's occurrences."""
 

@@ -178,6 +178,7 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
     response = client.post(f"/api/documents/{document_id}/pii")
 
     assert response.status_code == 201
+    job_id = response.headers["x-job-id"]
     artifact = response.json()
     assert artifact["artifact_type"] == "pii_result"
     assert artifact["station"] == "pii"
@@ -211,6 +212,15 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
     assert pii_fake.calls == ["Max Mustermann"]
     artifact_path = document_data_dir / document_id / "artifacts" / f"{artifact['id']}.json"
     assert artifact_path.is_file()
+    job_response = client.get(f"/api/jobs/{job_id}")
+    assert job_response.status_code == 200
+    job = job_response.json()
+    assert job["kind"] == "pii_detection"
+    assert job["status"] == "succeeded"
+    assert job["execution_mode"] == "synchronous_inline"
+    assert job["document_id"] == document_id
+    assert job["result_artifact_id"] == artifact["id"]
+    assert job["result_artifact_type"] == "pii_result"
 
 
 def test_post_projects_pii_into_reading_text_without_changing_detection_input(

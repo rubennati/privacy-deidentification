@@ -1,12 +1,13 @@
-"""Internal job model for OCR/PII execution (ADR-0023 Phase 1).
+"""Internal job model for OCR/PII execution (ADR-0023 Phase 1/2).
 
 This is the smallest useful seam between "schedule work" and "do work". It lets the current
 synchronous, in-process OCR/PII stations run *through* a job abstraction so a later phase can move
 the same work behind a durable job store (SQLite) and isolated worker containers **without touching
 the station code or the public API again**.
 
-Phase 1 is deliberately in-memory and per-request: there is no persistence, no queue, no worker,
-and no new API surface. Records exist only for one request's lifetime and are never written to disk.
+Phase 1 introduced the in-memory lifecycle. Phase 2 can persist the same safe record to SQLite via
+``app.services.job_store`` while execution still stays synchronous/in-process. There is still no
+queue, no worker, and no background task.
 
 Privacy invariant: a ``JobRecord`` is the loggable/serializable part of a job and must never carry
 raw document text, OCR text, or PII. Timestamps, ids, status, a coarse error *code*, and a
@@ -45,8 +46,8 @@ class JobStatus(StrEnum):
 
 
 class JobExecutionMode(StrEnum):
-    """How a job is executed. Phase 1 only ever uses ``synchronous_inline``; ``future_worker`` names
-    the target the abstraction is preparing for (ADR-0023 Phase 3+)."""
+    """How a job is executed. Current OCR/PII routes use ``synchronous_inline``; ``future_worker``
+    names the target the abstraction is preparing for (ADR-0023 Phase 3+)."""
 
     SYNCHRONOUS_INLINE = "synchronous_inline"
     FUTURE_WORKER = "future_worker"
@@ -109,8 +110,10 @@ class JobRecord:
     metadata: Mapping[str, str] = field(default_factory=dict)
     started_at: str | None = None
     finished_at: str | None = None
+    updated_at: str | None = None
     attempt_count: int = 0
     artifact_id: str | None = None
+    artifact_type: str | None = None
     error_code: str | None = None
     error_message: str | None = None
 
@@ -124,6 +127,7 @@ class JobRecord:
             execution_mode=context.execution_mode,
             status=JobStatus.PENDING,
             created_at=context.created_at,
+            updated_at=context.created_at,
             metadata=dict(context.metadata),
         )
 
@@ -133,15 +137,20 @@ class JobRecord:
             raise ValueError(f"Cannot start a job in status {self.status}.")
         self.status = JobStatus.RUNNING
         self.started_at = _now_utc_iso()
+        self.updated_at = self.started_at
         self.attempt_count += 1
 
-    def mark_succeeded(self, *, artifact_id: str | None) -> None:
+    def mark_succeeded(
+        self, *, artifact_id: str | None, artifact_type: str | None = None
+    ) -> None:
         """Transition ``running`` → ``succeeded`` and record the produced artifact id."""
         if self.status is not JobStatus.RUNNING:
             raise ValueError(f"Cannot succeed a job in status {self.status}.")
         self.status = JobStatus.SUCCEEDED
         self.finished_at = _now_utc_iso()
+        self.updated_at = self.finished_at
         self.artifact_id = artifact_id
+        self.artifact_type = artifact_type
 
     def mark_failed(self, *, error_code: str, error_message: str) -> None:
         """Transition ``running`` → ``failed`` with a safe, non-sensitive error code and message."""
@@ -149,6 +158,7 @@ class JobRecord:
             raise ValueError(f"Cannot fail a job in status {self.status}.")
         self.status = JobStatus.FAILED
         self.finished_at = _now_utc_iso()
+        self.updated_at = self.finished_at
         self.error_code = error_code
         self.error_message = error_message
 

@@ -2,15 +2,15 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **OCR/Text L14 quality evidence and lineage coverage**.
-- Current objective: OCR/Text L14 is now delivered on top of L13. Every new `text_result` carries
-  additive, optional, versioned `quality_evidence`: deterministic, metrics-only provenance,
-  reconstruction, page-zone, and reading↔raw lineage-coverage evidence (offsets, counts, flags, page
-  zones, coarse bounds, stable reason codes; `details` is `dict[str, int]` so no raw text). It makes
-  OCR/Text quality measurable and regression-safe **without changing** technical raw text, canonical
-  `reading_text`, `structured_content`, active PII input, PII projection/decisions, the
-  `quality_report` artifact, benchmark payloads, dependencies, or public APIs. PII L12 overlap
-  resolution remains the next planned engine step.
+- Current phase: **Runtime Architecture Phase 2 — SQLite-backed job state and status API**.
+- Current objective: ADR-0023 Phase 2 is now delivered on top of the Phase 1 in-process job seam.
+  OCR/PII still execute synchronously in the backend request thread, but each run writes durable,
+  metadata-only SQLite job state and can be queried through a safe status API. Artifacts remain
+  file-based; the DB stores ids/status/timestamps/sanitized errors/result artifact references only.
+  There is still no worker container, queue, Redis/Celery, background task, OCR/PII engine change,
+  pseudonymization, redaction, export, or frontend workflow change. PII L12 overlap resolution
+  remains the next planned engine step; Runtime Phase 3 (`ocr-worker` isolation) is the next runtime
+  step.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -18,7 +18,8 @@
 
 - Docker Compose runs a React/Vite SPA behind nginx and a private FastAPI backend.
 - The product supports upload, document listing/deletion, Audit, OCR/Text, detection-only PII, and
-  lineage-safe manual inspection. It does not redact, anonymize, or pseudonymize documents.
+  lineage-safe manual inspection. OCR/PII job state is durably tracked in SQLite and exposed through
+  safe status endpoints. It does not redact, anonymize, or pseudonymize documents.
 - Originals, metadata, and immutable derived artifacts use separate validated storage boundaries.
 - OCR/Text routes each PDF page between a usable text layer and the adapter-bound PaddleOCR runtime;
   OCR pages store additive engine-reported page/line confidence metrics on `text_result`, and every
@@ -313,20 +314,22 @@ Dictionary/lexicon checks, multi-OCR, and a local LLM remain deferred additive *
 Next: **PII L12 overlap resolution**, formal **Review L8 `review_result`**, then the **PII validation
 transparency report**.
 
-**Latest checkpoint (Runtime Architecture Phase 1 — internal job model):** Implements
-[ADR-0023](../docs/adr/0023-runtime-worker-architecture.md) Phase 1 only. OCR (`POST …/ocr`) and PII
-(`POST …/pii`) now execute *through* an in-process `SyncJobRunner`
-(`backend/app/services/job_models.py`, `job_runner.py`): each request builds a `JobContext`, runs the
-existing station call under a `JobRecord` lifecycle, and returns the same artifact via
-`JobResult.unwrap()`. This is a pure refactor — **no engine level changes**. Execution stays
-synchronous and in-process; there is **no DB, no queue, no worker container, no background task, and
-no new API surface**. Request/response shapes, artifact creation, error status/detail,
-canonical-vs-technical-raw text separation, PII input (technical raw text), review decisions, and
-benchmark payloads are all unchanged; heavy OCR still fate-shares with the backend until Phase 3.
-`JobRecord`s are per-request/in-memory and carry only non-sensitive lifecycle metadata plus a
-sanitized error code/message — raw document text and PII never enter job metadata or logs, and a
-failed job never reports `succeeded`. Next runtime step: **Phase 2 (SQLite job store + status API)**,
-kept aligned with — not ahead of — the OCR/PII engine sequence below.
+**Latest checkpoint (Runtime Architecture Phase 2 — SQLite job state/status API):** Implements
+[ADR-0023](../docs/adr/0023-runtime-worker-architecture.md) Phase 2 on top of Phase 1. OCR
+(`POST …/ocr`) and PII (`POST …/pii`) still execute *through* the in-process `SyncJobRunner`, but the
+FastAPI runner provider now persists each job lifecycle to SQLite
+(`backend/app/services/job_store.py`, default `DOCUMENT_DATA_DIR/jobs.sqlite3`) before/during/after
+the synchronous station call. New safe status endpoints (`GET /api/jobs/{job_id}`,
+`GET /api/documents/{document_id}/jobs`) return metadata only, and successful OCR/PII responses add
+an `X-Job-Id` header without changing their existing artifact response bodies. This is a runtime
+architecture step — **no engine level changes**. There is still **no worker container, no queue, no
+Redis/Celery/RQ, no background task, no OCR/PII algorithm or model change, no pseudonymization, no
+redaction, no export, and no frontend workflow change**; heavy OCR still fate-shares with the backend
+until Phase 3. Job rows carry only ids, statuses, execution mode, timestamps, attempt counts,
+sanitized error code/message, produced artifact id/type, and tiny string metadata — never raw document
+text, OCR text, canonical reading text, PII values, artifact JSON, stack traces, or raw exception
+messages — and are deleted with their document boundary. Next runtime step: **Phase 3 (`ocr-worker`
+isolation)**, kept aligned with — not ahead of — the OCR/PII engine sequence below.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

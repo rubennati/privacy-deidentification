@@ -55,6 +55,32 @@ def test_pii_feedback_archive_dir_defaults_to_a_third_separate_root() -> None:
     assert settings.pii_feedback_archive_dir == Path("/data/pii-feedback-archive")
 
 
+def test_job_store_db_path_defaults_under_document_data() -> None:
+    settings = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+    )
+
+    assert settings.job_store_db_path is None
+    assert settings.resolved_job_store_db_path == Path("/tmp/document-data/jobs.sqlite3")
+
+
+def test_job_store_db_path_can_be_overridden_or_left_empty() -> None:
+    overridden = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+        JOB_STORE_DB_PATH="/tmp/jobs/custom.sqlite3",
+    )
+    defaulted = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+        JOB_STORE_DB_PATH="",
+    )
+
+    assert overridden.resolved_job_store_db_path == Path("/tmp/jobs/custom.sqlite3")
+    assert defaulted.resolved_job_store_db_path == Path("/tmp/document-data/jobs.sqlite3")
+
+
 @pytest.mark.parametrize(
     ("upload_dir", "document_data_dir", "archive_dir"),
     [

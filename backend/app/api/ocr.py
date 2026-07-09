@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 
 from app.config import Settings, get_settings
 from app.schemas import ErrorResponse, TextArtifact
 from app.services.job_models import JobContext, JobKind
-from app.services.job_runner import SyncJobRunner, get_job_runner
+from app.services.job_runner import SyncJobRunner, provide_job_runner
 from app.services.ocr_adapters import OcrAdapter, get_ocr_adapter
 from app.services.ocr_service import create_text_artifact, get_latest_text
 from app.services.pdf_renderer import PdfRenderer, get_pdf_renderer
 
 router = APIRouter(prefix="/documents", tags=["ocr"])
+_JOB_ID_HEADER = "X-Job-Id"
 
 
 def provide_ocr_adapter(settings: Settings = Depends(get_settings)) -> OcrAdapter:
@@ -38,10 +39,11 @@ def provide_ocr_adapter(settings: Settings = Depends(get_settings)) -> OcrAdapte
 )
 def ocr_document(
     document_id: str,
+    response: Response,
     settings: Settings = Depends(get_settings),
     ocr_adapter: OcrAdapter = Depends(provide_ocr_adapter),
     pdf_renderer: PdfRenderer = Depends(get_pdf_renderer),
-    runner: SyncJobRunner = Depends(get_job_runner),
+    runner: SyncJobRunner = Depends(provide_job_runner),
 ) -> TextArtifact:
     """Extract text according to the latest audit and persist an immutable result.
 
@@ -57,6 +59,7 @@ def ocr_document(
         context,
         lambda: create_text_artifact(settings, document_id, ocr_adapter, pdf_renderer),
     )
+    response.headers[_JOB_ID_HEADER] = result.record.job_id
     return result.unwrap()
 
 

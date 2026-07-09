@@ -2,6 +2,9 @@
 .env
 .env.local
 *.local
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Runtime data (bind-mounted into containers; see docker-compose.yml). Keep the top-level
 # folder itself (.gitkeep) but never commit its contents.
