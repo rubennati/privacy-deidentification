@@ -109,7 +109,8 @@ job store (`DOCUMENT_DATA_DIR/jobs.sqlite3` by default, overrideable with `JOB_S
 safe status API. It stores only ids, lifecycle timestamps/status, sanitized errors, and produced
 artifact references. Artifact payloads, raw OCR/reading/layout text, structured-content contents,
 PII values, and uploaded bytes remain file-based and never enter SQLite. There is still no ORM,
-Alembic, queue, or worker.
+Alembic, or external queue/broker; Phase 3's OCR worker uses the same SQLite file as a local
+DB-backed polling queue.
 
 ### When does a database become worthwhile?
 

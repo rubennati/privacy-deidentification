@@ -52,7 +52,7 @@ central engine should do on a **0–19 maturity scale**, the artifacts and metri
 settings, the tool strategy, the target architecture (including the database and optional-local-AI
 questions), and the roadmap. See [ADR-0011](docs/adr/0011-engine-capability-model.md) and
 [ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md). Current standing (summary): OCR/Text
-**L10 plus the required L10.5 canonical-reading-text step**, PII **L9** (L10 dev-only feedback capture partial), Review **L2** (dev-only through L5),
+**L14**, PII **L11** (L10 partial), Review **L2 production / L6 done / L7-L9 partial**,
 Benchmark **L8**, Redaction **L0**.
 
 ## Architecture
@@ -70,7 +70,7 @@ Browser ──http://localhost:8080──▶ frontend (nginx)
 * **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. The frontend is the only public entry point and proxies API calls to the backend.
 * **backend** — Python 3.12 + FastAPI. Validates uploads, stores originals, and manages document metadata and immutable result artifacts in separate storage roots.
 * **networking** — the backend is not published to the host. It is reachable only inside the Docker Compose network through the frontend proxy.
-* **runtime data** — `/data/uploads` is bind-mounted from `./volumes/uploads` for originals only; `/data/document-data` is bind-mounted from `./volumes/document-data` for metadata and artifacts. Neither host directory is committed (see `.gitignore`).
+* **runtime data** — `/data/uploads` is bind-mounted from `./volumes/uploads` for originals only; `/data/document-data` is bind-mounted from `./volumes/document-data` for metadata, artifacts, review sidecars, and the default SQLite job DB (`jobs.sqlite3`). Neither host directory is committed (see `.gitignore`).
 
 See [`docs/adr/0001-stack-and-architecture.md`](docs/adr/0001-stack-and-architecture.md) for the stack decision and rationale.
 
@@ -192,12 +192,15 @@ volumes/
 ├── uploads/
 │   └── <document_id>.<validated_extension>
 ├── document-data/
+│   ├── jobs.sqlite3
 │   └── <document_id>/
 │       ├── document.json
 │       ├── artifacts/
 │       │   └── <artifact_id>.json
-│       └── feedback/
-│           └── pii_feedback.jsonl
+│       ├── feedback/
+│       │   └── pii_feedback.jsonl
+│       └── review/
+│           └── pii_review_decisions.jsonl
 └── pii-feedback-archive/
     └── pii_feedback.jsonl
 ```
@@ -219,6 +222,15 @@ Both feedback copies are a local, dev-gated analysis side-channel, not an immuta
 or a binding review result. Their structured fingerprint excludes raw document/entity text, but
 optional comments can still contain sensitive input; treat both as protected data and never commit
 them.
+
+ADR-0023 also keeps durable job metadata in SQLite. By default `JOB_STORE_DB_PATH` is empty and the
+backend resolves it to `${DOCUMENT_DATA_DIR}/jobs.sqlite3`; in Docker/Compose that is
+`/data/document-data/jobs.sqlite3`, bind-mounted from `./volumes/document-data/jobs.sqlite3`. The API
+and isolated `ocr-worker` use the same environment and volume mounts, so API-created pending jobs,
+worker status updates, and worker-produced artifact references are visible through the same status
+API. If `JOB_STORE_DB_PATH` is overridden, it must still point at a path mounted into both services.
+For backup/restore, treat `./volumes/uploads` and `./volumes/document-data` as one unit and stop the
+stack before copying SQLite files, including any `jobs.sqlite3-wal` and `jobs.sqlite3-shm` sidecars.
 
 #### Existing local development data
 

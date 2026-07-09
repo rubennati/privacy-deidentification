@@ -357,6 +357,20 @@ default `sync` mode, so worker-mode polling in the UI is a follow-up. Next runti
 (PII worker + concurrency/timeout/retry controls, stale-lease reclaim)**; next *engine* step remains
 **PII L12 overlap resolution**.
 
+**Latest hardening checkpoint (Runtime Architecture Phase 3.5 — worker persistence audit):** A
+pre-PR audit confirmed the Phase 3 API and `ocr-worker` share the same Compose environment anchors
+and bind mounts for uploads, document data, OCR models, and the default SQLite job DB
+(`DOCUMENT_DATA_DIR/jobs.sqlite3`; overrideable with a shared `JOB_STORE_DB_PATH`). The job store
+uses idempotent schema setup, parent-directory creation, WAL, `busy_timeout`, short transactions, and
+an atomic `UPDATE … RETURNING` claim; OCR execution remains outside DB transactions and job status
+stores metadata only. Hardening added tests for nested DB parent creation, persistence across store
+instances, and WAL/schema-version setup; documentation now makes the default DB path, backup boundary,
+same-image worker service, and Phase 3 stale-running limitation explicit. No engine level changed and
+no OCR/PII algorithm, artifact contract, PII input, frontend workflow, Redis/Celery/RQ, redaction,
+pseudonymization, or export behavior was introduced. Remaining runtime work stays Phase 4:
+stale-running lease/heartbeat reclaim, bounded concurrency beyond 1, retry/timeout/cancel controls,
+and the PII worker split.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next

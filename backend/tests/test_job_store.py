@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
@@ -45,6 +46,41 @@ def test_schema_initializes_idempotently(tmp_path: Path) -> None:
     store.initialize()
 
     assert (tmp_path / "jobs.sqlite3").is_file()
+
+
+def test_store_creates_parent_directory_for_nested_db_path(tmp_path: Path) -> None:
+    db_path = tmp_path / "nested" / "state" / "jobs.sqlite3"
+    store = JobStore(db_path)
+
+    store.create_job(JobRecord.from_context(_context()))
+
+    assert db_path.is_file()
+
+
+def test_rows_persist_across_store_instances(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.sqlite3"
+    first_store = JobStore(db_path)
+    record = JobRecord.from_context(_context(metadata={"source": "synthetic"}))
+
+    first_store.create_job(record)
+
+    loaded = JobStore(db_path).get_job(record.job_id)
+    assert loaded is not None
+    assert loaded.job_id == record.job_id
+    assert loaded.document_id == record.document_id
+    assert loaded.metadata == {"source": "synthetic"}
+
+
+def test_initialize_sets_wal_mode_and_schema_version(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.sqlite3"
+
+    JobStore(db_path).initialize()
+
+    with sqlite3.connect(db_path) as connection:
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+    assert str(journal_mode).lower() == "wal"
+    assert schema_version == 1
 
 
 def test_create_and_get_job_roundtrips_enums_and_timestamps(tmp_path: Path) -> None:

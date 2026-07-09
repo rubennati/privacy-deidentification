@@ -27,7 +27,7 @@ FULL  := INSTALL_OCR=true  INSTALL_PII=true  BACKEND_MEMORY_LIMIT=2g
 OCR_WORKER  := INSTALL_OCR=true INSTALL_PII=false OCR_EXECUTION_MODE=worker BACKEND_MEMORY_LIMIT=512M OCR_WORKER_MEMORY_LIMIT=2g
 FULL_WORKER := INSTALL_OCR=true INSTALL_PII=true  OCR_EXECUTION_MODE=worker BACKEND_MEMORY_LIMIT=1g   OCR_WORKER_MEMORY_LIMIT=2g
 
-.PHONY: help up up-pii up-ocr up-full up-ocr-worker up-full-worker down build build-pii build-ocr \
+.PHONY: help runtime-dirs up up-pii up-ocr up-full up-ocr-worker up-full-worker down build build-pii build-ocr \
 	build-full rebuild ocr-models ocr-smoke pii-smoke logs ps lint typecheck test lock clean \
 	benchmark-private benchmark-private-json benchmark-test \
 	docker-df docker-prune docker-prune-project dev-rebuild
@@ -36,22 +36,25 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-up: ## Build and start the slim stack — no OCR/PII runtime (http://localhost:8080)
+runtime-dirs: ## Create local bind-mount roots used by Compose
+	mkdir -p volumes/uploads volumes/document-data volumes/pii-feedback-archive volumes/ocr-models
+
+up: runtime-dirs ## Build and start the slim stack — no OCR/PII runtime (http://localhost:8080)
 	$(SLIM) $(COMPOSE) up -d --build
 
-up-pii: ## Start with the PII runtime (Presidio/spaCy)
+up-pii: runtime-dirs ## Start with the PII runtime (Presidio/spaCy)
 	$(PII) $(COMPOSE) up -d --build
 
-up-ocr: ## Start with the OCR runtime, 2g memory (needs `make ocr-models` first)
+up-ocr: runtime-dirs ## Start with the OCR runtime, 2g memory (needs `make ocr-models` first)
 	$(OCR) $(COMPOSE) up -d --build
 
-up-full: ## Start with OCR + PII runtimes, 2g memory (needs `make ocr-models` first)
+up-full: runtime-dirs ## Start with OCR + PII runtimes, 2g memory (needs `make ocr-models` first)
 	$(FULL) $(COMPOSE) up -d --build
 
-up-ocr-worker: ## Start API + isolated OCR worker (OCR runs out-of-process; needs `make ocr-models`)
+up-ocr-worker: runtime-dirs ## Start API + isolated OCR worker (OCR runs out-of-process; needs `make ocr-models`)
 	$(OCR_WORKER) $(COMPOSE) --profile worker up -d --build
 
-up-full-worker: ## Start API + PII + isolated OCR worker (needs `make ocr-models` first)
+up-full-worker: runtime-dirs ## Start API + PII + isolated OCR worker (needs `make ocr-models` first)
 	$(FULL_WORKER) $(COMPOSE) --profile worker up -d --build
 
 down: ## Stop the stack (including the OCR worker if running)

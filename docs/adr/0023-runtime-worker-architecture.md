@@ -152,20 +152,23 @@ Components (each an independently rebuildable/restartable Compose service):
 | broker (Redis) | only if/when real queue semantics needed | small | Phase 4+ *if* justified |
 | reverse proxy | already nginx; no new proxy needed near-term | — | — |
 
-The **worker image is separated from the API image** so the API never rebuilds OCR/PII layers.
-Simplest first cut: the same `backend/Dockerfile` built with `INSTALL_OCR`/`INSTALL_PII` args but run
-as a *distinct service* with a different entrypoint (`worker` loop vs `uvicorn`). This buys process
-isolation immediately with almost no new build machinery; a fully separate `worker/Dockerfile` is
-only worth it once dependency trees actually diverge.
+Phase 3 separates the **worker service/process boundary** first, while deliberately reusing the same
+backend image for the API and worker. The same `backend/Dockerfile` is built with
+`INSTALL_OCR`/`INSTALL_PII` args and run as a *distinct service* with a different entrypoint
+(`worker` loop vs `uvicorn`). This buys process isolation immediately with almost no new build
+machinery; a fully separate API image or `worker/Dockerfile` is only worth it once dependency trees
+actually diverge.
 
 ### Docker Compose profiles
 
-Use Compose `profiles:` so the same file expresses every runtime shape and heavy layers are opt-in:
+Use Compose `profiles:` so the same file can express runtime shapes and keep heavy layers opt-in.
+The Phase 3 implementation uses Make targets for the slim/pii/ocr/full build/runtime variants and a
+single Compose `worker` profile for the isolated OCR worker:
 
 - `slim` — `frontend` + `api` only (no OCR/PII). Default `make up`.
-- `pii` — adds PII (worker or in-API, per phase).
-- `ocr` — adds `ocr-worker` + models mount + 2g limit on the worker (not the API).
-- `full` — OCR + PII workers.
+- `pii` — PII runtime in the API for now.
+- `ocr` — OCR runtime in-process unless a worker Make target opts in.
+- `full` — OCR + PII runtimes, with OCR in-process unless a worker Make target opts in.
 - `worker` — worker services without rebuilding the API.
 - `dev` — developer conveniences.
 - `benchmark` — the existing read-only private benchmark runner (already isolated in the Makefile).
@@ -188,14 +191,19 @@ independently and its memory ceiling never touches the API's.
 
 ### Failure model
 
+Phase 3 implements the isolation boundary and terminal status for normal station failures. Lease
+expiry, heartbeat, retry, timeout, and cancellation remain target behavior for Phase 4+ and are
+called out explicitly so the current worker does not overpromise recovery semantics it does not yet
+have.
+
 | Event | Product behavior |
 | --- | --- |
-| OCR worker crashes / OOMs | API stays up. Job → `failed` (retryable). Frontend shows failed + retry. Compose restarts the worker independently. |
+| OCR worker crashes / OOMs | API stays up. Phase 3 station errors mark the job `failed`; a hard crash mid-job can leave it `running` until Phase 4 stale-lease reclaim. Compose restarts the worker independently. |
 | PII worker crashes | Same, scoped to PII jobs; OCR and API unaffected. |
 | Queue/DB unavailable | API returns `503` for *scheduling*; already-written immutable artifacts still read fine (they are files). Fail loud, never fake success. |
 | Artifact file missing | Job that depends on it → `failed` with a clear error class; upstream artifacts are never regenerated silently. |
-| Job times out | Killed, marked `timed_out`; no partial artifact is treated as final. |
-| Worker restarts mid-job | Lease expires → job re-queued once. **No partial-final risk:** artifacts are immutable and only committed at the *end* of a job, so a killed job leaves *no* artifact, never a half one. |
+| Job times out | Target Phase 4+ behavior: killed, marked `timed_out`; no partial artifact is treated as final. |
+| Worker restarts mid-job | Phase 3: job may remain `running` until manual intervention or a later reclaim feature. Target Phase 4+ behavior: lease expires → job re-queued once. **No partial-final risk:** artifacts are immutable and only committed at the *end* of a job, so a killed job leaves *no* artifact, never a half one. |
 
 This preserves the existing invariants: fail loud, immutable/append-only artifacts, no silent
 degrade, and **no sensitive text in logs** (job errors carry an error *class*, not document text).
