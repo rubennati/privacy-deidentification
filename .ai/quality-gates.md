@@ -105,6 +105,17 @@ Gates for the implemented **Text Anchor Graph v1** and any future PR that extend
   codes, source names, offsets, and ids are allowed; copied document text, entity values, snippets,
   filenames, or private corpus content are not. The frontend renders only server-provided
   raw/canonical/layout ranges and must not recover missing ranges with string search.
+- **Anchors are per-line identity units** — a raw anchor range must never span a line break; a token
+  pattern that swallowed a `\n` would fuse a line-ending value with the next line's leading token
+  into one bogus anchor, breaking canonical mapping and degrading PII binding to `partial`. A
+  regression test asserts no anchor raw range contains a newline.
+- **Bound-anchor view ranges must reach the contract (end-to-end conformance)** — if a PII detection
+  binds to anchors and those anchors carry canonical (or layout) ranges, the entity contract must
+  expose the matching canonical (or layout) display/highlight range for that same entity identity;
+  raw and canonical must not diverge for a value present in both views. A view range may be absent
+  only for an explicit structural reason (`repeated_token_ambiguity`, `reading_text_mapping_missing`,
+  `canonical_range_missing`, partial/ambiguous binding), never silently. Covered by
+  `backend/tests/test_anchor_bound_pii_e2e_conformance.py`.
 - **Technical raw text stays the offset authority and is never mutated**, and the active-PII-input
   `text_lineage_map` separation gate is not bypassed by anchor work.
 - **Pseudonymization renders from decisions; reconstruction maps placeholders** — no blind string

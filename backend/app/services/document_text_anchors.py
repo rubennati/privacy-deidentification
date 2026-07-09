@@ -60,7 +60,10 @@ _SOURCE_PRIORITY: dict[DocumentTextAnchorSourceName, int] = {
 }
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
-_PHONE_RE = re.compile(r"\+?\d[\d\s()./\-]{5,}\d")
+# Phone tokens may contain horizontal whitespace between groups but must never cross a line break:
+# ``\s`` would let a date at the end of one line merge with a number at the start of the next into a
+# single bogus anchor (breaking canonical mapping and PII binding for both), so use ``[ \t]`` only.
+_PHONE_RE = re.compile(r"\+?\d[\d \t()./\-]{5,}\d")
 _IDENTIFIER_WITH_SEPARATOR_RE = re.compile(r"[A-Za-z0-9]+(?:[._:/\-][A-Za-z0-9]+)+")
 _IDENTIFIER_ALNUM_RE = re.compile(r"(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{5,}")
 _NUMBER_RE = re.compile(r"\d+(?:[.,:/\-]\d+)*")

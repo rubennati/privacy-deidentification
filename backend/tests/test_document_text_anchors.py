@@ -293,6 +293,43 @@ def test_non_aligned_layout_is_single_source_not_fuzzy_matched() -> None:
     assert "unsupported_source" in graph.warnings
 
 
+# --- Line-boundary integrity (anchors are per-line identity units) -------------------------------
+
+
+def test_no_anchor_raw_range_crosses_a_line_break() -> None:
+    """A token pattern must never merge content from two lines into one anchor.
+
+    A phone/number-shaped run that swallowed the ``\\n`` would fuse a line-ending date with the next
+    line's leading number into a single bogus anchor, whose canonical range then spans unrelated
+    reading text and whose PII binding degrades to ``partial`` — the exact cross-view highlight
+    divergence this guards against.
+    """
+    raw = "Rechnung vom 15.03.2024\n1010 Wien\n"
+    graph = _graph(_content(raw, reading=raw, reading_map=[_segment(0, len(raw), 0, len(raw))]))
+
+    for anchor in graph.anchors:
+        for source_range in anchor.source_ranges:
+            if source_range.source_name == "technical_raw_text":
+                assert "\n" not in raw[source_range.start : source_range.end], (
+                    "anchor raw range must not span a line break"
+                )
+
+
+def test_line_ending_date_and_next_line_number_are_separate_anchors() -> None:
+    raw = "vom 15.03.2024\n1010 Wien\n"
+    graph = _graph(_content(raw))
+    raw_tokens = {
+        raw[source_range.start : source_range.end]
+        for anchor in graph.anchors
+        for source_range in anchor.source_ranges
+        if source_range.source_name == "technical_raw_text"
+    }
+
+    assert "15.03.2024" in raw_tokens
+    assert "1010" in raw_tokens
+    assert not any("\n" in token for token in raw_tokens)
+
+
 # --- Determinism and privacy ---------------------------------------------------------------------
 
 

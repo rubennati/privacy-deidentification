@@ -560,6 +560,24 @@ formal binding `review_result` (still open). See
 consistency via anchors is now wired through the entity contract; next is formal **Review L8
 `review_result`** and the **PII validation transparency report**.
 
+**Latest checkpoint (Anchor-first PII highlight conformance fix):** A root-cause fix for the residual
+raw-vs-canonical highlight divergence, not a diagnostics/UI patch and no engine level change. The
+Text Anchor Graph tokenizer's phone pattern (`document_text_anchors._PHONE_RE`) matched across
+`\s` — including `\n` — so a line-ending date fused with the next line's leading number into one
+bogus multi-line anchor whose canonical range spanned unrelated reading text; the two clean values
+then bound `partial` and silently lost their canonical highlights. Constraining the phone pattern to
+horizontal whitespace (`[ \t]`) makes anchors per-line identity units again, so clean unique values
+present in both views now propagate a canonical (and, when the layout view is byte-aligned, layout)
+display range through the *same* anchor-bound `entity_id` — Raw and Canonical no longer diverge for
+values with anchor lineage. Genuinely repeated values (a header+footer company name under reordering)
+remain canonical-missing **with** an explicit `repeated_token_ambiguity`/`canonical_range_missing`
+reason, never silently. New `backend/tests/test_anchor_bound_pii_e2e_conformance.py` proves the full
+`DocumentTextPackageV1 → anchor graph → binding → entity contract` path end to end (and fails without
+the fix); anchor line-boundary integrity is guarded in `test_document_text_anchors.py`. No detection,
+recognizer, `pii_result` schema, active-input, frontend guessing, pseudonymization, redaction, or DB
+change; frontend still renders only contract-supplied ranges. See the anchor gates in
+[`quality-gates.md`](quality-gates.md).
+
 **Latest checkpoint (Runtime Job UX / in-app notifications v1):** Cross-cutting runtime/UX step, not
 an engine level change. On top of ADR-0023's job model/status API, the product-facing presentation
 layer is delivered: `JobStatusResponse` gains one additive `is_terminal: bool` field
