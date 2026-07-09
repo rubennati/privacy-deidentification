@@ -1060,6 +1060,176 @@ class QualityReportArtifact(BaseModel):
         return self
 
 
+# OCR Output Contract v1 / Document Text Package (ADR-0027). An additive, versioned,
+# consumer-facing packaging of one OCR/Text artifact's already-produced layers (technical raw text,
+# canonical reading text, layout text, structured content, and quality evidence) under explicit
+# source roles and a trust status. It is a derived, read-only view built on demand from an existing
+# immutable ``TextArtifact`` (see ``document_text_package.py``) — never persisted as its own
+# artifact, never mutates its source, and adds no new raw document text beyond what ``TextArtifact``
+# already carries. This is the stable boundary PII, Review, pseudonymization, document analysis,
+# export, and future local AI are meant to depend on instead of ``TextContent`` internals or the
+# OCR/PDF tools that produced them. PII does not consume this contract yet. See
+# docs/adr/0027-ocr-output-contract-v1-strategy.md and docs/engine/ocr-layout-text-contract.md.
+DocumentTextPackageStatus = Literal["valid", "degraded", "invalid"]
+DocumentTextSourceName = Literal[
+    "technical_raw_text",
+    "canonical_reading_text",
+    "layout_text",
+    "structured_content",
+    "quality_evidence",
+]
+DocumentTextSourceRole = Literal[
+    "authoritative_source_text",
+    "human_readable_derived_text",
+    "visual_debug_text",
+    "semantic_structure_hints",
+    "trust_uncertainty_hints",
+]
+# Stable, machine-readable codes used in ``warnings``/``blockers``. New codes may be added over time
+# as additive OCR evidence sources plug into the contract (dictionary/lexicon, multi-OCR, local-LLM
+# hints); a code is never removed or repurposed once shipped.
+DocumentTextPackageWarning = Literal[
+    "missing_required_raw_text",
+    "missing_document_id",
+    "invalid_text_source",
+    "unsupported_contract_version",
+    "missing_canonical_reading_text",
+    "missing_layout_text",
+    "missing_structured_content",
+    "missing_quality_evidence",
+    "missing_noise_evidence",
+    "partial_lineage",
+    "missing_mapping",
+    "legacy_artifact",
+]
+
+
+class DocumentTextPackageProcessingMetadata(BaseModel):
+    """Metrics-only extraction summary copied from the source ``TextContent``. No raw text."""
+
+    text_source: Literal["pdf_mixed", "pdf_text_layer", "docx_text", "paddleocr"]
+    page_count: int = Field(ge=0)
+    ocr_used: bool
+    text_layer_used: bool
+    tool_versions: dict[str, str] = Field(default_factory=dict)
+
+
+class DocumentTextSourceV1(BaseModel):
+    """One packaged layer with an explicit, consumer-facing role.
+
+    Source role semantics (see ADR-0027): raw text is authoritative; canonical reading text is a
+    derived, non-authoritative convenience view; layout text is visual/debug/review-oriented;
+    structured content is semantic hints, not primary truth; quality evidence is trust/uncertainty
+    metadata, never a correction. Consumers must not assume an optional layer exists, and must not
+    treat canonical reading text as the sole authoritative source.
+
+    ``text`` carries the actual layer content only for the three text-bearing roles
+    (raw/canonical/layout) — allowed because the package *is* the text artifact for those roles.
+    ``structured_content`` and ``quality_evidence`` are exposed as their own typed fields on
+    :class:`DocumentTextPackageV1` instead of being duplicated here, so those two entries only index
+    availability/role/flags.
+    """
+
+    name: DocumentTextSourceName
+    role: DocumentTextSourceRole
+    required: bool
+    available: bool
+    text: str | None = None
+    text_char_count: int | None = Field(default=None, ge=0)
+    status: str | None = None
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_text_char_count(self) -> DocumentTextSourceV1:
+        if self.text is not None and self.text_char_count != len(self.text):
+            raise ValueError("text source char count does not match its text")
+        if self.text is None and self.text_char_count is not None:
+            raise ValueError("text source char count requires text")
+        return self
+
+
+class DocumentTextPackageValidationSummary(BaseModel):
+    """Compact, machine-checkable rollup of the contract validation outcome."""
+
+    contract_status: DocumentTextPackageStatus
+    warning_count: int = Field(ge=0)
+    blocker_count: int = Field(ge=0)
+    missing_capability_count: int = Field(ge=0)
+    required_sources_satisfied: bool
+    available_source_count: int = Field(ge=0)
+    total_source_count: int = Field(ge=0)
+
+
+class DocumentTextPackageV1(BaseModel):
+    """OCR Output Contract v1 — the stable, versioned, consumer-facing package for one OCR/Text
+    artifact (ADR-0027).
+
+    A derived, read-only view over an existing immutable :class:`TextArtifact`: it packages
+    already-produced layers under one contract with explicit source roles and a trust status, so
+    consumers depend on this contract rather than on ``TextContent`` internals or the OCR/PDF tools
+    that produced them. ``package_id``/``text_artifact_id``/``created_at`` mirror the source
+    ``TextArtifact`` — the package is a deterministic 1:1 view over exactly one text artifact in v1
+    — so building the same input twice yields an identical package. Building this package changes no
+    OCR/Text behavior and mutates no source artifact; PII is not migrated onto it yet.
+    """
+
+    contract_version: Literal["1.0"] = "1.0"
+    package_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    created_at: str
+    contract_status: DocumentTextPackageStatus
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    missing_capabilities: list[str] = Field(default_factory=list)
+    processing_metadata: DocumentTextPackageProcessingMetadata
+    text_sources: list[DocumentTextSourceV1]
+    structured_content: StructuredContent | None = None
+    quality_evidence: QualityEvidence | None = None
+    reading_text_map: list[ReadingTextMapSegment] = Field(default_factory=list)
+    contract_validation_summary: DocumentTextPackageValidationSummary
+
+    @model_validator(mode="after")
+    def _validate_status_consistency(self) -> DocumentTextPackageV1:
+        if self.contract_status == "invalid" and not self.blockers:
+            raise ValueError("invalid contract status requires at least one blocker")
+        if self.contract_status != "invalid" and self.blockers:
+            raise ValueError("blockers are only present when contract status is invalid")
+        if self.contract_status == "degraded" and not self.warnings:
+            raise ValueError("degraded contract status requires at least one warning")
+        if self.contract_status == "valid" and self.warnings:
+            raise ValueError("valid contract status must not carry warnings")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_sources_and_summary(self) -> DocumentTextPackageV1:
+        names = [source.name for source in self.text_sources]
+        if len(names) != len(set(names)):
+            raise ValueError("text sources must have unique names")
+        required_available = all(
+            source.available for source in self.text_sources if source.required
+        )
+        available_count = sum(1 for source in self.text_sources if source.available)
+        summary = self.contract_validation_summary
+        if summary.contract_status != self.contract_status:
+            raise ValueError("validation summary status does not match contract status")
+        if summary.warning_count != len(self.warnings):
+            raise ValueError("validation summary warning count does not match warnings")
+        if summary.blocker_count != len(self.blockers):
+            raise ValueError("validation summary blocker count does not match blockers")
+        if summary.missing_capability_count != len(self.missing_capabilities):
+            raise ValueError(
+                "validation summary missing-capability count does not match missing capabilities"
+            )
+        if summary.required_sources_satisfied != required_available:
+            raise ValueError("validation summary required-sources flag is inconsistent")
+        if summary.total_source_count != len(self.text_sources):
+            raise ValueError("validation summary total source count does not match text sources")
+        if summary.available_source_count != available_count:
+            raise ValueError("validation summary available source count is inconsistent")
+        return self
+
+
 class PiiEntity(BaseModel):
     """One labeled PII span referencing the source text exactly."""
 

@@ -289,13 +289,13 @@ build on the
 block/geometry structure from OCR L10 and gate on the separation rule above. See the sequence in
 [`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md).
 
-## OCR Output Contract v1 (Document Text Package) — proposed
+## OCR Output Contract v1 (Document Text Package) — implemented
 
-This document fixes the *internal* multi-layer text model. The proposed **OCR Output Contract v1 /
-Document Text Package** ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)) is the
-*external* boundary built on top of it: a single, versioned container that packages the layers
-already defined here — with explicit source roles and a trust status — so that PII, Review,
-pseudonymization, document analysis, export, and future local AI consume **one stable contract**
+This document fixes the *internal* multi-layer text model. The **OCR Output Contract v1 / Document
+Text Package** ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)) is the implemented
+*external* boundary built on top of it: a single, versioned package that exposes the layers already
+defined here — with explicit source roles and a trust status — so that PII, Review,
+pseudonymization, document analysis, export, and future local AI can consume **one stable contract**
 instead of reaching into `text_result` fields or the external OCR/PDF tool.
 
 - **Packaged layers (roles):** `technical_raw_text` (**raw** — authoritative offset source),
@@ -303,9 +303,10 @@ instead of reaching into `text_result` fields or the external OCR/PDF tool.
   (**layout** — visual/debug), `structured_content` (**structured** — semantic hints),
   `reading_text_map`/lineage, and `quality_evidence` incl. L15 noise evidence (**evidence** —
   trust/uncertainty, never correction).
-- **Versioning + status:** a `contract_version` plus a `contract_status`
-  (`valid`/`degraded`/`invalid`) with `warnings`/`blockers`/`missing_capabilities`, so a consumer
-  knows before use whether the text is trustworthy (encodes the existing fail-loud invariant).
+- **Versioning + status:** `contract_version = "1.0"` plus a `contract_status`
+  (`valid`/`degraded`/`invalid`) with `warnings`/`blockers`/`missing_capabilities`. `invalid`
+  covers blockers such as missing required raw text or malformed source roles; `degraded` covers
+  missing optional layers or incomplete lineage/evidence signals; `valid` has no warnings/blockers.
 - **Normalization:** external OCR/PDF tool output (pypdf, PaddleOCR, python-docx, any future
   engine) is normalized **before** crossing the contract boundary.
 - **Consumer rules:** PII may use raw (primary), canonical/structured (secondary/hint), and
@@ -315,8 +316,9 @@ instead of reaching into `text_result` fields or the external OCR/PDF tool.
   contract packages the layers, it does not bypass that gate.
 
 The contract is a **cross-cutting stabilization milestone, not a new OCR level** — the 0–19 ladder
-([`ocr-engine-levels.md`](ocr-engine-levels.md)) is unchanged, and no field/schema/behavior changes
-until it is implemented.
+([`ocr-engine-levels.md`](ocr-engine-levels.md)) is unchanged. It is implemented additively via
+`GET /api/documents/{document_id}/text-package`; existing OCR endpoints remain backward-compatible,
+runtime/worker behavior is unchanged, and PII is not migrated yet.
 
 ## Implementation status (v1)
 

@@ -40,7 +40,7 @@ input, or report may be committed.
 | `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping technical raw spans (persisted `canonical_*` compatibility names) to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; source-anchoring/traceability only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
 | `structured_content` | ✅ OCR L11 + L13 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags; L13 adds multiline label/value field continuation | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
 | `quality_evidence` | ✅ OCR L14 + L15 (field on `text_result`) | metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence for the run: a list of `QualityEvidenceItem`s plus a `QualityEvidenceSummary` with `QualityLineageCoverage`; explains where text came from and how well it maps back, without changing any text. L15 adds deterministic noise/token artifact *evidence* (glyph artifacts, suspicious token shapes, character-confusion candidates, spacing candidates, and a document-level `ocr_noise_summary`) into the same list | no raw text (offsets, counts, flags, page zones, coarse bounds, stable reason codes; `details` is `dict[str, int]`) | additive optional versioned field on `text_result` |
-| `document_text_package` (OCR Output Contract v1) | 🔜 proposed (ADR-0027) | versioned external package of the `text_result` layers (raw/canonical/layout/structured) + `reading_text_map` + `quality_evidence` + a `contract_status`; the stable boundary consumers depend on instead of OCR internals | packages existing layers; adds no new raw text | strategy/design only; not implemented |
+| `document_text_package` (OCR Output Contract v1) | ✅ today, derived API package (ADR-0027) | versioned external package of the `text_result` layers (raw/canonical/layout/structured) + `reading_text_map` + `quality_evidence` + a `contract_status`; the stable boundary consumers depend on instead of OCR internals | packages existing text layers; adds no new raw text beyond them | computed on request by `GET /api/documents/{document_id}/text-package`; not persisted |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
@@ -200,21 +200,28 @@ decisions, or any text layer. A local, metrics-only private-corpus validation pa
 `.local` outputs) found and fixed four generic (non-corpus-specific) over-flagging patterns before
 this reached its final state; see [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md).
 
-## OCR Output Contract v1 / Document Text Package boundary (proposed)
+## OCR Output Contract v1 / Document Text Package boundary (implemented)
 
-A proposed, cross-cutting stabilization step ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md))
-packages the `text_result` text layers — `text` (**raw**, authoritative), `reading_text`
-(**canonical**), `layout_text_result` (**layout**), `structured_content` (**structured**), the
-offset-only `reading_text_map`, and `quality_evidence` (**evidence**, incl. L15 noise) — into one
-**versioned** container (`contract_version`) with an explicit `contract_status`
-(`valid`/`degraded`/`invalid`) plus `warnings`/`blockers`/`missing_capabilities`. External OCR/PDF
-tool output is normalized before it crosses this boundary. Consumers (PII, Review,
-pseudonymization, document analysis, export, local AI) depend on the contract and its source roles
-rather than on individual fields or the underlying engine; PII may use raw as primary and
-canonical/structured/evidence as secondary/hint layers, must not treat canonical as authoritative,
-and must not break when optional layers are absent. This is **strategy/design only** — no new
-persisted field, schema, or behavior, and the existing text-artifact privacy rules below apply
-unchanged. Switching the active PII detection input away from raw still requires the tested
+The cross-cutting stabilization step ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md))
+is implemented additively as a derived API package. `DocumentTextPackageV1` packages the
+`text_result` text layers — `text` (**technical raw**, authoritative), `reading_text`
+(**canonical**, derived/contextual), `layout_text_result` (**layout**), `structured_content`
+(**structured**, semantic hints), the offset-only `reading_text_map`, and `quality_evidence`
+(**evidence**, trust/uncertainty metadata incl. L15 noise) — into one **versioned** container with
+`contract_version = "1.0"` and an explicit `contract_status`
+(`valid`/`degraded`/`invalid`) plus `warnings`/`blockers`/`missing_capabilities`.
+
+`invalid` marks blockers such as missing required raw text, invalid document id, unsupported
+contract version, or malformed source roles. `degraded` marks usable packages with missing optional
+layers or incomplete lineage/evidence signals. `valid` means no warnings/blockers. The package is
+computed on request by `GET /api/documents/{document_id}/text-package`, is not persisted as its own
+artifact, and does not change `GET/POST .../ocr`.
+
+Consumers (PII, Review, pseudonymization, document analysis, export, local AI) can depend on the
+contract and its source roles rather than on individual fields or the underlying engine. PII is
+**not migrated yet**: it still uses technical raw text as primary input; canonical/structured/
+evidence remain secondary or future hint layers, and canonical text must not be treated as
+authoritative. Switching the active PII detection input away from raw still requires the tested
 `text_lineage_map` separation gate.
 
 ## Dev feedback side-channel

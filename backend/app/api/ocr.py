@@ -7,8 +7,9 @@ from fastapi.responses import JSONResponse
 
 from app.api.jobs import to_job_status_response
 from app.config import Settings, get_settings
-from app.schemas import ErrorResponse, JobStatusResponse, TextArtifact
+from app.schemas import DocumentTextPackageV1, ErrorResponse, JobStatusResponse, TextArtifact
 from app.services.document_service import DocumentNotFoundError, get_document_record
+from app.services.document_text_package import build_document_text_package
 from app.services.job_models import (
     JobContext,
     JobExecutionMode,
@@ -120,3 +121,22 @@ def get_document_ocr(
 ) -> TextArtifact:
     """Return the newest text result for a document."""
     return get_latest_text(settings, document_id)
+
+
+@router.get(
+    "/{document_id}/text-package",
+    response_model=DocumentTextPackageV1,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_document_text_package(
+    document_id: str, settings: Settings = Depends(get_settings)
+) -> DocumentTextPackageV1:
+    """Return the OCR Output Contract v1 package (ADR-0027) built from the newest text result.
+
+    Additive alongside ``GET …/ocr``: it packages the same immutable text artifact's layers
+    under one versioned, role-labelled contract instead of returning raw ``TextContent`` fields.
+    Raises the same clean 404 as ``GET …/ocr`` when the document or its text result does not
+    exist yet.
+    """
+    artifact = get_latest_text(settings, document_id)
+    return build_document_text_package(artifact)

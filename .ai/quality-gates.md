@@ -66,7 +66,7 @@ metrics or evidence metadata.
 ## Contract changes
 
 Additional gates when a change touches a versioned output/artifact contract — most notably the
-proposed **OCR Output Contract v1 / Document Text Package**
+implemented **OCR Output Contract v1 / Document Text Package**
 ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)), and equally any change to an
 existing artifact schema (`text_result` fields, `quality_evidence`, `pii_result`) or the runtime
 job contract:

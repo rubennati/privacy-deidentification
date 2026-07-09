@@ -60,15 +60,17 @@ external OCR/PDF tools ─▶ OCR adapter / normalization layer ─▶ stable OC
      (PII, Review UI, pseudonymization, document analysis, summarization, export, future local AI)
 ```
 
-OCR/Text is becoming an **independent, reusable module with a stable, versioned output contract**
-([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)). PII is a **consumer of that
-contract**, not of OCR internals: it must not depend directly on PaddleOCR, PDF parsing,
+OCR/Text is now exposed as an **independent, reusable module with a stable, versioned output
+contract** ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)). PII is a **consumer of
+that contract**, not of OCR internals: it must not depend directly on PaddleOCR, PDF parsing,
 reading-order heuristics, or worker internals, and external OCR/PDF library changes must be
-normalized **before** crossing the contract boundary. The contract packages raw (authoritative),
-canonical, layout, structured, and evidence layers under a `contract_version` and a
-`contract_status`, so any consumer picks the right view and knows its trust level. This is proposed
-strategy — a cross-cutting stabilization milestone, not a numbered engine level — and changes no
-behavior yet.
+normalized **before** crossing the contract boundary. The implemented v1 package is additive:
+`GET /api/documents/{document_id}/text-package` derives `DocumentTextPackageV1` from the newest
+immutable text artifact with `contract_version = "1.0"` and a `contract_status`
+(`valid`/`degraded`/`invalid`). Raw text is authoritative; canonical text is derived/contextual;
+`structured_content` is semantic hints; and `quality_evidence` is trust/uncertainty metadata.
+Existing OCR endpoints remain backward-compatible, runtime/worker behavior is unchanged, and PII is
+not migrated yet.
 
 ## Runtime job contract
 

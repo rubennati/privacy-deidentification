@@ -1,27 +1,34 @@
-# ADR-0027: OCR Output Contract v1 — Document Text Package (strategy)
+# ADR-0027: OCR Output Contract v1 — Document Text Package
 
 ## Status
 
-Proposed — 2026-07-09. Strategy/design only; **nothing here is implemented**. Builds on
+Accepted / implemented additively — 2026-07-09. The v1 contract boundary is implemented as a
+derived, read-only package built on demand from existing immutable `text_result` artifacts. It adds
+`DocumentTextPackageV1`, `DocumentTextSourceV1`, `DocumentTextPackageValidationSummary`, a
+builder/validator service, and `GET /api/documents/{document_id}/text-package` with
+`contract_version = "1.0"`. Existing OCR endpoints remain backward-compatible, the package is not
+persisted as its own artifact, and PII is **not migrated yet**: PII still uses technical raw text
+from `text_result.text`.
+
+This builds on
 [ADR-0016](0016-engine-maturity-levels-0-19.md) (0–19 maturity scale),
 [ADR-0018](0018-ocr-pii-implementation-plan.md) (OCR stays ahead of PII),
 [ADR-0019](0019-canonical-reading-text-and-technical-raw-contract.md) (technical-raw vs
 canonical-reading contract), and [ADR-0023](0023-runtime-worker-architecture.md) (worker
 runtime). It elevates the existing five-layer text model in
 [`ocr-layout-text-contract.md`](../engine/ocr-layout-text-contract.md) into a single, versioned
-**output contract** that downstream engines consume. It changes no algorithm, artifact, or
-runtime behavior on its own.
+**output contract** that downstream engines can consume. It changes no OCR extraction algorithm,
+runtime/worker behavior, or existing text artifact semantics.
 
 ## Position in the sequence
 
-This is the **next OCR/Text implementation/design step after L15** — a cross-cutting stabilization
-milestone, not a numbered level (the 0–19 scale, [ADR-0016](0016-engine-maturity-levels-0-19.md), is
-unchanged). **PII is a consumer of the contract and a downstream migration target, not the immediate
-next driver:** PII L12 overlap resolution and other consumer work follow once the OCR/Text contract
-boundary is implemented or at least stabilized. Future OCR capability tracks — dictionary/lexicon
-evidence, correction suggestions, multi-OCR/source agreement, feedback-driven improvement — **enrich
-the contract additively without breaking consumers**; their formal level numbering stays governed by
-ADR-0016 and future ADRs.
+This is the **OCR/Text stabilization step after L15** — a cross-cutting milestone, not a numbered
+level (the 0–19 scale, [ADR-0016](0016-engine-maturity-levels-0-19.md), is unchanged). **PII is a
+consumer of the contract and a downstream migration target, not part of this implementation:** PII
+L12 overlap resolution and other consumer work follow the stabilized boundary. Future OCR capability
+tracks — dictionary/lexicon evidence, correction suggestions, multi-OCR/source agreement,
+feedback-driven improvement — **enrich the contract additively without breaking consumers**; their
+formal level numbering stays governed by ADR-0016 and future ADRs.
 
 ## Context
 
@@ -45,14 +52,14 @@ versioned output contract.** PII should consume that contract, not OCR internals
 
 ## Decision
 
-Introduce, **after L15 and before further OCR/Text capability levels**, a stabilization step:
-the **OCR Output Contract v1**, also called the **Document Text Package** — a single, versioned
-container that packages the already-produced text layers, structure, lineage, and evidence
-together with an explicit trust status, so consumers depend on the contract rather than on
-`text_result` internals or the external OCR/PDF tool that produced them.
+Implement, **after L15 and before further OCR/Text capability levels**, the **OCR Output Contract
+v1**, also called the **Document Text Package** — a single, versioned package that exposes the
+already-produced text layers, structure, lineage, and evidence together with an explicit trust
+status, so consumers depend on the contract rather than on `text_result` internals or the external
+OCR/PDF tool that produced them.
 
-This ADR records the *decision and design intent*. It does not specify the full schema, add a
-field, or change any behavior; that is a later, explicitly scoped implementation step.
+The implementation is additive: it builds the package from the newest existing text artifact on
+request, never mutates the source artifact, and does not change `GET/POST .../ocr` response shapes.
 
 ### Why an independent module + contract
 
@@ -110,11 +117,11 @@ consumer needs: PII detection/confidence, context-preserving pseudonymization, k
 invoice/contract analysis, summarization, export/reconstruction, and local-AI plausibility all
 consume the same contract instead of re-learning OCR internals.
 
-## High-level shape (design sketch, not a schema)
+## High-level shape (v1 schema)
 
 The Document Text Package packages what OCR/Text already produces:
 
-- `contract_version` — package shape version (independent of per-field versions).
+- `contract_version` — package shape version, currently `"1.0"` (independent of per-field versions).
 - `document_id` / source `text_result` `artifact_id` — lineage to the immutable artifact.
 - `technical_raw_text` — authoritative, offset-stable source text (today `text_result.text`).
 - `canonical_reading_text` — human-readable derived text (`reading_text` + status/flags).
@@ -127,7 +134,9 @@ The Document Text Package packages what OCR/Text already produces:
 - processing metadata — source mix (text-layer vs OCR), engine/reconstruction summary, and (at
   L16) reproducible engine settings; metrics only, no raw text.
 - `contract_status` — `valid` / `degraded` / `invalid`, with `warnings`, `blockers`, and
-  `missing_capabilities` (e.g. "no OCR runtime for scanned pages").
+  `missing_capabilities`. `invalid` is reserved for blockers such as missing required raw text,
+  invalid document id, unsupported contract version, or malformed source roles; `degraded` is used
+  when optional layers or lineage/evidence signals are missing; `valid` means no warnings/blockers.
 
 ### Source roles
 
@@ -154,9 +163,10 @@ The Document Text Package packages what OCR/Text already produces:
 
 ## Explicitly not included yet
 
-- No schema, no new persisted field, no code, no API/response-shape change.
+- No persisted package artifact; the package is derived on request.
 - No change to `text_result.text`, `reading_text`, `structured_content`, `quality_evidence`,
-  the active PII input, PII decisions, benchmark payloads, or runtime behavior.
+  existing OCR endpoints, the active PII input, PII decisions, benchmark payloads, or runtime
+  behavior.
 - No `text_lineage_map`, no PII-input switch, no pseudonymization / redaction / export.
 - No new OCR/PDF engine, no dictionary/lexicon, no multi-OCR, no local LLM (those remain
   deferred additive **evidence, not truth**, and — once built — plug into this contract).
@@ -165,9 +175,9 @@ The Document Text Package packages what OCR/Text already produces:
 
 ## Consequences
 
-- OCR/Text gains a documented target boundary; consumers can be migrated to the contract
-  incrementally when it is implemented, without an OCR behavior change.
+- OCR/Text gains an implemented, versioned package boundary; consumers can be migrated to it
+  incrementally without an OCR behavior change.
 - Future OCR evidence/engine work becomes additive behind the contract, keeping the OCR↔PII
   boundary and blast radius small.
-- Until implemented, nothing changes: consumers keep reading `text_result` fields directly, and
-  this ADR stays **Proposed** as the agreed direction.
+- Existing consumers keep working: PII still reads technical raw text directly, and the new
+  `text-package` endpoint is additive beside the backward-compatible OCR endpoints.

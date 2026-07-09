@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L15 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), and L15 additive noise/token artifact evidence in the same list | **OCR Output Contract v1 / Stable Document Text Package** (the next step — stabilize output as a versioned package with a `contract_status`; [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)); future OCR capabilities plug into the contract |
+| OCR / Text | **L15 (built on the required L10.5 step) + output-contract stabilization** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), L15 additive noise/token artifact evidence in the same list, and Document Text Package v1 (`contract_version = "1.0"`, `valid`/`degraded`/`invalid`) | PII L12 overlap resolution downstream; future OCR capabilities plug into the contract |
 | PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution (downstream — after the OCR Output Contract boundary is implemented/stabilized) |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -32,7 +32,11 @@ documents.
   (provenance, reconstruction, page zones, and reading↔raw lineage coverage; no raw text), and L15
   additive noise/token artifact evidence (glyph artifacts, suspicious token shapes,
   character-confusion candidates, spacing candidates) in that same list — evidence, never
-  correction. PII still uses raw text.
+  correction — plus the additive OCR Output Contract v1 / Document Text Package boundary. The
+  package is built on request from existing `text_result` artifacts, keeps raw text authoritative,
+  treats canonical text as derived/contextual, treats `structured_content` as semantic hints, treats
+  quality/noise evidence as trust/uncertainty metadata, and does not migrate PII. PII still uses raw
+  text.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -218,23 +222,21 @@ artifact, benchmark payload, dependency, or public API. Redaction-ready text/geo
 earlier placeholder meaning) is deferred — see
 [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md).
 
-### OCR Output Contract v1 — Document Text Package (cross-cutting stabilization) — proposed
+### OCR Output Contract v1 — Document Text Package (cross-cutting stabilization) — delivered
 
-**Sequencing:** L15 complete → **OCR Output Contract v1 / Stable Document Text Package next** →
-future OCR capabilities plug into the contract → PII continuation (L12 overlap resolution and
-beyond) downstream, as a consumer of the contract.
+**Sequencing:** L15 complete → **OCR Output Contract v1 / Stable Document Text Package delivered
+additively** → PII continuation (L12 overlap resolution and beyond) downstream, as a consumer of the
+contract → future OCR capabilities plug into the contract.
 
-This is the **next OCR/Text step after L15**, before further capability levels: stabilize the
-engine's output as an independent, reusable module with a **stable, versioned output contract**.
-Today a consumer such as PII reaches
-into individual `text_result` fields and OCR internals (pypdf/PaddleOCR provenance, reading-order
-heuristics, worker details); the **OCR Output Contract v1 / Document Text Package** packages the
-already-produced layers together so consumers depend on the contract, not the internals:
+This stabilization step exposes the engine's output as an independent, reusable module with a
+**stable, versioned output contract**. The **OCR Output Contract v1 / Document Text Package**
+packages the already-produced layers together so consumers depend on the contract, not OCR
+internals (pypdf/PaddleOCR provenance, reading-order heuristics, worker details):
 
 - **raw** = authoritative offset-stable source text (`text_result.text`); **canonical** =
   human-readable derived `reading_text`; **layout** = visual/debug `layout_text_result`;
   **structured** = `structured_content` semantic hints; **evidence** = `quality_evidence`
-  (L14 provenance/lineage + L15 noise/token), all under a `contract_version` and a
+  (L14 provenance/lineage + L15 noise/token), all under `contract_version = "1.0"` and a
   `contract_status` (`valid`/`degraded`/`invalid`) with warnings/blockers/missing capabilities.
 - External OCR/PDF tool output is **normalized before crossing the contract boundary**, so adding
   or swapping an engine stays an OCR-internal concern.
@@ -243,10 +245,14 @@ already-produced layers together so consumers depend on the contract, not the in
   review flags; it must not assume canonical is authoritative and must not break if optional
   evidence is absent. Switching PII's active input away from raw still requires the tested
   `text_lineage_map` separation gate.
+- The package is computed on request by `GET /api/documents/{document_id}/text-package`; existing
+  `GET/POST .../ocr` endpoints remain backward-compatible, and runtime/worker behavior is
+  unchanged.
 
 This is a **cross-cutting stabilization milestone, not a numbered engine level** — the 0–19 scale
-([ADR-0016](../adr/0016-engine-maturity-levels-0-19.md)) is unchanged. It is strategy/design only;
-see [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md). Future additive-evidence work —
+([ADR-0016](../adr/0016-engine-maturity-levels-0-19.md)) is unchanged. PII is **not migrated yet**;
+it still uses technical raw text. See [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md).
+Future additive-evidence work —
 dictionary/lexicon checks, correction *suggestions*, multi-OCR/source agreement, and a
 feedback-driven improvement loop — **plugs into this contract and `quality_evidence`** and must
 never change how PII (or any consumer) receives text. Where those themes land on the formal ladder
