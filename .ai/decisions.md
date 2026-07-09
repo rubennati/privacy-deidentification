@@ -112,15 +112,19 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   the store learns about updates without changing the job contract. No OCR/PII/runtime/artifact
   contract change.
 - [ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md) — **Text identity,
-  anchor lineage, and de-identification state architecture (Proposed; design only).** Treats
+  anchor lineage, and de-identification state architecture (Proposed for the full architecture;
+  Phase B implemented).** Treats
   Technical Raw / Canonical Reading / Layout / Structured text as *views* of the same document
   information, married by a stable **text anchor** identity (an anchor graph, `text_anchor_map`,
   owned by **OCR/Text** — the concrete realization of the long-reserved `text_lineage_map`, not PII).
+  Phase B delivers Text Anchor Graph v1 as a derived, non-persisted OCR/Text endpoint
+  (`GET …/text-anchors`) built from `DocumentTextPackageV1`; anchor metadata is ranges/ids/classes/
+  statuses/codes only and duplicates no private text.
   PII **binds entities to anchors** (not string offsets); review decisions, pseudonymization
   (render, never paint-over), and reconstruction (placeholder→group→entity→anchor→original, never
   fuzzy match) all reference identity. Persistence is **hybrid (Option E)**: immutable OCR/anchor
   artifacts stay JSON; mutable PII-review/replacement/reconstruction/audit state moves to SQLite when
   Review persistence needs it — designed SQLite-ready now, **no DB built**. Staged Phases A–I;
-  underpins **PII L17** (stable entity model with lineage). Introduces no schema/service/endpoint/
-  migration/frontend/OCR/PII/pseudonymization/reconstruction/runtime change. (Requested as "0030";
+  underpins **PII L17** (stable entity model with lineage). Introduces no migration/frontend/OCR
+  extraction/PII/pseudonymization/reconstruction/runtime change. (Requested as "0030";
   renumbered to 0031 because 0030 was taken.)

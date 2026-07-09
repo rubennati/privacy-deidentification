@@ -7,8 +7,15 @@ from fastapi.responses import JSONResponse
 
 from app.api.jobs import to_job_status_response
 from app.config import Settings, get_settings
-from app.schemas import DocumentTextPackageV1, ErrorResponse, JobStatusResponse, TextArtifact
+from app.schemas import (
+    DocumentTextAnchorGraphV1,
+    DocumentTextPackageV1,
+    ErrorResponse,
+    JobStatusResponse,
+    TextArtifact,
+)
 from app.services.document_service import DocumentNotFoundError, get_document_record
+from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.job_models import (
     JobContext,
@@ -140,3 +147,22 @@ def get_document_text_package(
     """
     artifact = get_latest_text(settings, document_id)
     return build_document_text_package(artifact)
+
+
+@router.get(
+    "/{document_id}/text-anchors",
+    response_model=DocumentTextAnchorGraphV1,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_document_text_anchors(
+    document_id: str, settings: Settings = Depends(get_settings)
+) -> DocumentTextAnchorGraphV1:
+    """Return Text Anchor Graph v1 (ADR-0031 Phase B) for the newest text result.
+
+    Additive alongside ``GET …/text-package``: the graph is derived from the Document Text Package
+    and carries only anchor ids, source ranges, statuses, counts, and warning codes. It is not
+    persisted, does not mutate OCR/Text artifacts, and does not bind PII entities yet.
+    """
+    artifact = get_latest_text(settings, document_id)
+    package = build_document_text_package(artifact)
+    return build_document_text_anchor_graph(package)

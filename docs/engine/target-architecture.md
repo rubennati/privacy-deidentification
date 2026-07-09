@@ -78,6 +78,13 @@ candidates deterministically (`pii_overlap`, PII L12) with reason-code/count/id 
 `pii_result`. Switching the active PII detection input away from raw still requires the tested
 `text_lineage_map` separation gate.
 
+Text identity now has its first concrete OCR/Text-owned layer:
+`GET /api/documents/{document_id}/text-anchors` derives **Text Anchor Graph v1** from the same
+`DocumentTextPackageV1`. It emits anchor ids, raw/canonical/layout ranges, counts, statuses, token
+classes/shapes, and warning codes only — no copied text. In v1, canonical ranges attach through the
+existing `reading_text_map`, layout ranges attach only when byte-aligned with raw, and PII does not
+bind to anchors yet.
+
 On top of that, the **review-ready entity contract v1**
 ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md)) is the stable, review-facing shape the
 Review UI (and later pseudonymization/analysis/export) depend on: a derived, additive view
@@ -176,13 +183,13 @@ When the product needs **query, history, and cross-document state** that the fla
 awkward — concretely, once **review decisions and rules** (Review L2+) must be listed, searched,
 versioned, and reapplied across runs. Detection alone (audit/OCR/PII artifacts) does *not* need a
 DB; the file layout serves it well.
-[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only**)
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed for the full
+architecture; Phase B implemented**)
 makes this concrete with a **hybrid (Option E)** model: immutable OCR/Text/anchor artifacts stay
 JSON, while the mutable, queryable de-identification state (review decisions, replacement plans,
-reconstruction map, audit events) moves to SQLite when Review persistence needs it. It also fixes the
-raw/canonical/layout highlight inconsistency at the model level via an OCR/Text-owned **text anchor**
-identity layer (the concrete `text_lineage_map`) that PII, pseudonymization, and reconstruction all
-reference.
+reconstruction map, audit events) moves to SQLite when Review persistence needs it. Phase B now
+implements the first derived anchor graph endpoint without SQLite; PII binding, highlight
+consistency, pseudonymization, and reconstruction remain staged follow-ups.
 
 ### What stays in the filesystem
 

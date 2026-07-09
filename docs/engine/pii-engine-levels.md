@@ -335,9 +335,10 @@ stage that runs after detection**. This stage is a first-class part of the engin
 - **Acceptance:** each entity has a stable identity across occurrences and re-runs, with explicit
   lineage to the text and review artifacts it derives from.
 - **Design:** the target substrate is the OCR/Text-owned **text anchor** identity layer in
-  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only**) —
-  PII entities bind to anchors (`entity_anchors`) rather than string offsets, which is what makes
-  identity stable across views/re-runs and consistent between raw and canonical highlights.
+  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Phase B anchor graph
+  implemented; PII binding open**) — PII entities bind to anchors (`entity_anchors`) rather than
+  string offsets, which is what makes identity stable across views/re-runs and consistent between raw
+  and canonical highlights.
 - **Boundary to L18:** L17 stabilises the model; L18 makes its spans redaction-ready.
 
 ## Level 18 — Redaction-ready entity spans  ⛔ *open*

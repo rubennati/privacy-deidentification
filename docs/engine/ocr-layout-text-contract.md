@@ -118,10 +118,16 @@ never shift a canonical PII offset, and no layer becomes an island.
   `pii_input_text` diverges from canonical.
 - **Target design:** the full married model is specified as a stable **text anchor** identity layer
   (an anchor graph with per-view ranges and explicit `missing`/`ambiguous` states) in
-  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only**).
+  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed for the full
+  architecture; Phase B implemented**).
   There, `text_lineage_map` is realized as anchors that PII binds entities to, and that
   pseudonymization/reconstruction render from — owned by OCR/Text, not PII. The anchor graph is a
   *prerequisite* for the separation gate below, never a bypass of it.
+- **Phase B delivered:** `GET /api/documents/{document_id}/text-anchors` now derives Text Anchor
+  Graph v1 from `DocumentTextPackageV1`. It creates raw-token anchors, attaches canonical ranges
+  only through `reading_text_map`, attaches layout ranges only when safely byte-aligned in v1, and
+  records missing/partial/ambiguous/single-source states as metadata. It is not persisted, carries no
+  copied source text, and does not bind PII or switch the active PII input.
 
 ### L9 structured layout blocks
 

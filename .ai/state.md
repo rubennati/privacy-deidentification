@@ -2,43 +2,21 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **Runtime Architecture Phase 3.6 — default worker stack + runtime simplification**.
-- Current objective: ADR-0023 Phase 3.6 is now delivered on top of Phase 3/3.5. The normal Compose
-  stack is `frontend`, `api`, and `ocr-worker`; `OCR_EXECUTION_MODE` defaults to `worker`; and the
-  frontend handles worker-mode OCR end to end by accepting `202` job metadata, polling
-  `GET /api/jobs/{job_id}`, and fetching the finished `text_result`. Sync OCR remains available only
-  as an explicit development/test fallback (`OCR_EXECUTION_MODE=sync`, `201` artifact body). The old
-  slim/pii/ocr/full Make targets and `INSTALL_OCR`/`INSTALL_PII` build toggles are removed; API and
-  OCR worker share one full backend image for now, with a slimmer API image deferred as future
-  optimization. All host storage now lives under a single `DATA_ROOT` (default `./volumes`);
-  Compose maps `uploads`, `document-store` (renamed from `document-data`), `job-state`,
-  `pii-feedback-archive`, and `ocr-models` onto stable internal container paths, which are advanced
-  overrides only (not in `.env.example`). SQLite job state remains file-based but now lives in its
-  own dedicated `job-state` root (`DATA_JOB_STATE_DIR/jobs.sqlite3` by default), no longer beside
-  per-document artifacts, and stores metadata only. PII stays synchronous in the API. There is still no Redis/Celery/RQ, no PII worker
-  split, no OCR/PII engine change, no `reading_text`/`quality_evidence` change, no pseudonymization,
-  redaction, export, local LLM, dictionary/multi-OCR, Kubernetes, or reverse-proxy expansion.
-  Stale-running-job reclaim (lease/heartbeat), bounded parallel concurrency (>1), retry/timeout/
-  cancel controls, and the PII worker are deferred to Phase 4. The **OCR Output Contract v1 /
-  Stable Document Text Package** is now implemented additively as a derived package over existing
-  `text_result` artifacts ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)); PII is
-  now its first migrated consumer via the `pii_input` intake adapter, and **PII L12 overlap
-  resolution** is delivered ([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
-  On top of that, the **PII review-ready entity contract v1** is delivered additively
-  ([ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md)): a derived
-  `GET …/pii/entity-contract` view giving each resolved entity a stable id, raw↔canonical mapping
-  status, overlap provenance, resolved review state, and a text-free display model — a
-  stabilization milestone, not a level bump and not the formal binding `review_result`.
-  The next planned *engine* step is the formal Review L8 `review_result` model.
-  A design ADR now frames the deeper foundation these steps build toward:
-  [ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design
-  only**) defines a stable **text anchor** identity layer (anchor graph / `text_lineage_map`, owned
-  by OCR/Text) so raw/canonical/layout are treated as *views* of one document, PII binds entities to
-  anchors, and pseudonymization/reconstruction render from decisions — with a hybrid JSON+SQLite
-  persistence path (SQLite only when Review persistence needs it). It introduces no code.
-  ADR-0031 also now states the privacy guardrail explicitly: entity/anchor/review/replacement/audit
-  metadata must not duplicate private text, and the access-gated reconstruction map is the only new
-  store that may hold original values.
+- Current phase: **Text Identity Phase B — Text Anchor Graph v1**.
+- Current objective: ADR-0031 Phase B is now delivered additively. OCR/Text owns a derived
+  **Text Anchor Graph v1** over the OCR Output Contract v1 package: new schemas
+  (`DocumentTextAnchorGraphV1`, `DocumentTextAnchorV1`, source/range/status/summary/validation
+  models), `backend/app/services/document_text_anchors.py`
+  (`TextAnchorLineageBuilder` / `build_document_text_anchor_graph`), and
+  `GET /api/documents/{document_id}/text-anchors`. Raw anchors are primary; canonical ranges attach
+  only through `reading_text_map`; layout ranges attach only when byte-aligned with raw in v1;
+  missing/partial/ambiguous/single-source mapping is explicit; repeated identical tokens are not
+  globally married. Anchor metadata is text-free (ids, ranges, counts, token classes/shapes,
+  statuses, warning codes only) and duplicates no private text. The graph is computed on request,
+  not persisted, not embedded into `DocumentTextPackageV1`, and introduces no SQLite migration, OCR
+  extraction change, PII detection/binding change, frontend highlight change, pseudonymization,
+  redaction, reconstruction, export, runtime/job change, dependency, or private-corpus fixture. Next:
+  **PII anchor binding v1** as a separate Phase C step, then frontend highlight consistency.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -59,7 +37,8 @@
   improves table and label/value reconstruction quality on top of that stabilized order. The
   additive Document Text Package v1 endpoint packages the latest `text_result` layers under
   `contract_version = "1.0"` and a `valid`/`degraded`/`invalid` status without changing existing
-  OCR endpoints.
+  OCR endpoints; the derived Text Anchor Graph v1 endpoint exposes text-free raw/canonical/layout
+  anchor identity ranges for future consumers.
 - PII uses Presidio/spaCy behind an adapter, named profiles, AT/DE and domain recognizers, candidate
   validation, and reproducible engine settings.
 - The local private benchmark measures routing and PII quality from existing artifacts. Its

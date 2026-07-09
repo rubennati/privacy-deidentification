@@ -89,14 +89,16 @@ job contract:
   no new raw document or entity text to metrics-only layers; the existing text-artifact privacy
   rules still apply.
 
-## Text identity / anchor lineage changes (design gates — apply when the work lands)
+## Text identity / anchor lineage changes
 
-Forward-looking gates for any future PR that implements the **text anchor** identity layer or binds
-to it ([ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md) — Proposed; no code
-yet, so these do not apply to current work):
+Gates for the implemented **Text Anchor Graph v1** and any future PR that extends or binds to it
+([ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md)):
 
 - **Anchors are owned by OCR/Text, derived from the Document Text Package** — a consumer (PII, Review,
   pseudonymization, reconstruction) binds to anchors, it does not create them.
+- **Anchor metadata remains text-free** — tests must assert synthetic sensitive strings appear only
+  in existing text source fields, never in anchor ids, ranges, token classes/shapes, summaries,
+  warnings, validation, logs, or docs.
 - **Missing/ambiguous mapping is an explicit, tested state** — never a silently dropped highlight and
   never a guessed match; string equality alone never merges two occurrences into one identity.
 - **Technical raw text stays the offset authority and is never mutated**, and the active-PII-input
