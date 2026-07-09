@@ -21,6 +21,7 @@ from app.schemas import (
     DocumentTextAnchorV1,
     PiiEntity,
     PiiEntityProvenance,
+    ReadingTextMapSegment,
     TextArtifact,
     TextContent,
 )
@@ -60,7 +61,25 @@ def _entity(
     )
 
 
-def _graph_from_raw(raw: str) -> DocumentTextAnchorGraphV1:
+def _segment(
+    reading_start: int, reading_end: int, raw_start: int, raw_end: int
+) -> ReadingTextMapSegment:
+    return ReadingTextMapSegment(
+        reading_start=reading_start,
+        reading_end=reading_end,
+        raw_start=raw_start,
+        raw_end=raw_end,
+        mapping_status="exact",
+    )
+
+
+def _graph_from_raw(
+    raw: str,
+    *,
+    reading: str | None = None,
+    reading_map: list[ReadingTextMapSegment] | None = None,
+    layout: str | None = None,
+) -> DocumentTextAnchorGraphV1:
     content = TextContent(
         document_id=_DOCUMENT_ID,
         input_artifact_id=_ORIGINAL_ID,
@@ -71,6 +90,12 @@ def _graph_from_raw(raw: str) -> DocumentTextAnchorGraphV1:
         pages=[],
         tool_versions={"test": "1"},
         flags=[],
+        reading_text_version=("1" if reading is not None else None),
+        reading_text=reading,
+        reading_text_status=("heuristic" if reading is not None else None),
+        reading_text_map_version=("1" if reading is not None else None),
+        reading_text_map=reading_map or [],
+        layout_text_result=layout,
     )
     artifact = TextArtifact(
         id=_TEXT_ID,
@@ -117,15 +142,27 @@ def _manual_raw_graph(
         anchors_with_raw_range=len(anchors),
         anchors_with_canonical_range=0,
         anchors_with_layout_range=0,
+        raw_anchor_count=len(anchors),
+        canonical_anchor_count=0,
+        layout_anchor_count=0,
+        anchors_with_raw_and_canonical=0,
+        anchors_with_raw_only=len(anchors),
+        anchors_with_canonical_only=0,
+        anchors_with_layout=0,
         exact_count=0,
         projected_count=0,
         partial_count=0,
         missing_count=0,
         ambiguous_count=0,
         single_source_count=len(anchors),
+        ambiguous_anchor_count=0,
+        single_source_anchor_count=len(anchors),
         unmapped_raw_token_count=0,
         unmapped_canonical_token_count=0,
+        canonical_unmapped_count=0,
+        layout_unmapped_count=len(anchors),
         repeated_token_ambiguity_count=0,
+        evidence_only_possible_count=0,
         raw_to_canonical_coverage_ratio=0.0,
         raw_to_layout_coverage_ratio=0.0,
     )
@@ -198,6 +235,27 @@ def test_detection_spanning_multiple_tokens_binds_to_multiple_anchors() -> None:
     assert entity_anchor_ref_ids == set(entity.anchor_set.anchor_ids)
 
 
+def test_exact_binding_emits_canonical_and_layout_display_refs_when_available() -> None:
+    raw = "Max Mustermann"
+    graph = _graph_from_raw(
+        raw,
+        reading=raw,
+        reading_map=[_segment(0, len(raw), 0, len(raw))],
+        layout=raw,
+    )
+    [entity] = _bind([_entity("PERSON", raw, 0)], graph)
+
+    assert entity.binding_status == "exact"
+    canonical_refs = [
+        ref for ref in entity.anchor_refs if ref.source_name == "canonical_reading_text"
+    ]
+    layout_refs = [ref for ref in entity.anchor_refs if ref.source_name == "layout_text"]
+    assert len(canonical_refs) == entity.anchor_set.count
+    assert len(layout_refs) == entity.anchor_set.count
+    assert "canonical_range_missing" not in entity.binding_reasons
+    assert "layout_range_missing" not in entity.binding_reasons
+
+
 def test_partial_overlap_produces_partial_status() -> None:
     graph = _graph_from_raw("Max Mustermann")
     # "Max Muster" cuts through the second token, so the binding is partial, not exact.
@@ -205,11 +263,31 @@ def test_partial_overlap_produces_partial_status() -> None:
 
     assert entity.binding_status == "partial"
     assert entity.identity_basis == "anchor_partial"
-    assert entity.binding_reasons == ["anchor_partial_overlap"]
+    assert "anchor_partial_overlap" in entity.binding_reasons
+    assert "canonical_range_missing" in entity.binding_reasons
+    assert "layout_range_missing" in entity.binding_reasons
     statuses = {
         ref.binding_status for ref in entity.anchor_refs if ref.binding_role == "entity_span"
     }
     assert statuses == {"exact", "partial"}
+
+
+def test_partial_binding_does_not_emit_whole_anchor_display_refs() -> None:
+    raw = "Max Mustermann"
+    graph = _graph_from_raw(
+        raw,
+        reading=raw,
+        reading_map=[_segment(0, len(raw), 0, len(raw))],
+        layout=raw,
+    )
+    [entity] = _bind([_entity("PERSON", "Max Muster", 0)], graph)
+
+    assert entity.binding_status == "partial"
+    assert [
+        ref for ref in entity.anchor_refs if ref.binding_role == "display_span"
+    ] == []
+    assert "canonical_range_missing" in entity.binding_reasons
+    assert "layout_range_missing" in entity.binding_reasons
 
 
 def test_no_overlap_produces_missing_evidence_only_status() -> None:
@@ -242,7 +320,8 @@ def test_not_applicable_when_no_anchor_graph() -> None:
 
     assert entity.binding_status == "not_applicable"
     assert entity.identity_basis == "evidence_only"
-    assert "binding_not_required" in entity.binding_reasons
+    assert "text_anchor_graph_missing" in entity.binding_reasons
+    assert "evidence_only_identity" in entity.binding_reasons
 
 
 # --- repeated tokens, merging, separation --------------------------------------------------------
@@ -339,9 +418,17 @@ def test_binding_summary_counts_every_status() -> None:
         document_id=_DOCUMENT_ID,
     )
     assert summary.total == 2
+    assert summary.total_entities == 2
     assert summary.exact == 2
     assert summary.anchor_bound == 2
+    assert summary.anchor_bound_entities == 2
     assert summary.evidence_only == 0
+    assert summary.entities_with_raw_range == 2
+    assert summary.missing_canonical_range_count == 2
+    assert summary.missing_layout_range_count == 2
+    assert summary.binding_reason_counts["anchor_exact_match"] == 2
+    assert "canonical_range_missing" in summary.warning_codes
+    assert "layout_range_missing" in summary.warning_codes
 
 
 # --- privacy: no raw token text in binding metadata ----------------------------------------------

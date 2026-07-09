@@ -122,6 +122,41 @@ function contract(entities: ReviewReadyAnchorBoundPiiEntity[]): PiiEntityContrac
       missing: entities.filter((item) => item.binding_status === "missing").length,
       ambiguous: entities.filter((item) => item.binding_status === "ambiguous").length,
       not_applicable: entities.filter((item) => item.binding_status === "not_applicable").length,
+      total_entities: entities.length,
+      anchor_bound_entities: entities.filter((item) => item.identity_basis !== "evidence_only")
+        .length,
+      evidence_only_entities: entities.filter((item) => item.identity_basis === "evidence_only")
+        .length,
+      exact_bound_entities: entities.filter((item) => item.binding_status === "exact").length,
+      partial_bound_entities: entities.filter((item) => item.binding_status === "partial").length,
+      ambiguous_bound_entities: entities.filter((item) => item.binding_status === "ambiguous")
+        .length,
+      entities_with_raw_range: entities.length,
+      entities_with_canonical_range: entities.filter(
+        (item) => item.display.canonical_highlight_range != null,
+      ).length,
+      entities_with_layout_range: entities.filter((item) =>
+        item.anchor_refs.some(
+          (ref) =>
+            ref.source_name === "layout_text" &&
+            ref.binding_role === "display_span" &&
+            ref.source_range != null,
+        ),
+      ).length,
+      missing_canonical_range_count: entities.filter(
+        (item) => item.display.canonical_highlight_range == null,
+      ).length,
+      missing_layout_range_count: entities.filter(
+        (item) =>
+          !item.anchor_refs.some(
+            (ref) =>
+              ref.source_name === "layout_text" &&
+              ref.binding_role === "display_span" &&
+              ref.source_range != null,
+          ),
+      ).length,
+      binding_reason_counts: {},
+      warning_codes: [],
     },
     mapping_summary: {
       exact: entities.filter((item) => item.mapping_status === "exact").length,
@@ -253,6 +288,32 @@ describe("buildAnchorBoundPiiHighlights", () => {
     ]);
   });
 
+  it("builds layout highlights only from layout anchor refs", () => {
+    const model = buildAnchorBoundPiiHighlights(
+      contract([
+        anchorEntity({
+          anchor_refs: [
+            ...anchorEntity().anchor_refs,
+            {
+              anchor_id: "a".repeat(32),
+              source_name: "layout_text",
+              source_range: { start: 2, end: 6 },
+              binding_status: "exact",
+              binding_role: "display_span",
+              confidence: null,
+              reason_codes: [],
+            },
+          ],
+        }),
+      ]),
+    );
+
+    expect(model.byView.layout_text).toMatchObject([
+      { entity_id: "1".repeat(32), source_name: "layout_text", start: 2, end: 6 },
+    ]);
+    expect(model.summary.missing_layout_count).toBe(0);
+  });
+
   it("keeps evidence-only fallback raw highlights but marks the fallback state", () => {
     const evidenceOnly = anchorEntity({
       identity_basis: "evidence_only",
@@ -284,7 +345,10 @@ describe("buildAnchorBoundPiiHighlights", () => {
     });
     expect(model.byView.canonical_reading_text).toEqual([]);
     expect(model.summary.evidence_only_count).toBe(1);
+    expect(model.summary.missing_binding_count).toBe(1);
     expect(model.summary.missing_canonical_count).toBe(1);
+    expect(model.summary.binding_reason_counts.anchor_missing).toBe(1);
+    expect(model.summary.warning_codes).toContain("anchor_missing");
   });
 
   it("does not invent canonical highlights for missing, partial, or ambiguous mappings", () => {

@@ -21,10 +21,14 @@ This is a pure, additive, derived view — like ``pii_grouping.py`` and ``pii_re
 
 from __future__ import annotations
 
+from typing import cast
+
 from app.config import Settings
 from app.schemas import (
     AnchorBoundPiiEntityV1,
     DocumentTextAnchorGraphV1,
+    PiiAnchorBindingReason,
+    PiiAnchorBindingSummary,
     PiiEntity,
     PiiEntityContractV1,
     PiiEntityDisplay,
@@ -112,6 +116,7 @@ def build_pii_entity_contract(settings: Settings, document_id: str) -> PiiEntity
         )
         for bound in bound_entities
     ]
+    binding_summary = _binding_summary(entities)
 
     return PiiEntityContractV1(
         document_id=document_id,
@@ -142,8 +147,16 @@ def _to_review_ready(
     representative = review_by_occurrence[occurrence_ids[0]]
     representative_entity = entity_by_id[occurrence_ids[0]]
 
-    mapping_status = _mapping_status(representative_entity, canonical_available, reading_text)
-    canonical_range = _canonical_range(representative_entity, mapping_status)
+    anchor_canonical_range = _anchor_display_range(bound, "canonical_reading_text")
+    mapping_status = _mapping_status(
+        representative_entity,
+        canonical_available,
+        reading_text,
+        anchor_canonical_range=anchor_canonical_range,
+    )
+    canonical_range = _canonical_range(
+        representative_entity, mapping_status, anchor_canonical_range=anchor_canonical_range
+    )
     review_reason_codes = _review_reason_codes(
         bound.binding_status, mapping_status, bound.provenance
     )
@@ -174,12 +187,16 @@ def _to_review_ready(
         review_decision=representative.review_decision,
         decision_scope=representative.decision_scope,
         display=display,
-        warnings=_entity_warnings(review_reason_codes, bound.provenance),
+        warnings=_entity_warnings(review_reason_codes, bound.binding_reasons, bound.provenance),
     )
 
 
 def _mapping_status(
-    entity: PiiEntity, canonical_available: bool, reading_text: str | None
+    entity: PiiEntity,
+    canonical_available: bool,
+    reading_text: str | None,
+    *,
+    anchor_canonical_range: PiiEntityDisplaySpan | None,
 ) -> PiiEntityMappingStatus:
     """Classify how the entity's raw span connects to the canonical reading text (display view).
 
@@ -188,6 +205,8 @@ def _mapping_status(
     entity whose exact value appears more than once in the canonical text is ``ambiguous`` (multiple
     candidate positions), else ``missing`` — never dropped in any case.
     """
+    if anchor_canonical_range is not None:
+        return "exact"
     if not canonical_available:
         return "not_applicable"
     if entity.projection_status == "exact":
@@ -200,8 +219,13 @@ def _mapping_status(
 
 
 def _canonical_range(
-    entity: PiiEntity, mapping_status: PiiEntityMappingStatus
+    entity: PiiEntity,
+    mapping_status: PiiEntityMappingStatus,
+    *,
+    anchor_canonical_range: PiiEntityDisplaySpan | None,
 ) -> PiiEntityDisplaySpan | None:
+    if anchor_canonical_range is not None:
+        return anchor_canonical_range
     if mapping_status not in ("exact", "projected"):
         return None
     if entity.reading_start_offset is None or entity.reading_end_offset is None:
@@ -234,7 +258,9 @@ def _review_reason_codes(
 
 
 def _entity_warnings(
-    review_reason_codes: list[PiiEntityReviewReasonCode], provenance: PiiEntityProvenance | None
+    review_reason_codes: list[PiiEntityReviewReasonCode],
+    binding_reasons: list[PiiAnchorBindingReason],
+    provenance: PiiEntityProvenance | None,
 ) -> list[PiiEntityReviewReasonCode]:
     """Full reason-code picture: the review reasons plus informational overlap outcomes.
 
@@ -243,6 +269,9 @@ def _entity_warnings(
     the deterministic resolver did without necessarily forcing review.
     """
     codes: list[PiiEntityReviewReasonCode] = list(review_reason_codes)
+    for reason in binding_reasons:
+        if reason != "anchor_exact_match":
+            codes.append(cast(PiiEntityReviewReasonCode, reason))
     if provenance is not None:
         if provenance.merge_reason is not None:
             merge_code = _MERGE_REASON_TO_REASON.get(provenance.merge_reason)
@@ -261,6 +290,30 @@ def _entity_warnings(
     return unique
 
 
+def _anchor_display_range(
+    bound: AnchorBoundPiiEntityV1, source_name: str
+) -> PiiEntityDisplaySpan | None:
+    display_ranges = [
+        ref.source_range
+        for ref in bound.anchor_refs
+        if ref.source_name == source_name
+        and ref.source_range is not None
+        and ref.binding_role == "display_span"
+    ]
+    if bound.binding_status != "exact" or not display_ranges:
+        return None
+    if len(display_ranges) != bound.anchor_set.count:
+        return None
+    ordered = sorted(
+        display_ranges, key=lambda source_range: (source_range.start, source_range.end)
+    )
+    return PiiEntityDisplaySpan(
+        start=ordered[0].start,
+        end=ordered[-1].end,
+        projection_method="offset_map",
+    )
+
+
 def _mapping_summary(
     entities: list[ReviewReadyAnchorBoundPiiEntity],
 ) -> PiiEntityMappingSummary:
@@ -272,6 +325,73 @@ def _mapping_summary(
         ambiguous=sum(entity.mapping_status == "ambiguous" for entity in entities),
         not_applicable=sum(entity.mapping_status == "not_applicable" for entity in entities),
     )
+
+
+def _binding_summary(
+    entities: list[ReviewReadyAnchorBoundPiiEntity],
+) -> PiiAnchorBindingSummary:
+    total = len(entities)
+    anchor_bound = sum(
+        entity.identity_basis in ("anchor_exact", "anchor_partial") for entity in entities
+    )
+    evidence_only = sum(entity.identity_basis == "evidence_only" for entity in entities)
+    exact = sum(entity.binding_status == "exact" for entity in entities)
+    partial = sum(entity.binding_status == "partial" for entity in entities)
+    missing = sum(entity.binding_status == "missing" for entity in entities)
+    ambiguous = sum(entity.binding_status == "ambiguous" for entity in entities)
+    not_applicable = sum(entity.binding_status == "not_applicable" for entity in entities)
+    canonical = sum(entity.display.canonical_highlight_range is not None for entity in entities)
+    layout = sum(_has_display_ref(entity, "layout_text") for entity in entities)
+    return PiiAnchorBindingSummary(
+        total=total,
+        anchor_bound=anchor_bound,
+        evidence_only=evidence_only,
+        exact=exact,
+        partial=partial,
+        missing=missing,
+        ambiguous=ambiguous,
+        not_applicable=not_applicable,
+        total_entities=total,
+        anchor_bound_entities=anchor_bound,
+        evidence_only_entities=evidence_only,
+        exact_bound_entities=exact,
+        partial_bound_entities=partial,
+        ambiguous_bound_entities=ambiguous,
+        entities_with_raw_range=total,
+        entities_with_canonical_range=canonical,
+        entities_with_layout_range=layout,
+        missing_canonical_range_count=total - canonical,
+        missing_layout_range_count=total - layout,
+        binding_reason_counts=_binding_reason_counts(entities),
+        warning_codes=_binding_warning_codes(entities),
+    )
+
+
+def _has_display_ref(entity: ReviewReadyAnchorBoundPiiEntity, source_name: str) -> bool:
+    return any(
+        ref.source_name == source_name
+        and ref.source_range is not None
+        and ref.binding_role == "display_span"
+        for ref in entity.anchor_refs
+    )
+
+
+def _binding_reason_counts(entities: list[ReviewReadyAnchorBoundPiiEntity]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entity in entities:
+        for reason in entity.binding_reasons:
+            counts[reason] = counts.get(reason, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _binding_warning_codes(entities: list[ReviewReadyAnchorBoundPiiEntity]) -> list[str]:
+    warnings: set[str] = set()
+    for entity in entities:
+        warnings.update(
+            reason for reason in entity.binding_reasons if reason != "anchor_exact_match"
+        )
+        warnings.update(entity.warnings)
+    return sorted(warnings)
 
 
 def _matching_text_artifact(

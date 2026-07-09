@@ -125,6 +125,11 @@ def test_builder_creates_raw_anchors_and_attaches_canonical_ranges() -> None:
     assert graph.document_id == _DOCUMENT_ID
     assert graph.summary.anchors_with_raw_range == 2
     assert graph.summary.anchors_with_canonical_range == 2
+    assert graph.summary.raw_anchor_count == 2
+    assert graph.summary.canonical_anchor_count == 2
+    assert graph.summary.anchors_with_raw_and_canonical == 2
+    assert graph.summary.anchors_with_raw_only == 0
+    assert graph.summary.canonical_unmapped_count == 0
     assert graph.summary.raw_to_canonical_coverage_ratio == 1.0
     assert graph.validation.status == "degraded"  # layout is optional and absent in this fixture
     assert "missing_layout_text" in graph.warnings
@@ -134,6 +139,13 @@ def test_builder_creates_raw_anchors_and_attaches_canonical_ranges() -> None:
         == {"technical_raw_text", "canonical_reading_text"}
         for anchor in graph.anchors
     )
+    canonical_ranges = [
+        (source_range.start, source_range.end)
+        for anchor in graph.anchors
+        for source_range in anchor.source_ranges
+        if source_range.source_name == "canonical_reading_text"
+    ]
+    assert canonical_ranges == [(0, 5), (6, 10)]
 
 
 def test_layout_missing_degrades_but_does_not_invalidate() -> None:
@@ -252,8 +264,11 @@ def test_byte_aligned_layout_ranges_are_attached_safely() -> None:
         )
     )
 
-    assert graph.validation.status == "degraded"
+    assert graph.validation.status == "valid"
     assert graph.summary.anchors_with_layout_range == graph.summary.anchors_with_raw_range
+    assert graph.summary.layout_anchor_count == graph.summary.raw_anchor_count
+    assert graph.summary.anchors_with_layout == graph.summary.anchors_with_layout_range
+    assert graph.summary.layout_unmapped_count == 0
     assert graph.summary.raw_to_layout_coverage_ratio == 1.0
 
 

@@ -46,12 +46,15 @@ export interface AnchorBoundPiiHighlightsByView {
 export interface AnchorBoundPiiHighlightSummary {
   total_entities: number;
   evidence_only_count: number;
+  missing_binding_count: number;
   partial_binding_count: number;
   ambiguous_binding_count: number;
   missing_canonical_count: number;
   ambiguous_canonical_count: number;
   partial_canonical_count: number;
   missing_layout_count: number;
+  binding_reason_counts: Record<string, number>;
+  warning_codes: string[];
 }
 
 export interface AnchorBoundPiiHighlightModel {
@@ -64,12 +67,15 @@ const EMPTY_ANCHOR_BOUND_HIGHLIGHTS: AnchorBoundPiiHighlightModel = {
   summary: {
     total_entities: 0,
     evidence_only_count: 0,
+    missing_binding_count: 0,
     partial_binding_count: 0,
     ambiguous_binding_count: 0,
     missing_canonical_count: 0,
     ambiguous_canonical_count: 0,
     partial_canonical_count: 0,
     missing_layout_count: 0,
+    binding_reason_counts: {},
+    warning_codes: [],
   },
 };
 
@@ -88,20 +94,36 @@ export function buildAnchorBoundPiiHighlights(
   const summary: AnchorBoundPiiHighlightSummary = {
     total_entities: contract.entities.length,
     evidence_only_count: 0,
+    missing_binding_count: 0,
     partial_binding_count: 0,
     ambiguous_binding_count: 0,
     missing_canonical_count: 0,
     ambiguous_canonical_count: 0,
     partial_canonical_count: 0,
     missing_layout_count: 0,
+    binding_reason_counts: {},
+    warning_codes: [],
   };
+  const warningCodes = new Set<string>();
 
   for (const entity of contract.entities) {
     if (entity.review_state === "rejected") {
       continue;
     }
+    for (const reason of entity.binding_reasons) {
+      summary.binding_reason_counts[reason] = (summary.binding_reason_counts[reason] ?? 0) + 1;
+      if (reason !== "anchor_exact_match") {
+        warningCodes.add(reason);
+      }
+    }
+    for (const warning of entity.warnings) {
+      warningCodes.add(warning);
+    }
     if (entity.identity_basis === "evidence_only") {
       summary.evidence_only_count += 1;
+    }
+    if (entity.binding_status === "missing") {
+      summary.missing_binding_count += 1;
     }
     if (entity.binding_status === "partial") {
       summary.partial_binding_count += 1;
@@ -145,6 +167,7 @@ export function buildAnchorBoundPiiHighlights(
   for (const view of Object.keys(byView) as PiiHighlightView[]) {
     byView[view].sort(compareAnchorHighlightPosition);
   }
+  summary.warning_codes = [...warningCodes].sort();
 
   return { byView, summary };
 }

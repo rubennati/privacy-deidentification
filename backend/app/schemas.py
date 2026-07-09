@@ -1365,15 +1365,27 @@ class DocumentTextAnchorGraphSummary(BaseModel):
     anchors_with_raw_range: int = Field(ge=0)
     anchors_with_canonical_range: int = Field(ge=0)
     anchors_with_layout_range: int = Field(ge=0)
+    raw_anchor_count: int = Field(default=0, ge=0)
+    canonical_anchor_count: int = Field(default=0, ge=0)
+    layout_anchor_count: int = Field(default=0, ge=0)
+    anchors_with_raw_and_canonical: int = Field(default=0, ge=0)
+    anchors_with_raw_only: int = Field(default=0, ge=0)
+    anchors_with_canonical_only: int = Field(default=0, ge=0)
+    anchors_with_layout: int = Field(default=0, ge=0)
     exact_count: int = Field(ge=0)
     projected_count: int = Field(ge=0)
     partial_count: int = Field(ge=0)
     missing_count: int = Field(ge=0)
     ambiguous_count: int = Field(ge=0)
     single_source_count: int = Field(ge=0)
+    ambiguous_anchor_count: int = Field(default=0, ge=0)
+    single_source_anchor_count: int = Field(default=0, ge=0)
     unmapped_raw_token_count: int = Field(ge=0)
     unmapped_canonical_token_count: int = Field(ge=0)
+    canonical_unmapped_count: int = Field(default=0, ge=0)
+    layout_unmapped_count: int = Field(default=0, ge=0)
     repeated_token_ambiguity_count: int = Field(ge=0)
+    evidence_only_possible_count: int = Field(default=0, ge=0)
     raw_to_canonical_coverage_ratio: float = Field(ge=0.0, le=1.0)
     raw_to_layout_coverage_ratio: float = Field(ge=0.0, le=1.0)
 
@@ -1448,17 +1460,44 @@ class DocumentTextAnchorGraphV1(BaseModel):
             raise ValueError("anchor ids must be unique within a graph")
         if self.warnings != self.validation.warnings:
             raise ValueError("graph warnings must mirror validation warnings")
+        raw_count = sum(
+            _anchor_has_source(anchor, "technical_raw_text") for anchor in self.anchors
+        )
+        canonical_count = sum(
+            _anchor_has_source(anchor, "canonical_reading_text") for anchor in self.anchors
+        )
+        layout_count = sum(_anchor_has_source(anchor, "layout_text") for anchor in self.anchors)
+        raw_and_canonical = sum(
+            _anchor_has_source(anchor, "technical_raw_text")
+            and _anchor_has_source(anchor, "canonical_reading_text")
+            for anchor in self.anchors
+        )
+        raw_only = sum(
+            _anchor_has_source(anchor, "technical_raw_text")
+            and not _anchor_has_source(anchor, "canonical_reading_text")
+            and not _anchor_has_source(anchor, "layout_text")
+            for anchor in self.anchors
+        )
+        canonical_only = sum(
+            _anchor_has_source(anchor, "canonical_reading_text")
+            and not _anchor_has_source(anchor, "technical_raw_text")
+            for anchor in self.anchors
+        )
+        anchors_without_raw = sum(
+            not _anchor_has_source(anchor, "technical_raw_text") for anchor in self.anchors
+        )
         expected = DocumentTextAnchorGraphSummary(
             total_anchors=len(self.anchors),
-            anchors_with_raw_range=sum(
-                _anchor_has_source(anchor, "technical_raw_text") for anchor in self.anchors
-            ),
-            anchors_with_canonical_range=sum(
-                _anchor_has_source(anchor, "canonical_reading_text") for anchor in self.anchors
-            ),
-            anchors_with_layout_range=sum(
-                _anchor_has_source(anchor, "layout_text") for anchor in self.anchors
-            ),
+            anchors_with_raw_range=raw_count,
+            anchors_with_canonical_range=canonical_count,
+            anchors_with_layout_range=layout_count,
+            raw_anchor_count=raw_count,
+            canonical_anchor_count=canonical_count,
+            layout_anchor_count=layout_count,
+            anchors_with_raw_and_canonical=raw_and_canonical,
+            anchors_with_raw_only=raw_only,
+            anchors_with_canonical_only=canonical_only,
+            anchors_with_layout=layout_count,
             exact_count=sum(anchor.anchor_status == "exact" for anchor in self.anchors),
             projected_count=sum(anchor.anchor_status == "projected" for anchor in self.anchors),
             partial_count=sum(anchor.anchor_status == "partial" for anchor in self.anchors),
@@ -1467,9 +1506,23 @@ class DocumentTextAnchorGraphV1(BaseModel):
             single_source_count=sum(
                 anchor.anchor_status == "single_source" for anchor in self.anchors
             ),
+            ambiguous_anchor_count=sum(
+                anchor.anchor_status == "ambiguous" for anchor in self.anchors
+            ),
+            single_source_anchor_count=sum(
+                anchor.anchor_status == "single_source" for anchor in self.anchors
+            ),
             unmapped_raw_token_count=self.summary.unmapped_raw_token_count,
             unmapped_canonical_token_count=self.summary.unmapped_canonical_token_count,
+            canonical_unmapped_count=self.summary.unmapped_canonical_token_count,
+            layout_unmapped_count=raw_count
+            - sum(
+                _anchor_has_source(anchor, "technical_raw_text")
+                and _anchor_has_source(anchor, "layout_text")
+                for anchor in self.anchors
+            ),
             repeated_token_ambiguity_count=self.summary.repeated_token_ambiguity_count,
+            evidence_only_possible_count=anchors_without_raw,
             raw_to_canonical_coverage_ratio=self.summary.raw_to_canonical_coverage_ratio,
             raw_to_layout_coverage_ratio=self.summary.raw_to_layout_coverage_ratio,
         )
@@ -2008,9 +2061,25 @@ PiiEntityReviewReasonCode = Literal[
     "anchor_binding_partial",
     "anchor_binding_missing",
     "anchor_binding_ambiguous",
+    "anchor_missing",
+    "anchor_partial_overlap",
+    "anchor_ambiguous",
     "canonical_mapping_missing",
     "canonical_mapping_partial",
     "canonical_mapping_ambiguous",
+    "canonical_range_missing",
+    "layout_range_missing",
+    "evidence_only_identity",
+    "source_range_missing",
+    "text_anchor_graph_missing",
+    "text_anchor_graph_degraded",
+    "repeated_token_ambiguity",
+    "reading_text_mapping_missing",
+    "layout_mapping_unavailable",
+    "source_not_available",
+    "invalid_entity_range",
+    "detection_evidence_only",
+    "binding_not_required",
     "conflicting_entity_type",
     "ambiguous_overlap_review_required",
     "exact_duplicate",
@@ -2097,8 +2166,15 @@ PiiAnchorBindingReason = Literal[
     "anchor_partial_overlap",
     "anchor_missing",
     "anchor_ambiguous",
-    "repeated_token_ambiguity",
+    "canonical_range_missing",
+    "layout_range_missing",
+    "evidence_only_identity",
     "source_range_missing",
+    "text_anchor_graph_missing",
+    "text_anchor_graph_degraded",
+    "repeated_token_ambiguity",
+    "reading_text_mapping_missing",
+    "layout_mapping_unavailable",
     "source_not_available",
     "invalid_entity_range",
     "detection_evidence_only",
@@ -2176,17 +2252,67 @@ class PiiAnchorBindingSummary(BaseModel):
     missing: int = Field(default=0, ge=0)
     ambiguous: int = Field(default=0, ge=0)
     not_applicable: int = Field(default=0, ge=0)
+    total_entities: int = Field(default=0, ge=0)
+    anchor_bound_entities: int = Field(default=0, ge=0)
+    evidence_only_entities: int = Field(default=0, ge=0)
+    exact_bound_entities: int = Field(default=0, ge=0)
+    partial_bound_entities: int = Field(default=0, ge=0)
+    ambiguous_bound_entities: int = Field(default=0, ge=0)
+    entities_with_raw_range: int = Field(default=0, ge=0)
+    entities_with_canonical_range: int = Field(default=0, ge=0)
+    entities_with_layout_range: int = Field(default=0, ge=0)
+    missing_canonical_range_count: int = Field(default=0, ge=0)
+    missing_layout_range_count: int = Field(default=0, ge=0)
+    binding_reason_counts: dict[str, int] = Field(default_factory=dict)
+    warning_codes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate(self) -> PiiAnchorBindingSummary:
-        by_status = self.exact + self.partial + self.missing + self.ambiguous + self.not_applicable
-        if self.total != by_status:
-            raise ValueError("binding summary total does not match per-status counts")
-        if self.anchor_bound != self.exact + self.partial:
-            raise ValueError("anchor_bound must equal exact plus partial")
-        if self.evidence_only != self.missing + self.ambiguous + self.not_applicable:
-            raise ValueError("evidence_only must equal missing plus ambiguous plus not_applicable")
+        _validate_binding_status_counts(self)
+        _validate_binding_alias_counts(self)
+        _validate_binding_range_counts(self)
         return self
+
+
+def _validate_binding_status_counts(summary: PiiAnchorBindingSummary) -> None:
+    by_status = (
+        summary.exact
+        + summary.partial
+        + summary.missing
+        + summary.ambiguous
+        + summary.not_applicable
+    )
+    if summary.total != by_status:
+        raise ValueError("binding summary total does not match per-status counts")
+    if summary.anchor_bound != summary.exact + summary.partial:
+        raise ValueError("anchor_bound must equal exact plus partial")
+    if summary.evidence_only != summary.missing + summary.ambiguous + summary.not_applicable:
+        raise ValueError("evidence_only must equal missing plus ambiguous plus not_applicable")
+
+
+def _validate_binding_alias_counts(summary: PiiAnchorBindingSummary) -> None:
+    if summary.total_entities != summary.total:
+        raise ValueError("total_entities must mirror total")
+    if summary.anchor_bound_entities != summary.anchor_bound:
+        raise ValueError("anchor_bound_entities must mirror anchor_bound")
+    if summary.evidence_only_entities != summary.evidence_only:
+        raise ValueError("evidence_only_entities must mirror evidence_only")
+    if summary.exact_bound_entities != summary.exact:
+        raise ValueError("exact_bound_entities must mirror exact")
+    if summary.partial_bound_entities != summary.partial:
+        raise ValueError("partial_bound_entities must mirror partial")
+    if summary.ambiguous_bound_entities != summary.ambiguous:
+        raise ValueError("ambiguous_bound_entities must mirror ambiguous")
+
+
+def _validate_binding_range_counts(summary: PiiAnchorBindingSummary) -> None:
+    if (
+        summary.entities_with_canonical_range + summary.missing_canonical_range_count
+        != summary.total
+    ):
+        raise ValueError("canonical range counts must cover every entity")
+    if summary.entities_with_layout_range + summary.missing_layout_range_count != summary.total:
+        raise ValueError("layout range counts must cover every entity")
 
 
 class AnchorBoundPiiEntityV1(BaseModel):
@@ -2331,6 +2457,29 @@ class PiiEntityContractV1(BaseModel):
             missing=sum(e.binding_status == "missing" for e in self.entities),
             ambiguous=sum(e.binding_status == "ambiguous" for e in self.entities),
             not_applicable=sum(e.binding_status == "not_applicable" for e in self.entities),
+            total_entities=len(self.entities),
+            anchor_bound_entities=sum(
+                e.identity_basis in ("anchor_exact", "anchor_partial") for e in self.entities
+            ),
+            evidence_only_entities=sum(e.identity_basis == "evidence_only" for e in self.entities),
+            exact_bound_entities=sum(e.binding_status == "exact" for e in self.entities),
+            partial_bound_entities=sum(e.binding_status == "partial" for e in self.entities),
+            ambiguous_bound_entities=sum(e.binding_status == "ambiguous" for e in self.entities),
+            entities_with_raw_range=len(self.entities),
+            entities_with_canonical_range=sum(
+                e.display.canonical_highlight_range is not None for e in self.entities
+            ),
+            entities_with_layout_range=sum(
+                _entity_has_anchor_ref_source(e, "layout_text") for e in self.entities
+            ),
+            missing_canonical_range_count=sum(
+                e.display.canonical_highlight_range is None for e in self.entities
+            ),
+            missing_layout_range_count=sum(
+                not _entity_has_anchor_ref_source(e, "layout_text") for e in self.entities
+            ),
+            binding_reason_counts=_pii_binding_reason_counts(self.entities),
+            warning_codes=_pii_binding_warning_codes(self.entities),
         )
         if self.binding_summary != expected_binding:
             raise ValueError("binding summary does not match entities")
@@ -2347,6 +2496,37 @@ class PiiEntityContractV1(BaseModel):
         if self.needs_review_count != sum(e.display.needs_review for e in self.entities):
             raise ValueError("needs_review_count does not match entities")
         return self
+
+
+def _entity_has_anchor_ref_source(
+    entity: ReviewReadyAnchorBoundPiiEntity, source_name: str
+) -> bool:
+    return any(
+        ref.source_name == source_name and ref.source_range is not None
+        for ref in entity.anchor_refs
+    )
+
+
+def _pii_binding_reason_counts(
+    entities: list[ReviewReadyAnchorBoundPiiEntity],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entity in entities:
+        for reason in entity.binding_reasons:
+            counts[reason] = counts.get(reason, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _pii_binding_warning_codes(
+    entities: list[ReviewReadyAnchorBoundPiiEntity],
+) -> list[str]:
+    warning_codes: set[str] = set()
+    for entity in entities:
+        warning_codes.update(
+            reason for reason in entity.binding_reasons if reason != "anchor_exact_match"
+        )
+        warning_codes.update(entity.warnings)
+    return sorted(warning_codes)
 
 
 class UploadAccepted(BaseModel):

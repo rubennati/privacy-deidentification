@@ -472,6 +472,20 @@ def _project_raw_token(
             confidence=0.5,
         )
 
+    if len(relevant) == 1:
+        segment = relevant[0]
+        if segment.mapping_status == "exact" and (
+            segment.raw_end - segment.raw_start
+            == segment.reading_end - segment.reading_start
+        ):
+            return _CanonicalProjection(
+                start=segment.reading_start + token.start - segment.raw_start,
+                end=segment.reading_start + token.end - segment.raw_start,
+                mapping_status="exact",
+                range_role="projected",
+                confidence=1.0,
+            )
+
     if all(segment.mapping_status == "exact" for segment in relevant) and (
         reading_end - reading_start == token.end - token.start
     ):
@@ -636,6 +650,10 @@ def _summary(
     repeated_token_ambiguity_count: int,
 ) -> DocumentTextAnchorGraphSummary:
     raw_count = sum(_anchor_has_source(anchor, "technical_raw_text") for anchor in anchors)
+    canonical_count = sum(
+        _anchor_has_source(anchor, "canonical_reading_text") for anchor in anchors
+    )
+    layout_count = sum(_anchor_has_source(anchor, "layout_text") for anchor in anchors)
     raw_with_canonical = sum(
         _anchor_has_source(anchor, "technical_raw_text")
         and _anchor_has_source(anchor, "canonical_reading_text")
@@ -646,24 +664,47 @@ def _summary(
         and _anchor_has_source(anchor, "layout_text")
         for anchor in anchors
     )
+    raw_only = sum(
+        _anchor_has_source(anchor, "technical_raw_text")
+        and not _anchor_has_source(anchor, "canonical_reading_text")
+        and not _anchor_has_source(anchor, "layout_text")
+        for anchor in anchors
+    )
+    canonical_only = sum(
+        _anchor_has_source(anchor, "canonical_reading_text")
+        and not _anchor_has_source(anchor, "technical_raw_text")
+        for anchor in anchors
+    )
+    ambiguous_count = sum(anchor.anchor_status == "ambiguous" for anchor in anchors)
+    single_source_count = sum(anchor.anchor_status == "single_source" for anchor in anchors)
     return DocumentTextAnchorGraphSummary(
         total_anchors=len(anchors),
         anchors_with_raw_range=raw_count,
-        anchors_with_canonical_range=sum(
-            _anchor_has_source(anchor, "canonical_reading_text") for anchor in anchors
-        ),
-        anchors_with_layout_range=sum(
-            _anchor_has_source(anchor, "layout_text") for anchor in anchors
-        ),
+        anchors_with_canonical_range=canonical_count,
+        anchors_with_layout_range=layout_count,
+        raw_anchor_count=raw_count,
+        canonical_anchor_count=canonical_count,
+        layout_anchor_count=layout_count,
+        anchors_with_raw_and_canonical=raw_with_canonical,
+        anchors_with_raw_only=raw_only,
+        anchors_with_canonical_only=canonical_only,
+        anchors_with_layout=layout_count,
         exact_count=sum(anchor.anchor_status == "exact" for anchor in anchors),
         projected_count=sum(anchor.anchor_status == "projected" for anchor in anchors),
         partial_count=sum(anchor.anchor_status == "partial" for anchor in anchors),
         missing_count=sum(anchor.anchor_status == "missing" for anchor in anchors),
-        ambiguous_count=sum(anchor.anchor_status == "ambiguous" for anchor in anchors),
-        single_source_count=sum(anchor.anchor_status == "single_source" for anchor in anchors),
+        ambiguous_count=ambiguous_count,
+        single_source_count=single_source_count,
+        ambiguous_anchor_count=ambiguous_count,
+        single_source_anchor_count=single_source_count,
         unmapped_raw_token_count=unmapped_raw_token_count,
         unmapped_canonical_token_count=unmapped_canonical_token_count,
+        canonical_unmapped_count=unmapped_canonical_token_count,
+        layout_unmapped_count=raw_count - raw_with_layout,
         repeated_token_ambiguity_count=repeated_token_ambiguity_count,
+        evidence_only_possible_count=sum(
+            not _anchor_has_source(anchor, "technical_raw_text") for anchor in anchors
+        ),
         raw_to_canonical_coverage_ratio=_ratio(raw_with_canonical, raw_count),
         raw_to_layout_coverage_ratio=_ratio(raw_with_layout, raw_count),
     )
