@@ -136,6 +136,19 @@ export interface PiiAnchorBindingSummary {
   missing: number;
   ambiguous: number;
   not_applicable: number;
+  total_entities: number;
+  anchor_bound_entities: number;
+  evidence_only_entities: number;
+  exact_bound_entities: number;
+  partial_bound_entities: number;
+  ambiguous_bound_entities: number;
+  entities_with_raw_range: number;
+  entities_with_canonical_range: number;
+  entities_with_layout_range: number;
+  missing_canonical_range_count: number;
+  missing_layout_range_count: number;
+  binding_reason_counts: Record<string, number>;
+  warning_codes: string[];
 }
 
 export interface PiiEntityMappingSummary {

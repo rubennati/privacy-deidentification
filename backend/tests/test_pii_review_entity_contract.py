@@ -31,6 +31,7 @@ from app.schemas import (
     PiiEntity,
     PiiEntityProvenance,
     PiiValidationSummary,
+    ReadingTextMapSegment,
     TextArtifact,
     TextContent,
 )
@@ -125,9 +126,29 @@ def _save_pii(
 
 
 def _save_text(
-    settings: Settings, document_id: str, *, text_id: str, raw: str, reading_text: str | None = None
+    settings: Settings,
+    document_id: str,
+    *,
+    text_id: str,
+    raw: str,
+    reading_text: str | None = None,
+    layout_text: str | None = None,
+    map_reading: bool = True,
 ) -> None:
     """Persist a minimal DOCX-style text artifact so the builder can derive a Text Anchor Graph."""
+    reading_map = (
+        [
+            ReadingTextMapSegment(
+                reading_start=0,
+                reading_end=len(reading_text),
+                raw_start=0,
+                raw_end=len(raw),
+                mapping_status="exact",
+            )
+        ]
+        if map_reading and reading_text is not None and len(reading_text) == len(raw)
+        else []
+    )
     content = TextContent(
         document_id=document_id,
         input_artifact_id="c" * 32,
@@ -141,6 +162,9 @@ def _save_text(
         reading_text_version=("1" if reading_text is not None else None),
         reading_text=reading_text,
         reading_text_status=("heuristic" if reading_text is not None else None),
+        reading_text_map_version=("1" if reading_text is not None else None),
+        reading_text_map=reading_map,
+        layout_text_result=layout_text,
     )
     artifact = TextArtifact(
         id=text_id,
@@ -160,10 +184,20 @@ def _save_pii_over_text(
     entities: list[PiiEntity],
     *,
     reading_text: str | None = None,
+    layout_text: str | None = None,
+    map_reading: bool = True,
 ) -> str:
     """Save a matching text artifact plus a PII result whose offsets live in that raw text."""
     text_id = uuid4().hex
-    _save_text(settings, document_id, text_id=text_id, raw=raw, reading_text=reading_text)
+    _save_text(
+        settings,
+        document_id,
+        text_id=text_id,
+        raw=raw,
+        reading_text=reading_text,
+        layout_text=layout_text,
+        map_reading=map_reading,
+    )
     _save_pii(
         settings,
         document_id,
@@ -231,15 +265,27 @@ def _manual_overlapping_anchor_graph(document_id: str, text_id: str) -> Document
             anchors_with_raw_range=2,
             anchors_with_canonical_range=0,
             anchors_with_layout_range=0,
+            raw_anchor_count=2,
+            canonical_anchor_count=0,
+            layout_anchor_count=0,
+            anchors_with_raw_and_canonical=0,
+            anchors_with_raw_only=2,
+            anchors_with_canonical_only=0,
+            anchors_with_layout=0,
             exact_count=0,
             projected_count=0,
             partial_count=0,
             missing_count=0,
             ambiguous_count=0,
             single_source_count=2,
+            ambiguous_anchor_count=0,
+            single_source_anchor_count=2,
             unmapped_raw_token_count=0,
             unmapped_canonical_token_count=0,
+            canonical_unmapped_count=0,
+            layout_unmapped_count=2,
             repeated_token_ambiguity_count=0,
+            evidence_only_possible_count=0,
             raw_to_canonical_coverage_ratio=0.0,
             raw_to_layout_coverage_ratio=0.0,
         ),
@@ -286,9 +332,10 @@ def test_entity_is_anchor_bound_when_graph_supports_it(
     assert entity["binding_status"] == "exact"
     assert entity["anchor_set"]["count"] == 1
     assert len(entity["anchor_set"]["anchor_ids"]) == 1
-    assert entity["binding_reasons"] == ["anchor_exact_match"]
+    assert "anchor_exact_match" in entity["binding_reasons"]
     assert body["binding_summary"]["exact"] == 1
     assert body["binding_summary"]["anchor_bound"] == 1
+    assert body["binding_summary"]["entities_with_raw_range"] == 1
 
 
 def test_entity_id_is_anchor_derived_not_offset_only_when_bound(
@@ -357,6 +404,116 @@ def test_raw_and_canonical_display_ranges_available_as_evidence(
         "projection_method": "offset_map",
     }
     assert entity_out["display"]["preferred_text_source"] == "canonical_reading_text"
+
+
+def test_anchor_canonical_range_used_when_entity_projection_is_missing(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    _save_pii_over_text(
+        settings,
+        document_id,
+        "Wien Graz",
+        [_entity("LOCATION", "Wien", 0)],
+        reading_text="Wien Graz",
+    )
+
+    body = _get_contract(client, document_id)
+    entity_out = body["entities"][0]
+
+    assert entity_out["binding_status"] == "exact"
+    assert entity_out["mapping_status"] == "exact"
+    assert entity_out["canonical_reading_text_range"] == {
+        "start": 0,
+        "end": 4,
+        "projection_method": "offset_map",
+    }
+    assert entity_out["display"]["canonical_highlight_range"] == {"start": 0, "end": 4}
+    assert body["binding_summary"]["entities_with_canonical_range"] == 1
+    assert body["binding_summary"]["missing_canonical_range_count"] == 0
+
+
+def test_anchor_layout_range_is_emitted_when_available(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    _save_pii_over_text(
+        settings,
+        document_id,
+        "Wien Graz",
+        [_entity("LOCATION", "Wien", 0)],
+        reading_text="Wien Graz",
+        layout_text="Wien Graz",
+    )
+
+    body = _get_contract(client, document_id)
+    entity_out = body["entities"][0]
+    layout_refs = [
+        ref for ref in entity_out["anchor_refs"] if ref["source_name"] == "layout_text"
+    ]
+
+    assert layout_refs == [
+        {
+            "anchor_id": entity_out["anchor_set"]["anchor_ids"][0],
+            "source_name": "layout_text",
+            "source_range": {"start": 0, "end": 4},
+            "binding_status": "exact",
+            "binding_role": "display_span",
+            "confidence": None,
+            "reason_codes": [],
+        }
+    ]
+    assert body["binding_summary"]["entities_with_layout_range"] == 1
+    assert body["binding_summary"]["missing_layout_range_count"] == 0
+
+
+def test_missing_canonical_range_is_reason_coded_without_guessing(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    _save_pii_over_text(
+        settings,
+        document_id,
+        "Wien Graz",
+        [_entity("LOCATION", "Wien", 0)],
+        reading_text="Wien Graz",
+        map_reading=False,
+    )
+
+    body = _get_contract(client, document_id)
+    entity_out = body["entities"][0]
+
+    assert entity_out["binding_status"] == "exact"
+    assert entity_out["canonical_reading_text_range"] is None
+    assert entity_out["mapping_status"] == "missing"
+    assert "canonical_range_missing" in entity_out["binding_reasons"]
+    assert "reading_text_mapping_missing" in entity_out["binding_reasons"]
+    assert body["binding_summary"]["entities_with_canonical_range"] == 0
+    assert body["binding_summary"]["missing_canonical_range_count"] == 1
+    assert "canonical_range_missing" in body["binding_summary"]["warning_codes"]
+
+
+def test_missing_layout_range_is_reason_coded_without_guessing(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    _save_pii_over_text(
+        settings,
+        document_id,
+        "Wien Graz",
+        [_entity("LOCATION", "Wien", 0)],
+        reading_text="Wien Graz",
+        layout_text="Graz Wien",
+    )
+
+    body = _get_contract(client, document_id)
+    entity_out = body["entities"][0]
+
+    assert [ref for ref in entity_out["anchor_refs"] if ref["source_name"] == "layout_text"] == []
+    assert "layout_range_missing" in entity_out["binding_reasons"]
+    assert "layout_mapping_unavailable" in entity_out["binding_reasons"]
+    assert body["binding_summary"]["entities_with_layout_range"] == 0
+    assert body["binding_summary"]["missing_layout_range_count"] == 1
 
 
 # --- degrade / never drop ------------------------------------------------------------------------
@@ -448,16 +605,14 @@ def test_binding_summary_counts(client: TestClient, settings: Settings) -> None:
     )
 
     body = _get_contract(client, document_id)
-    assert body["binding_summary"] == {
-        "total": 2,
-        "anchor_bound": 2,
-        "evidence_only": 0,
-        "exact": 2,
-        "partial": 0,
-        "missing": 0,
-        "ambiguous": 0,
-        "not_applicable": 0,
-    }
+    assert body["binding_summary"]["total"] == 2
+    assert body["binding_summary"]["total_entities"] == 2
+    assert body["binding_summary"]["anchor_bound"] == 2
+    assert body["binding_summary"]["anchor_bound_entities"] == 2
+    assert body["binding_summary"]["exact"] == 2
+    assert body["binding_summary"]["exact_bound_entities"] == 2
+    assert body["binding_summary"]["entities_with_raw_range"] == 2
+    assert body["binding_summary"]["evidence_only"] == 0
 
 
 def test_repeated_values_not_globally_bound(client: TestClient, settings: Settings) -> None:
@@ -640,5 +795,6 @@ def test_value_is_confined_and_no_token_text_leaks(
     assert secret not in json.dumps(entity_out["display"])
     assert secret not in json.dumps(entity_out["warnings"])
     assert secret not in json.dumps(entity_out.get("provenance"))
+    assert secret not in json.dumps(response.json()["binding_summary"])
     # Neighbour context words from the raw text are never sent by this endpoint at all.
     assert "in Wien" not in response.text

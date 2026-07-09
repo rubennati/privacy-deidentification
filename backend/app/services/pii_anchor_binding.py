@@ -54,6 +54,26 @@ from app.schemas import (
 
 _RAW_SOURCE: DocumentTextAnchorSourceName = "technical_raw_text"
 _CANONICAL_SOURCE: DocumentTextAnchorSourceName = "canonical_reading_text"
+_LAYOUT_SOURCE: DocumentTextAnchorSourceName = "layout_text"
+_REASON_ORDER: tuple[PiiAnchorBindingReason, ...] = (
+    "anchor_exact_match",
+    "anchor_partial_overlap",
+    "anchor_missing",
+    "anchor_ambiguous",
+    "canonical_range_missing",
+    "layout_range_missing",
+    "evidence_only_identity",
+    "source_range_missing",
+    "text_anchor_graph_missing",
+    "text_anchor_graph_degraded",
+    "repeated_token_ambiguity",
+    "reading_text_mapping_missing",
+    "layout_mapping_unavailable",
+    "source_not_available",
+    "invalid_entity_range",
+    "detection_evidence_only",
+    "binding_not_required",
+)
 
 
 @dataclass(frozen=True)
@@ -64,6 +84,21 @@ class _RawAnchor:
     start: int
     end: int
     canonical_range: tuple[int, int] | None
+    layout_range: tuple[int, int] | None
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _AnchorContext:
+    """Text-free graph facts needed to bind detections and explain display-range gaps."""
+
+    graph_available: bool
+    graph_degraded: bool
+    raw_available: bool
+    raw_char_count: int
+    canonical_available: bool
+    layout_available: bool
+    raw_anchors: tuple[_RawAnchor, ...]
 
 
 @dataclass(frozen=True)
@@ -90,13 +125,11 @@ def bind_pii_entities_to_anchors(
     OCR/Text artifact was re-run since detection): every entity then binds ``not_applicable``
     (evidence-only), and nothing is dropped.
     """
-    raw_anchors, raw_available, raw_char_count = _raw_anchors(graph)
+    context = _anchor_context(graph)
     observations = [
         _bind_observation(
             entity,
-            raw_anchors,
-            raw_available=raw_available,
-            raw_char_count=raw_char_count,
+            context,
         )
         for entity in entities
     ]
@@ -112,17 +145,26 @@ def bind_pii_entities_to_anchors(
     return bound, _summary(bound)
 
 
-def _raw_anchors(
-    graph: DocumentTextAnchorGraphV1 | None,
-) -> tuple[tuple[_RawAnchor, ...], bool, int]:
-    """Extract raw-text anchors (with any canonical display range) sorted by raw offset."""
+def _anchor_context(graph: DocumentTextAnchorGraphV1 | None) -> _AnchorContext:
+    """Extract source availability and raw anchors sorted by raw offset."""
     if graph is None:
-        return (), False, 0
-    raw_source = next(
-        (source for source in graph.sources if source.source_name == _RAW_SOURCE), None
-    )
+        return _AnchorContext(
+            graph_available=False,
+            graph_degraded=False,
+            raw_available=False,
+            raw_char_count=0,
+            canonical_available=False,
+            layout_available=False,
+            raw_anchors=(),
+        )
+    sources = {source.source_name: source for source in graph.sources}
+    raw_source = sources.get(_RAW_SOURCE)
+    canonical_source = sources.get(_CANONICAL_SOURCE)
+    layout_source = sources.get(_LAYOUT_SOURCE)
     raw_available = raw_source is not None and raw_source.available
     raw_char_count = (raw_source.text_char_count or 0) if raw_source is not None else 0
+    canonical_available = canonical_source is not None and canonical_source.available
+    layout_available = layout_source is not None and layout_source.available
 
     anchors: list[_RawAnchor] = []
     for anchor in graph.anchors:
@@ -134,6 +176,9 @@ def _raw_anchors(
         canonical = next(
             (r for r in anchor.source_ranges if r.source_name == _CANONICAL_SOURCE), None
         )
+        layout = next(
+            (r for r in anchor.source_ranges if r.source_name == _LAYOUT_SOURCE), None
+        )
         anchors.append(
             _RawAnchor(
                 anchor_id=anchor.anchor_id,
@@ -142,38 +187,75 @@ def _raw_anchors(
                 canonical_range=(
                     (canonical.start, canonical.end) if canonical is not None else None
                 ),
+                layout_range=((layout.start, layout.end) if layout is not None else None),
+                warnings=tuple(anchor.warnings),
             )
         )
     anchors.sort(key=lambda anchor: (anchor.start, anchor.end, anchor.anchor_id))
-    return tuple(anchors), raw_available, raw_char_count
+    return _AnchorContext(
+        graph_available=True,
+        graph_degraded=graph.validation.status != "valid",
+        raw_available=raw_available,
+        raw_char_count=raw_char_count,
+        canonical_available=canonical_available,
+        layout_available=layout_available,
+        raw_anchors=tuple(anchors),
+    )
 
 
 def _bind_observation(
     entity: PiiEntity,
-    raw_anchors: Sequence[_RawAnchor],
-    *,
-    raw_available: bool,
-    raw_char_count: int,
+    context: _AnchorContext,
 ) -> _BoundObservation:
-    if not raw_available:
+    if not context.graph_available:
         return _evidence_only(
-            entity, "not_applicable", ("source_not_available", "binding_not_required")
+            entity,
+            "not_applicable",
+            ("text_anchor_graph_missing", "evidence_only_identity"),
         )
-    if entity.end_offset > raw_char_count:
+    if not context.raw_available:
+        return _evidence_only(
+            entity,
+            "missing",
+            ("source_not_available", "source_range_missing", "evidence_only_identity"),
+        )
+    if entity.end_offset > context.raw_char_count:
         # The stored entity offsets no longer fit the graph's raw text: keep it as evidence, never
         # bind it to a wrong anchor.
         return _evidence_only(
-            entity, "missing", ("invalid_entity_range", "detection_evidence_only")
+            entity,
+            "missing",
+            ("source_range_missing", "invalid_entity_range", "evidence_only_identity"),
         )
 
     overlapping = [
         anchor
-        for anchor in raw_anchors
+        for anchor in context.raw_anchors
         if anchor.start < entity.end_offset and entity.start_offset < anchor.end
     ]
     if not overlapping:
-        return _evidence_only(entity, "missing", ("anchor_missing", "detection_evidence_only"))
+        return _evidence_only(
+            entity,
+            "missing",
+            _ordered_reasons(
+                (
+                    "anchor_missing",
+                    "evidence_only_identity",
+                    *_graph_reasons(context),
+                    *_range_reasons((), context, display_allowed=False),
+                )
+            ),
+        )
     if _mutually_overlapping(overlapping):
+        reasons: tuple[PiiAnchorBindingReason, ...] = _ordered_reasons(
+            (
+                "anchor_ambiguous",
+                *_repeated_token_reasons(overlapping),
+                "evidence_only_identity",
+                *_graph_reasons(context),
+                *_range_reasons((), context, display_allowed=False),
+            )
+        )
         refs = tuple(
             _anchor_ref(anchor, "ambiguous", "inferred_span", ("anchor_ambiguous",))
             for anchor in overlapping
@@ -181,7 +263,7 @@ def _bind_observation(
         return _BoundObservation(
             entity=entity,
             binding_status="ambiguous",
-            binding_reasons=("anchor_ambiguous", "repeated_token_ambiguity"),
+            binding_reasons=reasons,
             identity_basis="evidence_only",
             anchor_ids=(),
             anchor_refs=refs,
@@ -196,18 +278,30 @@ def _bind_observation(
         and overlapping[-1].end == entity.end_offset
     )
     if fully_contained and aligned:
-        return _anchor_bound(entity, overlapping, status="exact", basis="anchor_exact")
-    return _anchor_bound(entity, overlapping, status="partial", basis="anchor_partial")
+        return _anchor_bound(
+            entity, overlapping, context=context, status="exact", basis="anchor_exact"
+        )
+    return _anchor_bound(
+        entity, overlapping, context=context, status="partial", basis="anchor_partial"
+    )
 
 
 def _anchor_bound(
     entity: PiiEntity,
     overlapping: Sequence[_RawAnchor],
     *,
+    context: _AnchorContext,
     status: PiiAnchorBindingStatus,
     basis: PiiEntityIdentityBasis,
 ) -> _BoundObservation:
     refs: list[PiiEntityAnchorRef] = []
+    emit_display_refs = status == "exact"
+    all_canonical_ranges = emit_display_refs and all(
+        anchor.canonical_range is not None for anchor in overlapping
+    )
+    all_layout_ranges = emit_display_refs and all(
+        anchor.layout_range is not None for anchor in overlapping
+    )
     for anchor in overlapping:
         contained = entity.start_offset <= anchor.start and anchor.end <= entity.end_offset
         anchor_status: PiiAnchorBindingStatus = "exact" if contained else "partial"
@@ -215,15 +309,25 @@ def _anchor_bound(
             "anchor_exact_match" if contained else "anchor_partial_overlap"
         )
         refs.append(_anchor_ref(anchor, anchor_status, "entity_span", (reason,)))
-        if anchor.canonical_range is not None:
-            refs.append(_canonical_display_ref(anchor, anchor_status))
+        if all_canonical_ranges:
+            refs.append(_display_ref(anchor, _CANONICAL_SOURCE, anchor_status))
+        if all_layout_ranges:
+            refs.append(_display_ref(anchor, _LAYOUT_SOURCE, anchor_status))
     reason_code: PiiAnchorBindingReason = (
         "anchor_exact_match" if status == "exact" else "anchor_partial_overlap"
+    )
+    reasons = _ordered_reasons(
+        (
+            reason_code,
+            *_graph_reasons(context),
+            *_repeated_token_reasons(overlapping),
+            *_range_reasons(overlapping, context, display_allowed=status == "exact"),
+        )
     )
     return _BoundObservation(
         entity=entity,
         binding_status=status,
-        binding_reasons=(reason_code,),
+        binding_reasons=reasons,
         identity_basis=basis,
         anchor_ids=tuple(anchor.anchor_id for anchor in overlapping),
         anchor_refs=tuple(refs),
@@ -262,20 +366,70 @@ def _anchor_ref(
     )
 
 
-def _canonical_display_ref(
-    anchor: _RawAnchor, status: PiiAnchorBindingStatus
+def _display_ref(
+    anchor: _RawAnchor, source_name: DocumentTextAnchorSourceName, status: PiiAnchorBindingStatus
 ) -> PiiEntityAnchorRef:
-    assert anchor.canonical_range is not None
-    start, end = anchor.canonical_range
+    source_range = (
+        anchor.canonical_range if source_name == _CANONICAL_SOURCE else anchor.layout_range
+    )
+    assert source_range is not None
+    start, end = source_range
     return PiiEntityAnchorRef(
         anchor_id=anchor.anchor_id,
-        source_name=_CANONICAL_SOURCE,
+        source_name=source_name,
         source_range=PiiEntitySpan(start=start, end=end),
         binding_status=status,
         binding_role="display_span",
         confidence=None,
         reason_codes=[],
     )
+
+
+def _graph_reasons(context: _AnchorContext) -> tuple[PiiAnchorBindingReason, ...]:
+    if context.graph_degraded:
+        return ("text_anchor_graph_degraded",)
+    return ()
+
+
+def _repeated_token_reasons(
+    anchors: Sequence[_RawAnchor],
+) -> tuple[PiiAnchorBindingReason, ...]:
+    if any("ambiguous_repeated_token" in anchor.warnings for anchor in anchors):
+        return ("repeated_token_ambiguity",)
+    return ()
+
+
+def _range_reasons(
+    anchors: Sequence[_RawAnchor], context: _AnchorContext, *, display_allowed: bool
+) -> tuple[PiiAnchorBindingReason, ...]:
+    reasons: list[PiiAnchorBindingReason] = []
+    canonical_complete = display_allowed and bool(anchors) and all(
+        anchor.canonical_range is not None for anchor in anchors
+    )
+    if not canonical_complete:
+        reasons.append("canonical_range_missing")
+        if context.canonical_available:
+            reasons.append("reading_text_mapping_missing")
+        else:
+            reasons.append("source_not_available")
+
+    layout_complete = display_allowed and bool(anchors) and all(
+        anchor.layout_range is not None for anchor in anchors
+    )
+    if not layout_complete:
+        reasons.append("layout_range_missing")
+        if context.layout_available:
+            reasons.append("layout_mapping_unavailable")
+        else:
+            reasons.append("source_not_available")
+    return tuple(reasons)
+
+
+def _ordered_reasons(
+    reasons: Sequence[PiiAnchorBindingReason],
+) -> tuple[PiiAnchorBindingReason, ...]:
+    present = set(reasons)
+    return tuple(reason for reason in _REASON_ORDER if reason in present)
 
 
 def _mutually_overlapping(anchors: Sequence[_RawAnchor]) -> bool:
@@ -448,15 +602,66 @@ def _entity_id(
 
 
 def _summary(entities: Sequence[AnchorBoundPiiEntityV1]) -> PiiAnchorBindingSummary:
-    return PiiAnchorBindingSummary(
-        total=len(entities),
-        anchor_bound=sum(
-            entity.identity_basis in ("anchor_exact", "anchor_partial") for entity in entities
-        ),
-        evidence_only=sum(entity.identity_basis == "evidence_only" for entity in entities),
-        exact=sum(entity.binding_status == "exact" for entity in entities),
-        partial=sum(entity.binding_status == "partial" for entity in entities),
-        missing=sum(entity.binding_status == "missing" for entity in entities),
-        ambiguous=sum(entity.binding_status == "ambiguous" for entity in entities),
-        not_applicable=sum(entity.binding_status == "not_applicable" for entity in entities),
+    total = len(entities)
+    anchor_bound = sum(
+        entity.identity_basis in ("anchor_exact", "anchor_partial") for entity in entities
     )
+    evidence_only = sum(entity.identity_basis == "evidence_only" for entity in entities)
+    exact = sum(entity.binding_status == "exact" for entity in entities)
+    partial = sum(entity.binding_status == "partial" for entity in entities)
+    missing = sum(entity.binding_status == "missing" for entity in entities)
+    ambiguous = sum(entity.binding_status == "ambiguous" for entity in entities)
+    not_applicable = sum(entity.binding_status == "not_applicable" for entity in entities)
+    canonical_count = sum(_has_display_ref(entity, _CANONICAL_SOURCE) for entity in entities)
+    layout_count = sum(_has_display_ref(entity, _LAYOUT_SOURCE) for entity in entities)
+    return PiiAnchorBindingSummary(
+        total=total,
+        anchor_bound=anchor_bound,
+        evidence_only=evidence_only,
+        exact=exact,
+        partial=partial,
+        missing=missing,
+        ambiguous=ambiguous,
+        not_applicable=not_applicable,
+        total_entities=total,
+        anchor_bound_entities=anchor_bound,
+        evidence_only_entities=evidence_only,
+        exact_bound_entities=exact,
+        partial_bound_entities=partial,
+        ambiguous_bound_entities=ambiguous,
+        entities_with_raw_range=total,
+        entities_with_canonical_range=canonical_count,
+        entities_with_layout_range=layout_count,
+        missing_canonical_range_count=total - canonical_count,
+        missing_layout_range_count=total - layout_count,
+        binding_reason_counts=_binding_reason_counts(entities),
+        warning_codes=_warning_codes(entities),
+    )
+
+
+def _has_display_ref(
+    entity: AnchorBoundPiiEntityV1, source_name: DocumentTextAnchorSourceName
+) -> bool:
+    return any(
+        ref.source_name == source_name
+        and ref.source_range is not None
+        and ref.binding_role == "display_span"
+        for ref in entity.anchor_refs
+    )
+
+
+def _binding_reason_counts(entities: Sequence[AnchorBoundPiiEntityV1]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entity in entities:
+        for reason in entity.binding_reasons:
+            counts[reason] = counts.get(reason, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _warning_codes(entities: Sequence[AnchorBoundPiiEntityV1]) -> list[str]:
+    warnings: set[str] = set()
+    for entity in entities:
+        warnings.update(
+            reason for reason in entity.binding_reasons if reason != "anchor_exact_match"
+        )
+    return sorted(warnings)

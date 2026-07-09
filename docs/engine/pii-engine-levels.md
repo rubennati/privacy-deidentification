@@ -284,11 +284,15 @@ stage that runs after detection**. This stage is a first-class part of the engin
   ADR-0031 Phase B, a pure derived view (`pii_anchor_binding.py`, `pii_entity_contract.py`,
   `GET …/pii/entity-contract`) packages the resolved entities review-ready with anchor-derived
   identity where the matching Text Anchor Graph binds, explicit evidence-only fallback when binding
-  is missing/ambiguous/not applicable, detector source observations, raw + optional canonical display
-  ranges, canonical `mapping_status`, overlap provenance, resolved review state, and a text-free
-  display model. Missing/partial/ambiguous anchor or canonical mapping never drops an entity. This is
-  the stable foundation the formal L13 `review_result` builds on, **not** that binding artifact
-  itself. See [ADR-0029](../adr/0029-pii-review-ready-entity-contract.md) and
+  is missing/ambiguous/not applicable, detector source observations, raw + optional
+  canonical/layout display ranges, canonical `mapping_status`, overlap provenance, resolved review
+  state, and a text-free display model. Binding and entity-contract summaries report
+  raw/canonical/layout range coverage plus reason-code counts for missing canonical/layout ranges,
+  degraded or missing anchor graphs, repeated-token ambiguity, reading-text mapping gaps, and
+  intentionally conservative layout mapping. Missing/partial/ambiguous anchor or canonical mapping
+  never drops an entity. This is the stable foundation the formal L13 `review_result` builds on,
+  **not** that binding artifact itself. See
+  [ADR-0029](../adr/0029-pii-review-ready-entity-contract.md) and
   [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md).
 - **Boundary to L13:** L12 makes the machine's entity set clean; L13 makes a human's decision binding.
 
@@ -406,7 +410,7 @@ must account for that boundary explicitly.
 | 9 Reproducible + dev settings | ✅ done | `content.engine_settings`, `ENABLE_DEV_ENGINE_SETTINGS` |
 | 10 Human feedback capture | ⏳ partial | dev-only per-entity feedback JSONL; not the binding overlay |
 | 11 Entity grouping | ✅ done | derived `pii_grouping.py` view + review-decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
-| 12 Overlap / conflict resolution | ✅ done | `pii_input` adapter + deterministic `pii_overlap` resolution ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)) |
+| 12 Overlap / conflict resolution | ✅ done | `pii_input` adapter + deterministic `pii_overlap` resolution + anchor-bound entity diagnostics ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) |
 | 13 Review confirm / reject | ⛔ open | review UI is display + dev-feedback only |
 | 14 Manual add | ⛔ open | — |
 | 15 Feedback-derived regression | ⛔ open | benchmark inputs hand-authored today |

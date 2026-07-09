@@ -101,6 +101,10 @@ Gates for the implemented **Text Anchor Graph v1** and any future PR that extend
   warnings, validation, logs, or docs.
 - **Missing/ambiguous mapping is an explicit, tested state** — never a silently dropped highlight and
   never a guessed match; string equality alone never merges two occurrences into one identity.
+- **Anchor/binding diagnostics are structural only** — coverage summaries, reason counts, warning
+  codes, source names, offsets, and ids are allowed; copied document text, entity values, snippets,
+  filenames, or private corpus content are not. The frontend renders only server-provided
+  raw/canonical/layout ranges and must not recover missing ranges with string search.
 - **Technical raw text stays the offset authority and is never mutated**, and the active-PII-input
   `text_lineage_map` separation gate is not bypassed by anchor work.
 - **Pseudonymization renders from decisions; reconstruction maps placeholders** — no blind string

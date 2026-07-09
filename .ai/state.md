@@ -12,11 +12,19 @@
   `PiiAnchorBindingSummary`: exact/partial bindings use anchor identity, missing/ambiguous/no-graph
   cases become explicit evidence-only fallbacks, and duplicate observations for the same anchor set
   + entity type merge provenance. Raw/canonical ranges remain evidence/display fields; review state
-  still resolves through the existing decision overlay; no detection input switch, SQLite migration,
-  OCR extraction change, pseudonymization, redaction, reconstruction, export, runtime/job change,
-  dependency, or private-corpus fixture is introduced. Frontend PII highlights now consume that
-  server entity contract as their source of truth and derive raw/canonical/layout view ranges from
-  the same anchor-bound entity identity. Next: formal Review L8 `review_result`.
+  still resolves through the existing decision overlay. Anchor and binding diagnostics are now
+  stronger: Text Anchor Graph summaries expose raw/canonical/layout coverage counts; PII binding
+  summaries expose entities-with-raw/canonical/layout ranges, missing canonical/layout counts,
+  binding reason counts, and top-level warning codes; exact anchor-bound entities propagate safe
+  canonical/layout display ranges from complete anchor refs; missing ranges are attributed to stable
+  reason codes such as `canonical_range_missing`, `reading_text_mapping_missing`,
+  `layout_range_missing`, `layout_mapping_unavailable`, `text_anchor_graph_missing`, and
+  `repeated_token_ambiguity`. No detection input switch, SQLite migration, OCR extraction behavior
+  change, pseudonymization, redaction, reconstruction, export, runtime/job change, dependency, or
+  private-corpus fixture is introduced. Frontend PII highlights now consume that server entity
+  contract as their source of truth and derive raw/canonical/layout view ranges from the same
+  anchor-bound entity identity; missing canonical/layout ranges remain visible reason-coded states,
+  never frontend guesses. Next: formal Review L8 `review_result`.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 

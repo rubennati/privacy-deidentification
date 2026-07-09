@@ -45,10 +45,12 @@ export function ReviewTextViewer({
     highlightModel.summary.missing_canonical_count > 0 ||
     highlightModel.summary.partial_canonical_count > 0 ||
     highlightModel.summary.ambiguous_canonical_count > 0;
-  const hasAnchorState =
-    highlightModel.summary.evidence_only_count > 0 ||
+  const hasMissingAnchorBinding = highlightModel.summary.missing_binding_count > 0;
+  const hasPartialOrAmbiguousBinding =
     highlightModel.summary.partial_binding_count > 0 ||
     highlightModel.summary.ambiguous_binding_count > 0;
+  const hasEvidenceOnlyFallback = highlightModel.summary.evidence_only_count > 0;
+  const hasMissingLayoutRanges = highlightModel.summary.missing_layout_count > 0;
 
   return (
     <section className="min-w-0" aria-labelledby="text-viewer-heading">
@@ -120,14 +122,31 @@ export function ReviewTextViewer({
       )}
       {activeMode === "reading" && hasMissingCanonicalMapping && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
-          Einige PII-Entities haben fehlende, teilweise oder mehrdeutige Lesetext-Zuordnung und
+          Kanonische Ranges fehlen, sind teilweise oder mehrdeutig. Fehlende Lesetext-Markierungen
           werden hier nicht geraten.
         </p>
       )}
-      {hasAnchorState && (
+      {activeMode === "layout" && hasMissingLayoutRanges && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
-          Einige PII-Entities sind nur teilweise an Anchors gebunden oder laufen als
-          evidence-only Fallback.
+          Layout-Ranges fehlen oder sind nicht verfügbar. Der Vertrag liefert nur markierbare
+          Layout-Ranges, wenn die Anchor-Zuordnung sicher ist.
+        </p>
+      )}
+      {hasMissingAnchorBinding && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Anchor-Bindung fehlt fuer einige PII-Entities. Diese Entities bleiben als Raw-Range
+          sichtbar und werden nicht in andere Views geraten.
+        </p>
+      )}
+      {hasPartialOrAmbiguousBinding && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Anchor-Bindung ist teilweise oder mehrdeutig. Der Backend-Vertrag markiert diese
+          Zuordnung explizit.
+        </p>
+      )}
+      {hasEvidenceOnlyFallback && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Evidence-only Fallback ist aktiv, wenn keine verlaessliche Anchor-Identitaet vorliegt.
         </p>
       )}
 

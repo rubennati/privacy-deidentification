@@ -52,12 +52,15 @@ const highlightModel: AnchorBoundPiiHighlightModel = {
   summary: {
     total_entities: 1,
     evidence_only_count: 0,
+    missing_binding_count: 0,
     partial_binding_count: 0,
     ambiguous_binding_count: 0,
     missing_canonical_count: 0,
     ambiguous_canonical_count: 0,
     partial_canonical_count: 0,
     missing_layout_count: 1,
+    binding_reason_counts: {},
+    warning_codes: [],
   },
 };
 
@@ -91,6 +94,9 @@ const evidenceOnlyHighlightModel: AnchorBoundPiiHighlightModel = {
   summary: {
     ...unmappedHighlightModel.summary,
     evidence_only_count: 1,
+    missing_binding_count: 1,
+    binding_reason_counts: { anchor_missing: 1, canonical_range_missing: 1 },
+    warning_codes: ["anchor_missing", "canonical_range_missing"],
   },
 };
 
@@ -216,6 +222,7 @@ describe("ReviewTextViewer", () => {
     expect(html).toContain("Wien      Graz");
     expect(html).toContain("Layout-Text dient der Orientierung");
     expect(html).toContain("keine Layout-Ranges");
+    expect(html).toContain("Layout-Ranges fehlen");
     expect(html).not.toContain("<mark");
   });
 
@@ -261,7 +268,7 @@ describe("ReviewTextViewer", () => {
     );
 
     expect(html).not.toContain("<mark");
-    expect(html).toContain("werden hier nicht geraten");
+    expect(html).toContain("Fehlende Lesetext-Markierungen");
   });
 
   it("keeps the raw-only notice when projected and unmapped entities are mixed", () => {
@@ -272,7 +279,7 @@ describe("ReviewTextViewer", () => {
     const html = render("reading", null, undefined, "Lesefreundliches Wien", true, mixed);
 
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
-    expect(html).toContain("werden hier nicht geraten");
+    expect(html).toContain("Fehlende Lesetext-Markierungen");
   });
 
   it("ignores malformed projected offsets instead of crashing", () => {
@@ -293,7 +300,8 @@ describe("ReviewTextViewer", () => {
     const html = render("raw", null, undefined, "Lesefreundliches Wien", true, evidenceOnlyHighlightModel);
 
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
-    expect(html).toContain("evidence-only Fallback");
+    expect(html).toContain("Evidence-only Fallback");
+    expect(html).toContain("Anchor-Bindung fehlt");
   });
 });
 
