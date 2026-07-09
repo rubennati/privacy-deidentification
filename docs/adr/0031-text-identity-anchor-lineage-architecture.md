@@ -2,11 +2,11 @@
 
 ## Status
 
-**Proposed** — 2026-07-09. **Design / architecture only.** This ADR introduces **no** schema code,
-service, API endpoint, database, migration, frontend change, OCR change, PII change,
-pseudonymization, reconstruction, or runtime change. It defines the target *identity layer* that
-later, separately-approved phases (see [Staged plan](#13-staged-implementation-plan)) implement one
-small PR at a time.
+**Proposed for the full architecture** — 2026-07-09. Phase A was design-only. **Phase B is now
+implemented additively** as Text Anchor Graph v1: schemas, `document_text_anchors.py`, and
+`GET /api/documents/{document_id}/text-anchors`. It is derived from `DocumentTextPackageV1`,
+not persisted, and introduces no database, migration, frontend change, OCR extraction change, PII
+binding, pseudonymization, reconstruction, redaction, or runtime change.
 
 > **ADR number note.** The task brief asked for `0030-text-identity-anchor-lineage-architecture.md`,
 > but `0030` was already taken by
@@ -56,8 +56,9 @@ the authoritative offset system and today's only active PII input), **Canonical 
 ([ADR-0027](0027-ocr-output-contract-v1-strategy.md)). Today those layers are tied together only by a
 best-effort, offset-only, partial `reading_text_map` (`exact`/`normalized`/`partial`) plus an
 in-memory unique-value text-match fallback, and by line-level `text_geometry` (raw span → page box).
-The full married model — the `text_lineage_map` the contract has always reserved as "no islands"
-work — is **not built**.
+Phase B now adds a first derived Text Anchor Graph v1 over raw/canonical/layout text ranges; the
+full married model — entity binding, word/source geometry, and downstream render/reconstruction
+state — remains staged work.
 
 PII detects on raw text, resolves overlaps ([ADR-0028](0028-pii-intake-document-text-package-v1.md)),
 and is surfaced review-ready with a **stable `entity_id`** (a hash of `document_id` + `entity_type` +
@@ -410,8 +411,10 @@ Each phase is a separate, small, approved PR. OCR/Text stays ahead of PII throug
 ([ADR-0018](0018-ocr-pii-implementation-plan.md)).
 
 - **Phase A — Design / ADR (this document).** No code.
-- **Phase B — Text Anchor Graph v1.** Derived from `DocumentTextPackageV1`, owned by OCR/Text,
-  reusing `reading_text_map` + `text_geometry`. JSON artifact / derived endpoint first. **No DB.**
+- **Phase B — Text Anchor Graph v1.** **Implemented.** Derived from `DocumentTextPackageV1`, owned by
+  OCR/Text, reusing `reading_text_map` where available and representing missing/partial/ambiguous
+  ranges explicitly. Delivered as a derived endpoint (`GET …/text-anchors`), not an embedded
+  package field or persisted artifact. **No DB.**
 - **Phase C — PII entity anchor refs.** PII entities bind to anchors (`entity_anchors`); raw/canonical
   highlights share anchor ids. Detection input unchanged (raw); separation gate intact.
 - **Phase D — Frontend highlight consistency via anchors.** One entity/anchor identity powers all

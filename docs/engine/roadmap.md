@@ -35,8 +35,9 @@ documents.
   correction — plus the additive OCR Output Contract v1 / Document Text Package boundary. The
   package is built on request from existing `text_result` artifacts, keeps raw text authoritative,
   treats canonical text as derived/contextual, treats `structured_content` as semantic hints, treats
-  quality/noise evidence as trust/uncertainty metadata, and does not migrate PII. PII still uses raw
-  text.
+  quality/noise evidence as trust/uncertainty metadata, and now feeds the derived Text Anchor Graph
+  v1 endpoint (`GET …/text-anchors`) for raw/canonical/layout identity ranges. PII still uses raw
+  text and does not bind to anchors yet.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -327,16 +328,16 @@ Add per-profile PII metrics in one invocation at L9. The L10 OCR confidence/cove
 already delivered out of order using L7 `quality_report` with a legacy artifact fallback; cumulative
 benchmark maturity remains L8 until L9 lands.
 
-### Text identity / anchor lineage — design direction (cross-cutting, Proposed)
+### Text identity / anchor lineage — Phase B delivered, downstream binding open
 
-[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only**)
-frames the stable **text anchor** identity layer that later engine steps build toward: raw/canonical/
-layout/structured are *views* of one document, married by an OCR/Text-owned anchor graph
-(`text_lineage_map` made concrete); PII binds entities to anchors; pseudonymization renders from
-decisions; reconstruction reverse-maps placeholders. Persistence is hybrid (immutable OCR/anchor JSON
-+ SQLite for review/replacement/reconstruction/audit state when Review persistence needs it). Staged
-Phases A–I; underpins **PII L17** (stable entity model with lineage) and unblocks pseudonymization/
-reconstruction ahead of Redaction. No code is introduced by the ADR.
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) frames the stable **text
+anchor** identity layer: raw/canonical/layout/structured are *views* of one document, married by an
+OCR/Text-owned anchor graph (`text_lineage_map` made concrete). Phase B is now implemented
+additively as Text Anchor Graph v1 (`document_text_anchors.py`, `GET …/text-anchors`): raw anchors
+are primary, canonical ranges attach through `reading_text_map`, layout ranges attach only when
+safely byte-aligned in v1, and missing/partial/ambiguous states are explicit. It stores no copied
+text, adds no DB, and does not change PII. PII anchor binding, frontend highlight consistency,
+pseudonymization, and reconstruction remain later phases.
 
 ### Redaction remains blocked
 

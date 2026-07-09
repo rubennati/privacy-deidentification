@@ -1230,6 +1230,258 @@ class DocumentTextPackageV1(BaseModel):
         return self
 
 
+# Text Anchor Graph v1 (ADR-0031 Phase B). This is an OCR/Text-owned, derived identity layer built
+# from DocumentTextPackageV1. It connects the existing text views by ids, offsets, statuses, and
+# reason codes only; it never duplicates private source text outside the text-bearing package
+# layers.
+DocumentTextAnchorSourceName = Literal[
+    "technical_raw_text",
+    "canonical_reading_text",
+    "layout_text",
+]
+DocumentTextAnchorStatus = Literal[
+    "exact",
+    "projected",
+    "normalized",
+    "split",
+    "merged",
+    "partial",
+    "missing",
+    "ambiguous",
+    "derived",
+    "omitted",
+    "inserted",
+    "single_source",
+]
+DocumentTextAnchorKind = Literal[
+    "word",
+    "number",
+    "email",
+    "phone",
+    "identifier",
+    "symbol",
+]
+DocumentTextAnchorRangeRole = Literal[
+    "primary",
+    "projected",
+    "derived",
+    "approximate",
+]
+DocumentTextAnchorValidationStatus = Literal["valid", "degraded", "invalid"]
+DocumentTextAnchorWarning = Literal[
+    "missing_raw_text",
+    "missing_canonical_reading_text",
+    "missing_layout_text",
+    "missing_reading_text_map",
+    "partial_lineage",
+    "ambiguous_repeated_token",
+    "unmapped_raw_tokens",
+    "unmapped_canonical_tokens",
+    "invalid_range",
+    "overlapping_anchor_ranges",
+    "unsupported_source",
+]
+
+
+class DocumentTextAnchorSource(BaseModel):
+    """A text view participating in the anchor graph, without carrying the view text itself."""
+
+    source_name: DocumentTextAnchorSourceName
+    available: bool
+    text_char_count: int | None = Field(default=None, ge=0)
+    range_count: int = Field(default=0, ge=0)
+    mapped_anchor_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> DocumentTextAnchorSource:
+        if self.available and self.text_char_count is None:
+            raise ValueError("available anchor sources require a text char count")
+        return self
+
+
+class DocumentTextAnchorRange(BaseModel):
+    """One half-open range for an anchor in a named text view.
+
+    Ranges are offsets only. The source text remains exclusively in the text source layer/package.
+    """
+
+    source_name: DocumentTextAnchorSourceName
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    range_role: DocumentTextAnchorRangeRole
+    mapping_status: DocumentTextAnchorStatus
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> DocumentTextAnchorRange:
+        if self.end <= self.start:
+            raise ValueError("anchor ranges must be non-empty and ordered")
+        return self
+
+
+class DocumentTextAnchorV1(BaseModel):
+    """Stable identity for one document information unit across available text views.
+
+    ``anchor_id`` is deterministic and range-based; token text is intentionally absent. Repeated
+    identical values remain distinct anchors unless a later derived grouping layer explicitly links
+    them.
+    """
+
+    anchor_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    anchor_kind: DocumentTextAnchorKind
+    anchor_status: DocumentTextAnchorStatus
+    source_ranges: list[DocumentTextAnchorRange] = Field(default_factory=list)
+    page_number: int | None = Field(default=None, ge=1)
+    block_id: str | None = None
+    line_id: str | None = None
+    cell_id: str | None = None
+    normalized_shape: str | None = None
+    token_class: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    flags: list[str] = Field(default_factory=list)
+    warnings: list[DocumentTextAnchorWarning] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_anchor(self) -> DocumentTextAnchorV1:
+        if not self.source_ranges:
+            raise ValueError("text anchors require at least one source range")
+        range_keys = [
+            (source_range.source_name, source_range.start, source_range.end)
+            for source_range in self.source_ranges
+        ]
+        if len(range_keys) != len(set(range_keys)):
+            raise ValueError("anchor source ranges must be unique")
+        if self.anchor_status == "single_source" and len(
+            {source_range.source_name for source_range in self.source_ranges}
+        ) != 1:
+            raise ValueError("single_source anchors must reference exactly one source")
+        return self
+
+
+class DocumentTextAnchorGraphSummary(BaseModel):
+    """Counts and coverage ratios for the anchor graph. Counts only, never source text."""
+
+    total_anchors: int = Field(ge=0)
+    anchors_with_raw_range: int = Field(ge=0)
+    anchors_with_canonical_range: int = Field(ge=0)
+    anchors_with_layout_range: int = Field(ge=0)
+    exact_count: int = Field(ge=0)
+    projected_count: int = Field(ge=0)
+    partial_count: int = Field(ge=0)
+    missing_count: int = Field(ge=0)
+    ambiguous_count: int = Field(ge=0)
+    single_source_count: int = Field(ge=0)
+    unmapped_raw_token_count: int = Field(ge=0)
+    unmapped_canonical_token_count: int = Field(ge=0)
+    repeated_token_ambiguity_count: int = Field(ge=0)
+    raw_to_canonical_coverage_ratio: float = Field(ge=0.0, le=1.0)
+    raw_to_layout_coverage_ratio: float = Field(ge=0.0, le=1.0)
+
+
+class DocumentTextAnchorGraphValidation(BaseModel):
+    """Validation rollup for Text Anchor Graph v1."""
+
+    status: DocumentTextAnchorValidationStatus
+    warning_count: int = Field(ge=0)
+    blocker_count: int = Field(ge=0)
+    invalid_range_count: int = Field(ge=0)
+    overlapping_anchor_range_count: int = Field(ge=0)
+    warnings: list[DocumentTextAnchorWarning] = Field(default_factory=list)
+    blockers: list[DocumentTextAnchorWarning] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_status(self) -> DocumentTextAnchorGraphValidation:
+        if self.warning_count != len(self.warnings):
+            raise ValueError("anchor validation warning count does not match warnings")
+        if self.blocker_count != len(self.blockers):
+            raise ValueError("anchor validation blocker count does not match blockers")
+        if self.status == "invalid" and not self.blockers:
+            raise ValueError("invalid anchor graph status requires at least one blocker")
+        if self.status != "invalid" and self.blockers:
+            raise ValueError("anchor graph blockers are only present when invalid")
+        if self.status == "degraded" and not self.warnings:
+            raise ValueError("degraded anchor graph status requires at least one warning")
+        if self.status == "valid" and self.warnings:
+            raise ValueError("valid anchor graph status must not carry warnings")
+        return self
+
+
+class DocumentTextAnchorGraphV1(BaseModel):
+    """OCR/Text-owned Text Anchor Graph v1 (ADR-0031 Phase B).
+
+    Derived from one :class:`DocumentTextPackageV1` and exposed as a read-only API view. The graph
+    carries source ids, offsets, counts, token classes/shapes, statuses, and warning codes only. It
+    intentionally does not embed source text, PII values, snippets, filenames, or OCR line text.
+    """
+
+    graph_version: Literal["1.0"] = "1.0"
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    source_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    package_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    package_contract_version: str
+    created_at: str
+    sources: list[DocumentTextAnchorSource]
+    anchors: list[DocumentTextAnchorV1] = Field(default_factory=list)
+    summary: DocumentTextAnchorGraphSummary
+    validation: DocumentTextAnchorGraphValidation
+    warnings: list[DocumentTextAnchorWarning] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_graph(self) -> DocumentTextAnchorGraphV1:
+        source_names = [source.source_name for source in self.sources]
+        expected_sources = ["technical_raw_text", "canonical_reading_text", "layout_text"]
+        if source_names != expected_sources:
+            raise ValueError("anchor graph sources must be emitted in the v1 source order")
+        source_lengths = {
+            source.source_name: source.text_char_count
+            for source in self.sources
+            if source.text_char_count is not None
+        }
+        for anchor in self.anchors:
+            for source_range in anchor.source_ranges:
+                length = source_lengths.get(source_range.source_name)
+                if length is not None and source_range.end > length:
+                    raise ValueError("anchor range exceeds source length")
+        anchor_ids = [anchor.anchor_id for anchor in self.anchors]
+        if len(anchor_ids) != len(set(anchor_ids)):
+            raise ValueError("anchor ids must be unique within a graph")
+        if self.warnings != self.validation.warnings:
+            raise ValueError("graph warnings must mirror validation warnings")
+        expected = DocumentTextAnchorGraphSummary(
+            total_anchors=len(self.anchors),
+            anchors_with_raw_range=sum(
+                _anchor_has_source(anchor, "technical_raw_text") for anchor in self.anchors
+            ),
+            anchors_with_canonical_range=sum(
+                _anchor_has_source(anchor, "canonical_reading_text") for anchor in self.anchors
+            ),
+            anchors_with_layout_range=sum(
+                _anchor_has_source(anchor, "layout_text") for anchor in self.anchors
+            ),
+            exact_count=sum(anchor.anchor_status == "exact" for anchor in self.anchors),
+            projected_count=sum(anchor.anchor_status == "projected" for anchor in self.anchors),
+            partial_count=sum(anchor.anchor_status == "partial" for anchor in self.anchors),
+            missing_count=sum(anchor.anchor_status == "missing" for anchor in self.anchors),
+            ambiguous_count=sum(anchor.anchor_status == "ambiguous" for anchor in self.anchors),
+            single_source_count=sum(
+                anchor.anchor_status == "single_source" for anchor in self.anchors
+            ),
+            unmapped_raw_token_count=self.summary.unmapped_raw_token_count,
+            unmapped_canonical_token_count=self.summary.unmapped_canonical_token_count,
+            repeated_token_ambiguity_count=self.summary.repeated_token_ambiguity_count,
+            raw_to_canonical_coverage_ratio=self.summary.raw_to_canonical_coverage_ratio,
+            raw_to_layout_coverage_ratio=self.summary.raw_to_layout_coverage_ratio,
+        )
+        if self.summary != expected:
+            raise ValueError("anchor graph summary does not match anchors")
+        return self
+
+
+def _anchor_has_source(anchor: DocumentTextAnchorV1, source_name: str) -> bool:
+    return any(source_range.source_name == source_name for source_range in anchor.source_ranges)
+
+
 # --- PII intake contract + entity provenance (ADR-0028) ------------------------------------------
 # PII consumes the OCR Output Contract v1 Document Text Package (ADR-0027) through the ``pii_input``
 # adapter and resolves overlapping candidates deterministically (``pii_overlap``). The additive,

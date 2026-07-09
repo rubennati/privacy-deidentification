@@ -41,6 +41,7 @@ input, or report may be committed.
 | `structured_content` | ✅ OCR L11 + L13 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags; L13 adds multiline label/value field continuation | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
 | `quality_evidence` | ✅ OCR L14 + L15 (field on `text_result`) | metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence for the run: a list of `QualityEvidenceItem`s plus a `QualityEvidenceSummary` with `QualityLineageCoverage`; explains where text came from and how well it maps back, without changing any text. L15 adds deterministic noise/token artifact *evidence* (glyph artifacts, suspicious token shapes, character-confusion candidates, spacing candidates, and a document-level `ocr_noise_summary`) into the same list | no raw text (offsets, counts, flags, page zones, coarse bounds, stable reason codes; `details` is `dict[str, int]`) | additive optional versioned field on `text_result` |
 | `document_text_package` (OCR Output Contract v1) | ✅ today, derived API package (ADR-0027) | versioned external package of the `text_result` layers (raw/canonical/layout/structured) + `reading_text_map` + `quality_evidence` + a `contract_status`; the stable boundary consumers depend on instead of OCR internals | packages existing text layers; adds no new raw text beyond them | computed on request by `GET /api/documents/{document_id}/text-package`; not persisted |
+| `document_text_anchor_graph` (Text Anchor Graph v1) | ✅ today, derived API graph (ADR-0031 Phase B) | OCR/Text-owned identity graph over technical raw, canonical reading, and layout text ranges; raw anchors are primary, canonical ranges attach only through `reading_text_map`, layout attaches only when safely byte-aligned in v1, and missing/partial/ambiguous states are explicit | no copied source text (anchor ids, source names, offsets, token classes/shapes, counts, statuses, and warning codes only) | computed on request by `GET /api/documents/{document_id}/text-anchors`; not persisted |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, L9 run settings, and L12 per-entity `provenance` + `input_contract`/`overlap_resolution` summaries | yes (spans); provenance/summaries are reason-codes/counts/ids only | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
 | `pii_entity_contract` (review-ready entity contract v1) | ✅ today, derived API view (ADR-0029) | packages the latest `pii_result` entities review-ready: stable `entity_id`, raw + optional canonical span, explicit `mapping_status` (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), overlap provenance, resolved review state, and a text-free display model | entity `value` mirrors `pii_result` (already on `GET …/pii`); display/warnings/provenance carry ranges + codes only, no snippet | computed on request by `GET /api/documents/{document_id}/pii/entity-contract`; not persisted |
@@ -142,12 +143,11 @@ Distinct text layers, structured layout blocks, and a lineage map are fixed by t
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
   its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction. Its
-  target design — a stable **text anchor** identity with per-view ranges, plus the downstream
-  conceptual model (`text_anchors`, `anchor_ranges`, `entity_anchors`, `review_decisions`,
-  `replacement_groups`/`replacement_tokens`, `reconstruction_map`, `audit_events`) and a hybrid
-  JSON+SQLite persistence path — is specified in
-  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only, no
-  schema yet**).
+  target design is specified in
+  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md). Phase B now delivers the
+  first derived **Text Anchor Graph v1** (`GET …/text-anchors`) with per-view ranges and explicit
+  missing/partial/ambiguous states; downstream `entity_anchors`, review/replacement/reconstruction
+  state, SQLite persistence, and PII-input switching remain future phases.
 
 These layers are additive and never mutate technical raw text or shift PII offsets. `reading_text`
 is a deterministic view over the same extracted source, not an independent source artifact. Until
