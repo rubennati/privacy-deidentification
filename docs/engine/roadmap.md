@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L15 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), and L15 additive noise/token artifact evidence in the same list | PII L12 overlap resolution |
+| OCR / Text | **L15 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), and L15 additive noise/token artifact evidence in the same list | **OCR Output Contract v1** (stabilize output as a versioned Document Text Package — [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)); then PII L12 overlap resolution |
 | PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -217,6 +217,36 @@ never printed or persisted real text. It carries no raw token text (`details` re
 artifact, benchmark payload, dependency, or public API. Redaction-ready text/geometry mapping (L15's
 earlier placeholder meaning) is deferred — see
 [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md).
+
+### OCR Output Contract v1 — Document Text Package (cross-cutting stabilization) — proposed
+
+Before further OCR/Text capability levels, stabilize the engine's output as an independent,
+reusable module with a **stable, versioned output contract**. Today a consumer such as PII reaches
+into individual `text_result` fields and OCR internals (pypdf/PaddleOCR provenance, reading-order
+heuristics, worker details); the **OCR Output Contract v1 / Document Text Package** packages the
+already-produced layers together so consumers depend on the contract, not the internals:
+
+- **raw** = authoritative offset-stable source text (`text_result.text`); **canonical** =
+  human-readable derived `reading_text`; **layout** = visual/debug `layout_text_result`;
+  **structured** = `structured_content` semantic hints; **evidence** = `quality_evidence`
+  (L14 provenance/lineage + L15 noise/token), all under a `contract_version` and a
+  `contract_status` (`valid`/`degraded`/`invalid`) with warnings/blockers/missing capabilities.
+- External OCR/PDF tool output is **normalized before crossing the contract boundary**, so adding
+  or swapping an engine stays an OCR-internal concern.
+- **PII becomes a consumer of the contract, not of OCR internals**: it may use raw as its primary
+  source, canonical/structured as secondary/hint layers, and evidence to adjust confidence or
+  review flags; it must not assume canonical is authoritative and must not break if optional
+  evidence is absent. Switching PII's active input away from raw still requires the tested
+  `text_lineage_map` separation gate.
+
+This is a **cross-cutting stabilization milestone, not a numbered engine level** — the 0–19 scale
+([ADR-0016](../adr/0016-engine-maturity-levels-0-19.md)) is unchanged. It is strategy/design only;
+see [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md). Future additive-evidence work —
+dictionary/lexicon checks, correction *suggestions*, multi-OCR/source agreement, and a
+feedback-driven improvement loop — **plugs into this contract and `quality_evidence`** and must
+never change how PII (or any consumer) receives text. Where those themes land on the formal ladder
+(vs. the current L16–L19 reproducibility/observability/regression-gate/production readiness levels)
+is decided when each level is planned; the strategy above is independent of that numbering.
 
 ### PII L11 — entity grouping — delivered
 

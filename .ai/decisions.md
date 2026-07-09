@@ -70,3 +70,10 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   character-confusion candidates, spacing candidates) folded into the same `quality_evidence` list;
   the older redaction-ready-geometry placeholder is deferred, and no OCR text is ever corrected,
   removed, or rewritten.
+- [ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md) — *Proposed (strategy/design
+  only).* Stabilize OCR/Text as an independent, reusable module with a versioned **OCR Output
+  Contract v1 / Document Text Package** (raw/canonical/layout/structured/evidence layers + source
+  roles + `contract_status`), so PII and future consumers depend on the contract, not OCR
+  internals; external OCR/PDF tool output is normalized before crossing it. A cross-cutting
+  stabilization milestone, not a numbered level; the 0–19 scale (ADR-0016) is unchanged and nothing
+  is implemented.

@@ -194,6 +194,18 @@ span geometry, L9 layout-aware blocks, readable text (L8), confidence capture (L
 `quality_report` (L7), L14 quality-evidence/lineage-coverage observability, and L15 noise/token
 artifact evidence.
 
+**Strategic direction (OCR/Text as an independent module).** The next cross-cutting OCR/Text step
+is the **OCR Output Contract v1 / Document Text Package** ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md),
+Proposed): stabilize OCR/Text output as a versioned package of raw/canonical/layout/structured/
+evidence layers with a `contract_status`, so PII (and future consumers — Review, pseudonymization,
+document analysis, export, local AI) depend on the contract, not OCR internals (PaddleOCR, PDF
+parsing, reading-order heuristics, worker details). External OCR/PDF tool output is normalized
+before crossing that boundary. This is a **stabilization milestone, not a numbered level** — the
+0–19 scale (ADR-0016) is unchanged, and deferred additive-evidence work (dictionary/lexicon,
+correction *suggestions*, multi-OCR/source agreement, feedback-driven improvement) plugs into the
+contract and `quality_evidence` without changing how PII receives text. It is design-only; nothing
+is implemented, and PII stays on technical raw text today.
+
 The OCR L8/L9 text-layer work is contract-first: the output model and invariants are fixed in
 [`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Technical raw
 `text_result.text` remains the offset authority and active PII input; canonical `reading_text` is
