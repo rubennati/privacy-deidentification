@@ -2000,9 +2000,14 @@ class PiiReviewResult(BaseModel):
 PiiEntityMappingStatus = Literal[
     "exact", "projected", "partial", "missing", "ambiguous", "not_applicable"
 ]
-# Stable review reason codes surfaced on the review-ready entity. Mapping codes are derived here;
-# overlap codes are lifted from the entity's overlap provenance (see ``pii_entity_contract.py``).
+# Stable review reason codes surfaced on the review-ready entity. Anchor-binding codes are derived
+# by the anchor-binding service (see ``pii_anchor_binding.py``); canonical-mapping codes are derived
+# here; overlap codes are lifted from the entity's overlap provenance (see
+# ``pii_entity_contract.py``). A code is never removed or repurposed.
 PiiEntityReviewReasonCode = Literal[
+    "anchor_binding_partial",
+    "anchor_binding_missing",
+    "anchor_binding_ambiguous",
     "canonical_mapping_missing",
     "canonical_mapping_partial",
     "canonical_mapping_ambiguous",
@@ -2068,34 +2073,181 @@ class PiiEntityDisplay(BaseModel):
         return self
 
 
-class ReviewReadyPiiEntity(BaseModel):
-    """One detected entity presented review-ready (ADR-0029).
+# --- Anchor-bound PII entity model v1 (ADR-0031 Phase C) -----------------------------------------
+# The review-ready PII entity is an *anchor-bound domain object*, not an offset-first detector hit.
+# Detection evidence (a recognizer observing a span on a text view) is normalized against the
+# OCR/Text-owned Text Anchor Graph v1 (ADR-0031 Phase B) into a stable entity whose identity derives
+# from anchor identity + entity type where an exact binding exists. Raw offsets, canonical ranges,
+# and the entity value remain as evidence/display fields — they are no longer the source of truth.
+# Missing/partial/ambiguous binding is explicit and never drops a detection; when no anchor graph is
+# available for the run, identity degrades to an explicit evidence-only fallback. All binding
+# metadata is text-free: ids, offsets, statuses, roles, counts, and reason codes only.
 
-    Carries a stable ``entity_id`` (same for the same document + raw span + type across re-runs),
-    the authoritative raw span, the canonical reading span where a mapping exists, an explicit
-    ``mapping_status``, deterministic overlap provenance, the resolved review state, and a text-free
-    display model. Derived from ``pii_result`` and never persisted; the immutable artifact and its
-    offsets are untouched. ``value`` mirrors ``PiiEntity.text`` (the same value already returned by
-    ``GET …/pii``) and appears only here — never inside display metadata, warnings, or provenance.
+# How one detection span binds to the raw text-anchor identity layer. ``exact``/``partial`` are the
+# two anchor-bound states (aligned to whole anchors vs. cutting across them); ``missing`` (no anchor
+# overlaps), ``ambiguous`` (incompatible candidate anchor sets), and ``not_applicable`` (no anchor
+# graph for the run) keep the detection fully reviewable as evidence-only. Never removed/repurposed.
+PiiAnchorBindingStatus = Literal["exact", "partial", "missing", "ambiguous", "not_applicable"]
+# The part an anchor plays for one entity: the entity span itself, a supporting/overlapping span, a
+# view-specific display projection, or an inferred (unconfirmed) span.
+PiiAnchorBindingRole = Literal["entity_span", "supporting_span", "display_span", "inferred_span"]
+# Stable machine-readable reason codes explaining a binding outcome. Text-free.
+PiiAnchorBindingReason = Literal[
+    "anchor_exact_match",
+    "anchor_partial_overlap",
+    "anchor_missing",
+    "anchor_ambiguous",
+    "repeated_token_ambiguity",
+    "source_range_missing",
+    "source_not_available",
+    "invalid_entity_range",
+    "detection_evidence_only",
+    "binding_not_required",
+]
+# Whether entity identity is anchor-derived (preferred) or evidence-only. ``anchor_exact`` derives
+# the id from the ordered anchor ids + type; ``anchor_partial`` additionally pins the raw span;
+# ``evidence_only`` falls back to document + type + raw span (no reliable anchor identity).
+PiiEntityIdentityBasis = Literal["anchor_exact", "anchor_partial", "evidence_only"]
+# Which detection input a source observation came from. Raw is the only active input today.
+PiiDetectionRole = Literal["primary", "supporting"]
+
+
+class PiiEntityAnchorRef(BaseModel):
+    """One anchor an entity references, in a named text view. Offsets/ids/codes only — no text."""
+
+    anchor_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    source_name: DocumentTextAnchorSourceName
+    source_range: PiiEntitySpan | None = None
+    binding_status: PiiAnchorBindingStatus
+    binding_role: PiiAnchorBindingRole
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    reason_codes: list[PiiAnchorBindingReason] = Field(default_factory=list)
+
+
+class PiiEntityAnchorSet(BaseModel):
+    """The ordered anchor identity an entity binds to.
+
+    Empty for an evidence-only fallback entity.
+    """
+
+    anchor_ids: list[str] = Field(default_factory=list)
+    binding_status: PiiAnchorBindingStatus
+    count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate(self) -> PiiEntityAnchorSet:
+        if self.count != len(self.anchor_ids):
+            raise ValueError("anchor set count does not match anchor ids")
+        if len(self.anchor_ids) != len(set(self.anchor_ids)):
+            raise ValueError("anchor set ids must be unique")
+        return self
+
+
+class PiiSourceObservation(BaseModel):
+    """One detector observation on a text view, before it became a stable domain entity.
+
+    This is the detection *evidence*: which recognizer saw a span in which view, with what
+    confidence, and how that observation bound to the anchor identity layer. It is text-free — the
+    observed value lives on :class:`AnchorBoundPiiEntityV1.value` (already exposed by
+    ``GET …/pii``), never here.
+    """
+
+    detection_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    recognizer: str
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    source_name: DocumentTextAnchorSourceName = "technical_raw_text"
+    detection_source: PiiEntityDetectionSource = "raw_text"
+    detection_role: PiiDetectionRole = "primary"
+    source_range: PiiEntitySourceSpan
+    confidence: float = Field(ge=0, le=1)
+    binding_status: PiiAnchorBindingStatus
+    binding_reasons: list[PiiAnchorBindingReason] = Field(default_factory=list)
+    provenance: PiiEntityProvenance | None = None
+
+
+class PiiAnchorBindingSummary(BaseModel):
+    """Per-run counts of entities by anchor-binding outcome. Counts only, never entity text."""
+
+    total: int = Field(ge=0)
+    anchor_bound: int = Field(ge=0)
+    evidence_only: int = Field(ge=0)
+    exact: int = Field(default=0, ge=0)
+    partial: int = Field(default=0, ge=0)
+    missing: int = Field(default=0, ge=0)
+    ambiguous: int = Field(default=0, ge=0)
+    not_applicable: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _validate(self) -> PiiAnchorBindingSummary:
+        by_status = self.exact + self.partial + self.missing + self.ambiguous + self.not_applicable
+        if self.total != by_status:
+            raise ValueError("binding summary total does not match per-status counts")
+        if self.anchor_bound != self.exact + self.partial:
+            raise ValueError("anchor_bound must equal exact plus partial")
+        if self.evidence_only != self.missing + self.ambiguous + self.not_applicable:
+            raise ValueError("evidence_only must equal missing plus ambiguous plus not_applicable")
+        return self
+
+
+class AnchorBoundPiiEntityV1(BaseModel):
+    """A stable, review-ready PII entity built from text anchors + detection evidence (ADR-0031).
+
+    Identity is anchor-derived where an exact binding exists (``entity_id`` from the ordered anchor
+    ids + type). Detection evidence (``source_observations``), overlap provenance, the raw span, and
+    the entity ``value`` are retained as evidence/display — they are not the identity. Binding
+    metadata carries no raw token text; ``value`` mirrors ``PiiEntity.text`` (already on
+    ``GET …/pii``) and appears only here, never in binding refs, reasons, or observations.
     """
 
     entity_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    source_entity_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    entity_group_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    package_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
-    value: str
-    confidence: float = Field(ge=0, le=1)
-    detection_source: PiiEntityDetectionSource = "raw_text"
-    source_role: PiiInputSourceRole = "primary"
-    page_number: int | None = Field(default=None, ge=1)
-    raw_text_range: PiiEntitySourceSpan
-    canonical_reading_text_range: PiiEntityDisplaySpan | None = None
-    mapping_status: PiiEntityMappingStatus
-    overlap_decision: PiiOverlapReason | None = None
+    identity_basis: PiiEntityIdentityBasis
+    binding_status: PiiAnchorBindingStatus
+    binding_reasons: list[PiiAnchorBindingReason] = Field(default_factory=list)
+    anchor_set: PiiEntityAnchorSet
+    anchor_refs: list[PiiEntityAnchorRef] = Field(default_factory=list)
+    source_observations: list[PiiSourceObservation] = Field(min_length=1)
     provenance: PiiEntityProvenance | None = None
+    confidence: float = Field(ge=0, le=1)
+    value: str
+    raw_text_range: PiiEntitySourceSpan
+
+    @model_validator(mode="after")
+    def _validate_entity(self) -> AnchorBoundPiiEntityV1:
+        if self.raw_text_range.end - self.raw_text_range.start != len(self.value):
+            raise ValueError("raw text range length must match value length")
+        if self.anchor_set.binding_status != self.binding_status:
+            raise ValueError("anchor set binding status must match the entity binding status")
+        anchor_bound = self.identity_basis in ("anchor_exact", "anchor_partial")
+        if anchor_bound and not self.anchor_set.anchor_ids:
+            raise ValueError("anchor-bound entities require at least one anchor id")
+        if not anchor_bound and self.anchor_set.anchor_ids:
+            raise ValueError("evidence-only entities must not carry an entity-span anchor set")
+        expected_status = {"anchor_exact": "exact", "anchor_partial": "partial"}
+        if anchor_bound and self.binding_status != expected_status[self.identity_basis]:
+            raise ValueError("anchor-bound identity basis must match binding status")
+        if not anchor_bound and self.binding_status not in (
+            "missing",
+            "ambiguous",
+            "not_applicable",
+        ):
+            raise ValueError("evidence-only identity requires a missing/ambiguous/na binding")
+        return self
+
+
+class ReviewReadyAnchorBoundPiiEntity(AnchorBoundPiiEntityV1):
+    """An anchor-bound entity enriched with its canonical display view and resolved review state.
+
+    Review decisions attach to the stable entity via its source occurrence ids
+    (``source_entity_ids`` → the existing decision overlay), so review state stays consistent even
+    though ``entity_id`` is now anchor-derived. Canonical reading ranges are a view-specific display
+    projection, not identity.
+    """
+
+    entity_group_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    source_entity_ids: list[str] = Field(min_length=1)
+    mapping_status: PiiEntityMappingStatus
+    canonical_reading_text_range: PiiEntityDisplaySpan | None = None
     review_state: PiiReviewStatus = "accepted"
     review_decision: PiiReviewDecisionValue | None = None
     decision_scope: PiiReviewDecisionScope | None = None
@@ -2103,9 +2255,7 @@ class ReviewReadyPiiEntity(BaseModel):
     warnings: list[PiiEntityReviewReasonCode] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_entity(self) -> ReviewReadyPiiEntity:
-        if self.raw_text_range.end - self.raw_text_range.start != len(self.value):
-            raise ValueError("raw text range length must match value length")
+    def _validate_review(self) -> ReviewReadyAnchorBoundPiiEntity:
         has_canonical = self.canonical_reading_text_range is not None
         if has_canonical != (self.mapping_status in ("exact", "projected")):
             raise ValueError("canonical range present iff mapping status is exact or projected")
@@ -2115,6 +2265,9 @@ class ReviewReadyPiiEntity(BaseModel):
             raise ValueError("display raw highlight range must match the raw text range")
         if self.display.display_label != self.entity_type:
             raise ValueError("display label must be the entity type")
+        observation_ids = sorted(obs.detection_id for obs in self.source_observations)
+        if sorted(self.source_entity_ids) != observation_ids:
+            raise ValueError("source entity ids must match source observation detection ids")
         return self
 
 
@@ -2130,12 +2283,15 @@ class PiiEntityMappingSummary(BaseModel):
 
 
 class PiiEntityContractV1(BaseModel):
-    """Review-ready PII entity contract for one document's latest ``pii_result`` (ADR-0029).
+    """Anchor-bound review-ready PII entity contract for a document's latest ``pii_result``.
 
-    A pure, derived, additive view: it never mutates the artifact and adds no detection. Existing
-    ``GET …/pii`` and ``GET …/pii/review`` responses are unchanged; this is a separate additive
-    surface built entirely by the backend, so the frontend never has to call the text-package
-    endpoint itself.
+    A pure, derived, additive view (ADR-0031 Phase C, building on ADR-0029): it never mutates the
+    artifact and adds no detection. Each entity is an anchor-bound domain object — offsets and
+    canonical ranges are evidence/display, anchor identity is the source of truth.
+    ``binding_summary`` counts anchor-binding outcomes; ``mapping_summary`` counts canonical
+    display coverage. Existing
+    ``GET …/pii`` and ``GET …/pii/review`` responses are unchanged; ``anchor_graph_available`` is
+    false when no matching Text Anchor Graph could be built for the run (evidence-only degrade).
     """
 
     contract_version: Literal["1.0"] = "1.0"
@@ -2144,9 +2300,12 @@ class PiiEntityContractV1(BaseModel):
     package_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     reading_text_available: bool
+    anchor_graph_available: bool
+    anchor_graph_status: DocumentTextAnchorValidationStatus | None = None
     input_contract: PiiInputContractSummary | None = None
     overlap_resolution: PiiOverlapResolutionSummary | None = None
-    entities: list[ReviewReadyPiiEntity] = Field(default_factory=list)
+    entities: list[ReviewReadyAnchorBoundPiiEntity] = Field(default_factory=list)
+    binding_summary: PiiAnchorBindingSummary
     mapping_summary: PiiEntityMappingSummary
     needs_review_count: int = Field(ge=0)
 
@@ -2161,7 +2320,21 @@ class PiiEntityContractV1(BaseModel):
         entity_ids = [entity.entity_id for entity in self.entities]
         if len(entity_ids) != len(set(entity_ids)):
             raise ValueError("entity ids must be unique within a contract")
-        expected = PiiEntityMappingSummary(
+        expected_binding = PiiAnchorBindingSummary(
+            total=len(self.entities),
+            anchor_bound=sum(
+                e.identity_basis in ("anchor_exact", "anchor_partial") for e in self.entities
+            ),
+            evidence_only=sum(e.identity_basis == "evidence_only" for e in self.entities),
+            exact=sum(e.binding_status == "exact" for e in self.entities),
+            partial=sum(e.binding_status == "partial" for e in self.entities),
+            missing=sum(e.binding_status == "missing" for e in self.entities),
+            ambiguous=sum(e.binding_status == "ambiguous" for e in self.entities),
+            not_applicable=sum(e.binding_status == "not_applicable" for e in self.entities),
+        )
+        if self.binding_summary != expected_binding:
+            raise ValueError("binding summary does not match entities")
+        expected_mapping = PiiEntityMappingSummary(
             exact=sum(e.mapping_status == "exact" for e in self.entities),
             projected=sum(e.mapping_status == "projected" for e in self.entities),
             partial=sum(e.mapping_status == "partial" for e in self.entities),
@@ -2169,7 +2342,7 @@ class PiiEntityContractV1(BaseModel):
             ambiguous=sum(e.mapping_status == "ambiguous" for e in self.entities),
             not_applicable=sum(e.mapping_status == "not_applicable" for e in self.entities),
         )
-        if self.mapping_summary != expected:
+        if self.mapping_summary != expected_mapping:
             raise ValueError("mapping summary does not match entities")
         if self.needs_review_count != sum(e.display.needs_review for e in self.entities):
             raise ValueError("needs_review_count does not match entities")

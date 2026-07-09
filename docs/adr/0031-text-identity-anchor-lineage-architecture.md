@@ -2,11 +2,14 @@
 
 ## Status
 
-**Proposed for the full architecture** — 2026-07-09. Phase A was design-only. **Phase B is now
-implemented additively** as Text Anchor Graph v1: schemas, `document_text_anchors.py`, and
-`GET /api/documents/{document_id}/text-anchors`. It is derived from `DocumentTextPackageV1`,
-not persisted, and introduces no database, migration, frontend change, OCR extraction change, PII
-binding, pseudonymization, reconstruction, redaction, or runtime change.
+**Proposed for the full architecture** — 2026-07-09. Phase A was design-only. **Phases B and C are
+now implemented additively.** Phase B delivers Text Anchor Graph v1: schemas,
+`document_text_anchors.py`, and `GET /api/documents/{document_id}/text-anchors`. Phase C delivers
+anchor-bound PII entity binding: `pii_anchor_binding.py` and an upgraded
+`GET /api/documents/{document_id}/pii/entity-contract`. The graph is derived from
+`DocumentTextPackageV1`, not persisted, and PII consumes it without changing the active detection
+input. These phases introduce no database, migration, OCR extraction change, pseudonymization,
+reconstruction, redaction, or runtime change.
 
 > **ADR number note.** The task brief asked for `0030-text-identity-anchor-lineage-architecture.md`,
 > but `0030` was already taken by
@@ -56,17 +59,20 @@ the authoritative offset system and today's only active PII input), **Canonical 
 ([ADR-0027](0027-ocr-output-contract-v1-strategy.md)). Today those layers are tied together only by a
 best-effort, offset-only, partial `reading_text_map` (`exact`/`normalized`/`partial`) plus an
 in-memory unique-value text-match fallback, and by line-level `text_geometry` (raw span → page box).
-Phase B now adds a first derived Text Anchor Graph v1 over raw/canonical/layout text ranges; the
-full married model — entity binding, word/source geometry, and downstream render/reconstruction
-state — remains staged work.
+Phase B adds a first derived Text Anchor Graph v1 over raw/canonical/layout text ranges. Phase C
+binds PII detections to that graph where available, producing anchor-bound review entities with
+explicit evidence-only fallback for missing/ambiguous/no-graph binding. The remaining married model
+work — frontend highlight consistency, word/source geometry, and downstream render/reconstruction
+state — remains staged.
 
 PII detects on raw text, resolves overlaps ([ADR-0028](0028-pii-intake-document-text-package-v1.md)),
-and is surfaced review-ready with a **stable `entity_id`** (a hash of `document_id` + `entity_type` +
-raw span) and an explicit per-entity `mapping_status`
-(`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`)
-([ADR-0029](0029-pii-review-ready-entity-contract.md)). Review decisions live in a lineage-bound
-JSONL overlay keyed to the exact `pii_result.id`
-([ADR-0021](0021-pii-entity-grouping-and-review-decisions.md)).
+and is surfaced review-ready through the derived entity contract first introduced by
+[ADR-0029](0029-pii-review-ready-entity-contract.md). Phase C now makes that contract anchor-first:
+where anchors exist, `entity_id` derives from entity type + anchor identity; otherwise it explicitly
+falls back to evidence-only identity. Canonical `mapping_status`
+(`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`) remains the display projection
+state, not the identity. Review decisions live in a lineage-bound JSONL overlay keyed to the exact
+`pii_result.id` ([ADR-0021](0021-pii-entity-grouping-and-review-decisions.md)).
 
 A concrete symptom triggered this review: **the same entity can be highlighted in the raw view but
 not (or differently) in the canonical reading view.** The frontend builds highlights per string
@@ -415,8 +421,10 @@ Each phase is a separate, small, approved PR. OCR/Text stays ahead of PII throug
   OCR/Text, reusing `reading_text_map` where available and representing missing/partial/ambiguous
   ranges explicitly. Delivered as a derived endpoint (`GET …/text-anchors`), not an embedded
   package field or persisted artifact. **No DB.**
-- **Phase C — PII entity anchor refs.** PII entities bind to anchors (`entity_anchors`); raw/canonical
-  highlights share anchor ids. Detection input unchanged (raw); separation gate intact.
+- **Phase C — PII entity anchor refs.** **Implemented.** PII detections bind to anchors where the
+  matching Text Anchor Graph is available; exact/partial bindings use anchor identity, missing/
+  ambiguous/no-graph cases become explicit evidence-only fallback, and same anchor set + entity type
+  observations merge provenance. Detection input unchanged (raw); separation gate intact. No DB.
 - **Phase D — Frontend highlight consistency via anchors.** One entity/anchor identity powers all
   views; missing/ambiguous become visible states.
 - **Phase E — Persistence model proof.** Decide JSON vs SQLite per state; land the **SQLite-ready
@@ -441,7 +449,7 @@ before C/E.
 - **Anchor granularity** (span/value vs. word-level) — start at the reliable span/value unit; refine
   to word-level when `text_geometry` word boxes exist.
 - **Whether the anchor graph is a field on `text_result` or its own derived artifact/endpoint** —
-  resolve in Phase B; the contract (stable id + per-view ranges + states) is the same either way.
+  resolved in Phase B as a derived endpoint, not an embedded `text_result` field.
 - **Exact SQLite schema, indices, and the JSON→SQLite migration** — Phase E.
 - **Cross-type overlap precedence over anchors** — still deferred from
   [ADR-0028](0028-pii-intake-document-text-package-v1.md); flag-for-review remains the policy.
@@ -466,7 +474,8 @@ before C/E.
 
 ## 16. Explicitly not done yet
 
-- **No pseudonymization** before stable entity/anchor binding exists.
+- **No pseudonymization yet** — Phase C provides the binding substrate only; no replacement plan or
+  pseudonymized render is built.
 - **No full DB migration** before the data model is proven (Phase E).
 - **No global fuzzy word matching** — identity is by anchor, not string similarity.
 - **No UI-only highlight patch** as the final solution — the fix is the anchor model.

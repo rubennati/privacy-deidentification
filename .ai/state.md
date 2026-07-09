@@ -2,21 +2,20 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **Text Identity Phase B — Text Anchor Graph v1**.
-- Current objective: ADR-0031 Phase B is now delivered additively. OCR/Text owns a derived
-  **Text Anchor Graph v1** over the OCR Output Contract v1 package: new schemas
-  (`DocumentTextAnchorGraphV1`, `DocumentTextAnchorV1`, source/range/status/summary/validation
-  models), `backend/app/services/document_text_anchors.py`
-  (`TextAnchorLineageBuilder` / `build_document_text_anchor_graph`), and
-  `GET /api/documents/{document_id}/text-anchors`. Raw anchors are primary; canonical ranges attach
-  only through `reading_text_map`; layout ranges attach only when byte-aligned with raw in v1;
-  missing/partial/ambiguous/single-source mapping is explicit; repeated identical tokens are not
-  globally married. Anchor metadata is text-free (ids, ranges, counts, token classes/shapes,
-  statuses, warning codes only) and duplicates no private text. The graph is computed on request,
-  not persisted, not embedded into `DocumentTextPackageV1`, and introduces no SQLite migration, OCR
-  extraction change, PII detection/binding change, frontend highlight change, pseudonymization,
-  redaction, reconstruction, export, runtime/job change, dependency, or private-corpus fixture. Next:
-  **PII anchor binding v1** as a separate Phase C step, then frontend highlight consistency.
+- Current phase: **Text Identity Phase C — Anchor-bound PII Entity Model v1**.
+- Current objective: ADR-0031 Phase C is now delivered additively. OCR/Text still owns the derived
+  **Text Anchor Graph v1**; PII now consumes the matching graph through
+  `backend/app/services/pii_anchor_binding.py` and normalizes offset-based detections into
+  anchor-bound domain entities exposed by `GET /api/documents/{document_id}/pii/entity-contract`.
+  The contract uses `AnchorBoundPiiEntityV1` / `ReviewReadyAnchorBoundPiiEntity` with
+  `PiiEntityAnchorSet`, `PiiEntityAnchorRef`, `PiiSourceObservation`, and
+  `PiiAnchorBindingSummary`: exact/partial bindings use anchor identity, missing/ambiguous/no-graph
+  cases become explicit evidence-only fallbacks, and duplicate observations for the same anchor set
+  + entity type merge provenance. Raw/canonical ranges remain evidence/display fields; review state
+  still resolves through the existing decision overlay; no detection input switch, SQLite migration,
+  OCR extraction change, frontend highlight UI, pseudonymization, redaction, reconstruction, export,
+  runtime/job change, dependency, or private-corpus fixture is introduced. Next: frontend highlight
+  consistency via the server entity contract, then formal Review L8 `review_result`.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -40,7 +39,9 @@
   OCR endpoints; the derived Text Anchor Graph v1 endpoint exposes text-free raw/canonical/layout
   anchor identity ranges for future consumers.
 - PII uses Presidio/spaCy behind an adapter, named profiles, AT/DE and domain recognizers, candidate
-  validation, and reproducible engine settings.
+  validation, reproducible engine settings, deterministic overlap resolution, and a derived
+  anchor-bound review entity contract over OCR/Text anchors. Raw text remains the only active
+  detection input.
 - The local private benchmark measures routing and PII quality from existing artifacts. Its
   committed test suite uses synthetic data; private corpus data remains under git-ignored volumes.
 
@@ -151,13 +152,14 @@
   input — and `pii_overlap` deterministically merges duplicate/nested/same-type spans and flags
   cross-type overlaps for review, recording additive optional provenance/summary fields on
   `pii_result` (no raw text). See
-  [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). On top of L12, the derived
-  **review-ready entity contract v1** (`pii_entity_contract.py`, `GET …/pii/entity-contract`,
-  [ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md)) packages each resolved entity
-  review-ready — stable `entity_id`, raw + optional canonical span, explicit `mapping_status`
-  (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), provenance, resolved
-  review state, text-free display model — without dropping unmapped entities or mutating the
-  artifact. The formal binding-review artifact model (L13/Review L8) remains open.
+  [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). On top of L12 and ADR-0031
+  Phase B, the derived **anchor-bound review entity contract v1** (`pii_anchor_binding.py`,
+  `pii_entity_contract.py`, `GET …/pii/entity-contract`) packages each resolved entity as
+  `AnchorBoundPiiEntityV1` / `ReviewReadyAnchorBoundPiiEntity`: entity identity is anchor-derived
+  when binding is exact or partial, evidence-only when binding is missing/ambiguous/not applicable;
+  `source_observations` carry detector evidence; raw + optional canonical ranges remain
+  view-specific display/evidence; provenance and review state are preserved; metadata stays
+  text-free. The formal binding-review artifact model (L13/Review L8) remains open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6 done; L7–L9 partial.** Grouped
   occurrences (L6) are delivered, and a file-based (JSONL, not yet a single artifact-per-run)
   decision overlay covers much of L7–L9's practical intent (decisions persist, restore on reload,
@@ -207,12 +209,16 @@ confidence capture (L6), `quality_report` (L7), L14 quality-evidence/lineage-cov
 observability, and L15 noise/token artifact evidence. **PII L12 overlap resolution is now delivered**
 as the first downstream consumer step: PII consumes the contract through the `pii_input` adapter and
 resolves overlaps deterministically ([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
-On top of that, the **PII review-ready entity contract v1** is delivered additively — a derived
-`GET …/pii/entity-contract` view (stable ids, raw↔canonical mapping status, provenance, resolved
-review state, text-free display model), a stabilization milestone that is **not** the binding
-`review_result` ([ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md)).
-PII still detects on technical raw text only. The next engine priority is the formal **Review L8
-`review_result`** artifact model, then the **PII validation transparency report**.
+On top of that, the **anchor-bound PII entity model v1** is delivered additively — the derived
+`GET …/pii/entity-contract` view now binds detections to Text Anchor Graph v1 where available,
+keeps detection evidence in `source_observations`, exposes explicit binding status/summary, and
+degrades to evidence-only identity when anchors are unavailable or ambiguous. This remains a
+stabilization milestone, not the binding `review_result`
+([ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md),
+[ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md)). PII still detects on
+technical raw text only. The next engine priority is frontend highlight consistency over the server
+entity contract, then formal **Review L8 `review_result`** and the **PII validation transparency
+report**.
 
 **Strategic direction (OCR/Text as an independent module).** The **OCR Output Contract v1 /
 Document Text Package** stabilizes OCR/Text output as a versioned package of
@@ -525,26 +531,23 @@ TS types were added). See
 [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). Next: formal **Review L8
 `review_result`**, then the **PII validation transparency report**.
 
-**Latest checkpoint (PII review-ready entity contract v1):** On top of PII L12, a derived,
-additive, review-facing contract is delivered without a level bump (a stabilization milestone like
-the OCR Output Contract). `pii_entity_contract.py` builds a `PiiEntityContractV1` from the latest
-`pii_result` (and, where available, the matching text artifact's canonical reading text), exposed by
-the additive `GET /api/documents/{document_id}/pii/entity-contract`. Each `ReviewReadyPiiEntity`
-carries a **stable `entity_id`** (hash of document id + entity type + raw span; the volatile
-occurrence id is kept as `source_entity_id`), the authoritative `raw_text_range`, an optional
-`canonical_reading_text_range`, an explicit `mapping_status`
-(`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), the overlap `provenance`,
-the resolved review state (reusing the existing decision overlay), and a text-free `display` model
-(preferred source, raw + optional canonical highlight ranges, entity-type label, `needs_review`,
-review reason codes). A missing/partial/ambiguous canonical mapping never drops an entity — it stays
-reviewable and flagged; `not_applicable` (no canonical text for the run) is not flagged. The entity
-`value` mirrors `pii_result` (already on `GET …/pii`) and never enters display/warnings/provenance,
-and no context snippet is copied anywhere. It mutates nothing, adds no detection, keeps technical raw
-text the primary/only active input, and leaves `GET …/pii` and `GET …/pii/review` byte-for-byte
-unchanged; only additive frontend TS types + a fetch helper were added. This is **not** the formal
+**Latest checkpoint (Anchor-bound PII entity model v1):** ADR-0029's derived review-facing contract
+is extended by ADR-0031 Phase C. `pii_entity_contract.py` still builds `PiiEntityContractV1` from the
+latest `pii_result`, but it now uses `pii_anchor_binding.py` to bind detections to the matching Text
+Anchor Graph where available. Each `ReviewReadyAnchorBoundPiiEntity` carries an anchor-derived
+`entity_id` for exact/partial bindings, explicit evidence-only identity for
+missing/ambiguous/no-graph binding, `anchor_set`/`anchor_refs`, detector `source_observations`,
+raw/canonical display ranges, canonical `mapping_status`, overlap provenance, resolved review
+state, and a text-free display model. Missing/partial/ambiguous anchor or canonical mapping never
+drops an entity; value remains confined to the entity value field already mirrored from
+`GET …/pii`, and no surrounding text snippet is copied. It mutates nothing, adds no detection, keeps
+technical raw text the primary/only active input, and leaves `GET …/pii` and `GET …/pii/review`
+unchanged; only additive frontend TS types and tests were updated. This is **not** the formal
 binding `review_result` (still open). See
-[ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md). Next: formal **Review L8
-`review_result`**, then the **PII validation transparency report**.
+[ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md) and
+[ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md). Next: frontend highlight
+consistency via anchors, then formal **Review L8 `review_result`** and the **PII validation
+transparency report**.
 
 **Latest checkpoint (Runtime Job UX / in-app notifications v1):** Cross-cutting runtime/UX step, not
 an engine level change. On top of ADR-0023's job model/status API, the product-facing presentation

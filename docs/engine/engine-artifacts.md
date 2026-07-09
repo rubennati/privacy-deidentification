@@ -44,7 +44,7 @@ input, or report may be committed.
 | `document_text_anchor_graph` (Text Anchor Graph v1) | ✅ today, derived API graph (ADR-0031 Phase B) | OCR/Text-owned identity graph over technical raw, canonical reading, and layout text ranges; raw anchors are primary, canonical ranges attach only through `reading_text_map`, layout attaches only when safely byte-aligned in v1, and missing/partial/ambiguous states are explicit | no copied source text (anchor ids, source names, offsets, token classes/shapes, counts, statuses, and warning codes only) | computed on request by `GET /api/documents/{document_id}/text-anchors`; not persisted |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, L9 run settings, and L12 per-entity `provenance` + `input_contract`/`overlap_resolution` summaries | yes (spans); provenance/summaries are reason-codes/counts/ids only | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
-| `pii_entity_contract` (review-ready entity contract v1) | ✅ today, derived API view (ADR-0029) | packages the latest `pii_result` entities review-ready: stable `entity_id`, raw + optional canonical span, explicit `mapping_status` (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), overlap provenance, resolved review state, and a text-free display model | entity `value` mirrors `pii_result` (already on `GET …/pii`); display/warnings/provenance carry ranges + codes only, no snippet | computed on request by `GET /api/documents/{document_id}/pii/entity-contract`; not persisted |
+| `pii_entity_contract` (anchor-bound review entity contract v1) | ✅ today, derived API view (ADR-0029 + ADR-0031 Phase C) | packages the latest `pii_result` entities as anchor-bound review objects where the matching Text Anchor Graph is available: anchor-derived `entity_id`, `anchor_set`/`anchor_refs`, detector `source_observations`, explicit binding + canonical mapping status, overlap provenance, resolved review state, and a text-free display model; missing/ambiguous/no-graph binding degrades to evidence-only identity without dropping detections | entity `value` mirrors `pii_result` (already on `GET …/pii`); binding/display/warnings/provenance carry ids, ranges, counts, and codes only, no snippet | computed on request by `GET /api/documents/{document_id}/pii/entity-contract`; not persisted |
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
 | `review_result` | 🔜 Review L8 (formal model) | the single-artifact-per-run shape this level originally described; today's decision overlay above covers much of its practical intent | yes | immutable artifact |
 | `benchmark_result` | ✅ today as private reports | routing and PII quality metrics | guarded report metadata and metrics | local report files |
@@ -248,21 +248,19 @@ The `pii_result` records what PII consumed and how overlaps resolved in additive
 and superseded candidate ids). These are reason-codes/counts/ids only and never copy raw document or
 entity text; legacy `pii_result` artifacts without them stay valid.
 
-## Review-ready PII entity contract (implemented)
+## Anchor-bound PII entity contract (implemented)
 
-The **review-ready entity contract v1** ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md))
-is a pure, derived API view over the latest `pii_result`, exposed by
+The **anchor-bound entity contract v1** ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md),
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) is a pure, derived API view
+over the latest `pii_result`, exposed by
 `GET /api/documents/{document_id}/pii/entity-contract` (`pii_entity_contract.py`). It packages each
-L12-resolved entity review-ready: a **stable `entity_id`** (hash of document id + entity type + raw
-span, so it survives a re-run while the volatile occurrence id is kept as `source_entity_id`), the
-authoritative `raw_text_range`, an optional `canonical_reading_text_range`, an explicit
-`mapping_status` (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), the overlap
-`provenance`, the resolved review state from the decision overlay, and a text-free `display` model
-(preferred text source, raw + optional canonical highlight ranges, entity-type label,
-`needs_review`, and review reason codes). A missing/partial/ambiguous canonical mapping never drops
-an entity — it stays reviewable and flagged; `not_applicable` (no canonical text at all for the run)
-is not flagged. It mutates nothing, adds no detection, and reuses the existing review-decision
-overlay for review state. This is **not** the formal binding `review_result` — it is the stable
+L12-resolved entity as `ReviewReadyAnchorBoundPiiEntity`: anchor-derived identity where the matching
+Text Anchor Graph binds exactly/partially, explicit evidence-only identity when binding is missing,
+ambiguous, or not applicable, `anchor_set`/`anchor_refs`, detector `source_observations`,
+view-specific raw/canonical display ranges, canonical `mapping_status`, overlap provenance, and the
+resolved review state from the decision overlay. Missing/partial/ambiguous anchor or canonical
+mapping never drops an entity. It mutates nothing, adds no detection, and keeps technical raw text as
+the only active PII input. This is **not** the formal binding `review_result` — it is the stable
 review-ready read model that model will build on.
 
 ## Dev feedback side-channel

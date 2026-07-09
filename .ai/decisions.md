@@ -99,7 +99,8 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   `not_applicable` is not flagged. Cross-cutting stabilization milestone, not a level bump and not
   the formal binding `review_result`; it mutates nothing, adds no detection, keeps raw text the
   primary/only active input, and existing `GET …/pii`/`…/pii/review` responses are unchanged. Only
-  additive frontend TS types + a fetch helper were added.
+  additive frontend TS types + a fetch helper were added. Extended by ADR-0031 Phase C with
+  anchor-derived identity and explicit evidence-only fallback where anchors are unavailable.
 - [ADR-0030](../docs/adr/0030-runtime-job-ux-notifications-v1.md) — **Runtime Job UX / in-app
   notifications v1.** The product-facing presentation layer on top of ADR-0023's job model/status
   API: one additive `JobStatusResponse.is_terminal` field on the backend, plus a frontend
@@ -113,18 +114,19 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   contract change.
 - [ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md) — **Text identity,
   anchor lineage, and de-identification state architecture (Proposed for the full architecture;
-  Phase B implemented).** Treats
-  Technical Raw / Canonical Reading / Layout / Structured text as *views* of the same document
-  information, married by a stable **text anchor** identity (an anchor graph, `text_anchor_map`,
-  owned by **OCR/Text** — the concrete realization of the long-reserved `text_lineage_map`, not PII).
-  Phase B delivers Text Anchor Graph v1 as a derived, non-persisted OCR/Text endpoint
-  (`GET …/text-anchors`) built from `DocumentTextPackageV1`; anchor metadata is ranges/ids/classes/
-  statuses/codes only and duplicates no private text.
-  PII **binds entities to anchors** (not string offsets); review decisions, pseudonymization
-  (render, never paint-over), and reconstruction (placeholder→group→entity→anchor→original, never
-  fuzzy match) all reference identity. Persistence is **hybrid (Option E)**: immutable OCR/anchor
-  artifacts stay JSON; mutable PII-review/replacement/reconstruction/audit state moves to SQLite when
-  Review persistence needs it — designed SQLite-ready now, **no DB built**. Staged Phases A–I;
-  underpins **PII L17** (stable entity model with lineage). Introduces no migration/frontend/OCR
-  extraction/PII/pseudonymization/reconstruction/runtime change. (Requested as "0030";
-  renumbered to 0031 because 0030 was taken.)
+  Phase C implemented).** Treats Technical Raw / Canonical Reading / Layout / Structured text as
+  *views* of the same document information, married by a stable **text anchor** identity (an anchor
+  graph, `text_anchor_map`, owned by **OCR/Text** — the concrete realization of the long-reserved
+  `text_lineage_map`, not PII). Phase B delivers Text Anchor Graph v1 as a derived, non-persisted
+  OCR/Text endpoint (`GET …/text-anchors`) built from `DocumentTextPackageV1`; anchor metadata is
+  ranges/ids/classes/statuses/codes only and duplicates no private text. Phase C adds
+  `pii_anchor_binding.py` and upgrades `GET …/pii/entity-contract` so PII detections become
+  anchor-bound domain entities where anchors exist, with explicit evidence-only fallback for
+  missing/ambiguous/no-graph binding and text-free source observations/binding summaries. Review
+  decisions, future pseudonymization (render, never paint-over), and reconstruction
+  (placeholder→group→entity→anchor→original, never fuzzy match) all reference identity. Persistence
+  is **hybrid (Option E)**: immutable OCR/anchor artifacts stay JSON; mutable PII-review/replacement/
+  reconstruction/audit state moves to SQLite when Review persistence needs it — designed
+  SQLite-ready now, **no DB built**. Staged Phases A–I; underpins **PII L17** (stable entity model
+  with lineage). Introduces no migration/OCR extraction/pseudonymization/reconstruction/runtime
+  change. (Requested as "0030"; renumbered to 0031 because 0030 was taken.)

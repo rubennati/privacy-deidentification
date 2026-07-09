@@ -1,12 +1,12 @@
-"""Integration tests for the review-ready PII entity contract (ADR-0029).
+"""Integration tests for the anchor-bound review-ready PII entity contract (ADR-0031 Phase C).
 
-All data is synthetic. The review-ready contract is a pure, derived view over a persisted
-``pii_result`` and (optionally) its text artifact: it connects each entity to the technical raw text
-and canonical reading text with an explicit mapping status, a stable entity id, deterministic
-overlap provenance, the resolved review state, and a text-free display model. These tests exercise
-the additive ``GET …/pii/entity-contract`` endpoint end to end and assert backward compatibility of
-the existing PII/review routes plus the privacy invariants (no context snippet leaks into display,
-warnings, or provenance).
+All data is synthetic. The contract is a pure, derived view over a persisted ``pii_result`` and,
+where available, the matching OCR/Text artifact's Text Anchor Graph v1: each entity is normalized
+into an anchor-bound domain object whose identity derives from anchor identity when an exact binding
+exists, while raw offsets, canonical ranges, and the value remain evidence/display. These tests
+exercise the additive ``GET …/pii/entity-contract`` endpoint end to end and assert backward
+compatibility of the existing PII/review routes plus the privacy invariants (no token text leaks
+into binding metadata, display, warnings, provenance, or ids).
 """
 
 from __future__ import annotations
@@ -20,6 +20,12 @@ from pypdf import PdfWriter
 
 from app.config import Settings
 from app.schemas import (
+    DocumentTextAnchorGraphSummary,
+    DocumentTextAnchorGraphV1,
+    DocumentTextAnchorGraphValidation,
+    DocumentTextAnchorRange,
+    DocumentTextAnchorSource,
+    DocumentTextAnchorV1,
     PiiArtifact,
     PiiContent,
     PiiEntity,
@@ -119,9 +125,9 @@ def _save_pii(
 
 
 def _save_text(
-    settings: Settings, document_id: str, *, text_id: str, raw: str, reading_text: str | None
+    settings: Settings, document_id: str, *, text_id: str, raw: str, reading_text: str | None = None
 ) -> None:
-    """Persist a minimal DOCX-style text artifact so the builder can read canonical reading text."""
+    """Persist a minimal DOCX-style text artifact so the builder can derive a Text Anchor Graph."""
     content = TextContent(
         document_id=document_id,
         input_artifact_id="c" * 32,
@@ -147,10 +153,107 @@ def _save_text(
     save_text_artifact(settings, artifact)
 
 
+def _save_pii_over_text(
+    settings: Settings,
+    document_id: str,
+    raw: str,
+    entities: list[PiiEntity],
+    *,
+    reading_text: str | None = None,
+) -> str:
+    """Save a matching text artifact plus a PII result whose offsets live in that raw text."""
+    text_id = uuid4().hex
+    _save_text(settings, document_id, text_id=text_id, raw=raw, reading_text=reading_text)
+    _save_pii(
+        settings,
+        document_id,
+        entities,
+        input_text_artifact_id=text_id,
+        text_char_count=len(raw),
+        reading_text_char_count=(len(reading_text) if reading_text is not None else None),
+    )
+    return text_id
+
+
 def _get_contract(client: TestClient, document_id: str) -> dict[str, object]:
     response = client.get(_CONTRACT_URL.format(document_id=document_id))
     assert response.status_code == 200
     return response.json()
+
+
+def _manual_overlapping_anchor_graph(document_id: str, text_id: str) -> DocumentTextAnchorGraphV1:
+    """Synthetic raw-only graph for the endpoint's ambiguous-binding branch."""
+    anchors = [
+        DocumentTextAnchorV1(
+            anchor_id=uuid4().hex,
+            anchor_kind="word",
+            anchor_status="single_source",
+            source_ranges=[
+                DocumentTextAnchorRange(
+                    source_name="technical_raw_text",
+                    start=start,
+                    end=end,
+                    range_role="primary",
+                    mapping_status="exact",
+                    confidence=1.0,
+                )
+            ],
+            normalized_shape="alpha",
+            token_class="alpha",
+            confidence=1.0,
+            flags=["raw_primary"],
+            warnings=[],
+        )
+        for start, end in ((0, 5), (3, 8))
+    ]
+    warnings = ["missing_canonical_reading_text", "missing_layout_text"]
+    return DocumentTextAnchorGraphV1(
+        document_id=document_id,
+        text_artifact_id=text_id,
+        source_artifact_id=text_id,
+        package_id=text_id,
+        package_contract_version="1.0",
+        created_at="2026-07-09T10:00:00.000000Z",
+        sources=[
+            DocumentTextAnchorSource(
+                source_name="technical_raw_text",
+                available=True,
+                text_char_count=8,
+                range_count=2,
+                mapped_anchor_count=2,
+            ),
+            DocumentTextAnchorSource(source_name="canonical_reading_text", available=False),
+            DocumentTextAnchorSource(source_name="layout_text", available=False),
+        ],
+        anchors=anchors,
+        summary=DocumentTextAnchorGraphSummary(
+            total_anchors=2,
+            anchors_with_raw_range=2,
+            anchors_with_canonical_range=0,
+            anchors_with_layout_range=0,
+            exact_count=0,
+            projected_count=0,
+            partial_count=0,
+            missing_count=0,
+            ambiguous_count=0,
+            single_source_count=2,
+            unmapped_raw_token_count=0,
+            unmapped_canonical_token_count=0,
+            repeated_token_ambiguity_count=0,
+            raw_to_canonical_coverage_ratio=0.0,
+            raw_to_layout_coverage_ratio=0.0,
+        ),
+        validation=DocumentTextAnchorGraphValidation(
+            status="degraded",
+            warning_count=len(warnings),
+            blocker_count=0,
+            invalid_range_count=0,
+            overlapping_anchor_range_count=1,
+            warnings=warnings,
+            blockers=[],
+        ),
+        warnings=warnings,
+    )
 
 
 # --- 404 / preconditions -------------------------------------------------------------------------
@@ -165,40 +268,68 @@ def test_document_without_pii_result_returns_404(client: TestClient) -> None:
     assert client.get(_CONTRACT_URL.format(document_id=document_id)).status_code == 404
 
 
-# --- raw span + baseline shape -------------------------------------------------------------------
+# --- anchor-bound identity when the graph supports it --------------------------------------------
 
 
-def test_every_entity_carries_a_raw_span_and_stable_shape(
+def test_entity_is_anchor_bound_when_graph_supports_it(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
-    _save_pii(settings, document_id, [_entity("LOCATION", "Wien", 10)])
+    _save_pii_over_text(settings, document_id, "Wien Graz", [_entity("LOCATION", "Wien", 0)])
 
     body = _get_contract(client, document_id)
 
-    assert body["contract_version"] == "1.0"
-    assert body["document_id"] == document_id
-    assert len(body["entities"]) == 1
+    assert body["anchor_graph_available"] is True
+    assert body["anchor_graph_status"] in ("valid", "degraded")
     entity = body["entities"][0]
-    assert entity["entity_type"] == "LOCATION"
-    assert entity["value"] == "Wien"
-    assert entity["raw_text_range"] == {
-        "start": 10,
-        "end": 14,
-        "page_number": None,
-        "page_start": None,
-        "page_end": None,
-    }
-    assert entity["detection_source"] == "raw_text"
-    assert entity["source_role"] == "primary"
-    assert entity["display"]["raw_highlight_range"] == {"start": 10, "end": 14}
-    assert entity["display"]["display_label"] == "LOCATION"
+    assert entity["identity_basis"] == "anchor_exact"
+    assert entity["binding_status"] == "exact"
+    assert entity["anchor_set"]["count"] == 1
+    assert len(entity["anchor_set"]["anchor_ids"]) == 1
+    assert entity["binding_reasons"] == ["anchor_exact_match"]
+    assert body["binding_summary"]["exact"] == 1
+    assert body["binding_summary"]["anchor_bound"] == 1
 
 
-# --- mapping status: exact / projected -----------------------------------------------------------
+def test_entity_id_is_anchor_derived_not_offset_only_when_bound(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    _save_pii_over_text(settings, document_id, "Wien Graz", [_entity("LOCATION", "Wien", 0)])
+
+    entity = _get_contract(client, document_id)["entities"][0]
+    # The old ADR-0029 offset-only id (hash of document + type + raw span) is NOT the identity here.
+    import hashlib
+
+    offset_only_id = hashlib.sha256(
+        f"{document_id}\x00LOCATION\x000\x004".encode()
+    ).hexdigest()[:32]
+    assert entity["entity_id"] != offset_only_id
+    assert entity["source_entity_ids"]  # the volatile occurrence id(s) are kept as evidence
 
 
-def test_exact_offset_mapping_yields_exact_status_and_canonical_range(
+def test_entity_carries_detection_evidence_observations(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    entity = _entity("LOCATION", "Wien", 0, recognizer="StructuredRecognizer")
+    _save_pii_over_text(settings, document_id, "Wien Graz", [entity])
+
+    entity_out = _get_contract(client, document_id)["entities"][0]
+    observations = entity_out["source_observations"]
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation["detection_id"] == entity.id
+    assert observation["recognizer"] == "StructuredRecognizer"
+    assert observation["source_name"] == "technical_raw_text"
+    assert observation["binding_status"] == "exact"
+    assert entity_out["source_entity_ids"] == [entity.id]
+
+
+# --- raw + canonical display remain available as view/evidence fields -----------------------------
+
+
+def test_raw_and_canonical_display_ranges_available_as_evidence(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
@@ -211,180 +342,172 @@ def test_exact_offset_mapping_yields_exact_status_and_canonical_range(
         reading_start=0,
         reading_end=4,
     )
-    _save_pii(settings, document_id, [entity], reading_text_char_count=40)
+    _save_pii_over_text(
+        settings, document_id, "Wien Graz", [entity], reading_text="Wien Graz"
+    )
 
     entity_out = _get_contract(client, document_id)["entities"][0]
-
+    # Identity is anchors; canonical/raw ranges are display/evidence and both remain present.
+    assert entity_out["identity_basis"] == "anchor_exact"
     assert entity_out["mapping_status"] == "exact"
+    assert entity_out["raw_text_range"]["start"] == 0
     assert entity_out["canonical_reading_text_range"] == {
         "start": 0,
         "end": 4,
         "projection_method": "offset_map",
     }
     assert entity_out["display"]["preferred_text_source"] == "canonical_reading_text"
-    assert entity_out["display"]["canonical_highlight_range"] == {"start": 0, "end": 4}
-    assert entity_out["display"]["display_context_available"] is True
-    assert entity_out["display"]["needs_review"] is False
-    assert entity_out["display"]["review_reason_codes"] == []
 
 
-def test_text_match_projection_yields_projected_status(
+# --- degrade / never drop ------------------------------------------------------------------------
+
+
+def test_no_matching_text_artifact_is_evidence_only_degrade(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
-    entity = _entity(
-        "LOCATION",
-        "Wien",
-        0,
-        projection_status="exact",
-        projection_method="text_match",
-        reading_start=5,
-        reading_end=9,
-    )
-    _save_pii(settings, document_id, [entity], reading_text_char_count=40)
-
-    entity_out = _get_contract(client, document_id)["entities"][0]
-
-    assert entity_out["mapping_status"] == "projected"
-    assert entity_out["canonical_reading_text_range"]["projection_method"] == "text_match"
-    assert entity_out["display"]["needs_review"] is False
-
-
-# --- mapping status: partial / missing / ambiguous / not_applicable ------------------------------
-
-
-def test_partial_projection_needs_review_without_canonical_range(
-    client: TestClient, settings: Settings
-) -> None:
-    document_id = _upload_document(client)
-    entity = _entity("LOCATION", "Wien", 0, projection_status="partial")
-    _save_pii(settings, document_id, [entity], reading_text_char_count=40)
-
-    entity_out = _get_contract(client, document_id)["entities"][0]
-
-    assert entity_out["mapping_status"] == "partial"
-    assert entity_out["canonical_reading_text_range"] is None
-    assert entity_out["display"]["preferred_text_source"] == "technical_raw_text"
-    assert entity_out["display"]["needs_review"] is True
-    assert entity_out["display"]["review_reason_codes"] == ["canonical_mapping_partial"]
-    assert "canonical_mapping_partial" in entity_out["warnings"]
-
-
-def test_unmapped_entity_with_canonical_text_is_missing_not_dropped(
-    client: TestClient, settings: Settings
-) -> None:
-    document_id = _upload_document(client)
-    # Canonical reading text exists for the run, but no matching text artifact is stored, so the
-    # builder cannot count occurrences: an unmapped entity stays reviewable as "missing".
-    entity = _entity("LOCATION", "Wien", 0, projection_status="unmapped")
-    _save_pii(settings, document_id, [entity], reading_text_char_count=40)
+    _save_pii(settings, document_id, [_entity("LOCATION", "Wien", 10)])
 
     body = _get_contract(client, document_id)
 
+    assert body["anchor_graph_available"] is False
+    assert body["anchor_graph_status"] is None
     assert len(body["entities"]) == 1  # never dropped
-    entity_out = body["entities"][0]
-    assert entity_out["mapping_status"] == "missing"
-    assert entity_out["display"]["needs_review"] is True
-    assert entity_out["display"]["review_reason_codes"] == ["canonical_mapping_missing"]
+    entity = body["entities"][0]
+    assert entity["identity_basis"] == "evidence_only"
+    assert entity["binding_status"] == "not_applicable"
+    assert body["binding_summary"]["evidence_only"] == 1
+    assert body["binding_summary"]["not_applicable"] == 1
+    # not_applicable (no graph for the run) does not by itself force review.
+    assert "anchor_binding_missing" not in entity["display"]["review_reason_codes"]
 
 
-def test_unmapped_entity_appearing_twice_in_reading_text_is_ambiguous(
+def test_missing_binding_does_not_drop_and_flags_review(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
-    text_id = "e" * 32
-    _save_text(
-        settings, document_id, text_id=text_id, raw="Wien Wien", reading_text="Wien und Wien"
+    # The raw text has one token ("Wien"); the detection's offsets land past it (a stale/mismatched
+    # projection), so it binds "missing" — still reviewable, never dropped.
+    raw = "Wien      "
+    _save_pii_over_text(settings, document_id, raw, [_entity("LOCATION", "Graz", 6)])
+
+    entity = _get_contract(client, document_id)["entities"][0]
+    assert entity["binding_status"] == "missing"
+    assert entity["identity_basis"] == "evidence_only"
+    assert entity["display"]["needs_review"] is True
+    assert "anchor_binding_missing" in entity["display"]["review_reason_codes"]
+
+
+def test_partial_binding_flags_review(client: TestClient, settings: Settings) -> None:
+    document_id = _upload_document(client)
+    _save_pii_over_text(
+        settings, document_id, "Max Mustermann", [_entity("PERSON", "Max Muster", 0)]
     )
-    entity = _entity("LOCATION", "Wien", 0, projection_status="unmapped")
-    _save_pii(
+
+    entity = _get_contract(client, document_id)["entities"][0]
+    assert entity["binding_status"] == "partial"
+    assert entity["identity_basis"] == "anchor_partial"
+    assert entity["display"]["needs_review"] is True
+    assert "anchor_binding_partial" in entity["display"]["review_reason_codes"]
+    assert "anchor_binding_partial" in entity["warnings"]
+
+
+def test_ambiguous_binding_is_explicit_and_not_dropped(
+    client: TestClient, settings: Settings, monkeypatch
+) -> None:
+    document_id = _upload_document(client)
+    text_id = _save_pii_over_text(
+        settings, document_id, "AbcdeFgh", [_entity("LOCATION", "AbcdeFgh", 0)]
+    )
+    graph = _manual_overlapping_anchor_graph(document_id, text_id)
+    monkeypatch.setattr("app.services.pii_entity_contract._anchor_graph", lambda _text: graph)
+
+    body = _get_contract(client, document_id)
+
+    assert len(body["entities"]) == 1
+    entity = body["entities"][0]
+    assert entity["binding_status"] == "ambiguous"
+    assert entity["identity_basis"] == "evidence_only"
+    assert entity["anchor_set"]["anchor_ids"] == []
+    assert {ref["binding_role"] for ref in entity["anchor_refs"]} == {"inferred_span"}
+    assert body["binding_summary"]["ambiguous"] == 1
+    assert entity["display"]["needs_review"] is True
+    assert "anchor_binding_ambiguous" in entity["display"]["review_reason_codes"]
+
+
+def test_binding_summary_counts(client: TestClient, settings: Settings) -> None:
+    document_id = _upload_document(client)
+    _save_pii_over_text(
         settings,
         document_id,
-        [entity],
-        input_text_artifact_id=text_id,
-        reading_text_char_count=13,
+        "Max Mustermann Wien",
+        [
+            _entity("PERSON", "Max Mustermann", 0),  # exact (two tokens)
+            _entity("LOCATION", "Wien", 15),  # exact (one token)
+        ],
     )
 
-    entity_out = _get_contract(client, document_id)["entities"][0]
-
-    assert entity_out["mapping_status"] == "ambiguous"
-    assert entity_out["display"]["needs_review"] is True
-    assert entity_out["display"]["review_reason_codes"] == ["canonical_mapping_ambiguous"]
-
-
-def test_no_canonical_text_is_not_applicable_and_not_flagged(
-    client: TestClient, settings: Settings
-) -> None:
-    document_id = _upload_document(client)
-    entity = _entity("LOCATION", "Wien", 0)  # unmapped, no canonical text for the run
-    _save_pii(settings, document_id, [entity], reading_text_char_count=None)
-
     body = _get_contract(client, document_id)
-
-    assert body["reading_text_available"] is False
-    entity_out = body["entities"][0]
-    assert entity_out["mapping_status"] == "not_applicable"
-    assert entity_out["display"]["needs_review"] is False
-    assert entity_out["display"]["review_reason_codes"] == []
-    assert entity_out["display"]["preferred_text_source"] == "technical_raw_text"
-
-
-def test_mapping_summary_and_needs_review_count_are_consistent(
-    client: TestClient, settings: Settings
-) -> None:
-    document_id = _upload_document(client)
-    entities = [
-        _entity(
-            "LOCATION", "Wien", 0, projection_status="exact",
-            projection_method="offset_map", reading_start=0, reading_end=4,
-        ),
-        _entity("PERSON", "Max", 10, projection_status="partial"),
-        _entity("ORGANIZATION", "ACME", 20, projection_status="unmapped"),
-    ]
-    _save_pii(settings, document_id, entities, reading_text_char_count=40)
-
-    body = _get_contract(client, document_id)
-
-    assert body["mapping_summary"] == {
-        "exact": 1,
-        "projected": 0,
-        "partial": 1,
-        "missing": 1,
+    assert body["binding_summary"] == {
+        "total": 2,
+        "anchor_bound": 2,
+        "evidence_only": 0,
+        "exact": 2,
+        "partial": 0,
+        "missing": 0,
         "ambiguous": 0,
         "not_applicable": 0,
     }
-    assert body["needs_review_count"] == 2
 
 
-# --- stable entity ids ---------------------------------------------------------------------------
+def test_repeated_values_not_globally_bound(client: TestClient, settings: Settings) -> None:
+    document_id = _upload_document(client)
+    _save_pii_over_text(
+        settings,
+        document_id,
+        "Wien Wien",
+        [_entity("LOCATION", "Wien", 0), _entity("LOCATION", "Wien", 5)],
+    )
+
+    entities = _get_contract(client, document_id)["entities"]
+    assert len(entities) == 2
+    assert entities[0]["entity_id"] != entities[1]["entity_id"]
+    assert entities[0]["anchor_set"]["anchor_ids"] != entities[1]["anchor_set"]["anchor_ids"]
 
 
-def test_entity_id_is_stable_across_requests_and_reruns(
+def test_same_anchor_set_and_type_merges_source_observations(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
-    _save_pii(settings, document_id, [_entity("LOCATION", "Wien", 7)])
-    first = _get_contract(client, document_id)["entities"][0]["entity_id"]
-    second = _get_contract(client, document_id)["entities"][0]["entity_id"]
-    assert first == second
+    first = _entity(
+        "LOCATION",
+        "Wien",
+        0,
+        recognizer="R1",
+        provenance=PiiEntityProvenance(recognizers=["R1"], candidate_count=1),
+    )
+    second = _entity(
+        "LOCATION",
+        "Wien",
+        0,
+        recognizer="R2",
+        provenance=PiiEntityProvenance(recognizers=["R2"], candidate_count=1),
+    )
+    _save_pii_over_text(settings, document_id, "Wien", [first, second])
 
-    # A fresh detection run (new artifact + occurrence id) for the same span/type keeps the id.
-    _save_pii(settings, document_id, [_entity("LOCATION", "Wien", 7)])
-    rerun = _get_contract(client, document_id)
-    assert rerun["entities"][0]["entity_id"] == first
-    assert rerun["entities"][0]["source_entity_id"] != first  # occurrence id is volatile, id is not
+    body = _get_contract(client, document_id)
 
-
-def test_entity_id_differs_by_type_and_span(client: TestClient, settings: Settings) -> None:
-    document_id = _upload_document(client)
-    entities = [
-        _entity("LOCATION", "Wien", 0),
-        _entity("PERSON", "Wien", 30),
-    ]
-    _save_pii(settings, document_id, entities)
-
-    ids = {entity["entity_id"] for entity in _get_contract(client, document_id)["entities"]}
-    assert len(ids) == 2
+    assert len(body["entities"]) == 1
+    entity = body["entities"][0]
+    assert entity["binding_status"] == "exact"
+    assert entity["identity_basis"] == "anchor_exact"
+    assert sorted(entity["source_entity_ids"]) == sorted([first.id, second.id])
+    assert sorted(obs["detection_id"] for obs in entity["source_observations"]) == sorted(
+        [first.id, second.id]
+    )
+    assert entity["provenance"]["recognizers"] == ["R1", "R2"]
+    assert entity["provenance"]["candidate_count"] == 2
+    assert body["binding_summary"]["total"] == 1
 
 
 # --- overlap provenance surfacing ----------------------------------------------------------------
@@ -407,11 +530,11 @@ def test_cross_type_review_flag_is_surfaced_as_needs_review(
     entity_out = _get_contract(client, document_id)["entities"][0]
 
     assert entity_out["display"]["needs_review"] is True
-    assert set(entity_out["display"]["review_reason_codes"]) == {
+    assert set(entity_out["display"]["review_reason_codes"]) >= {
         "conflicting_entity_type",
         "ambiguous_overlap_review_required",
     }
-    assert entity_out["overlap_decision"] == "conflicting_entity_type"
+    assert entity_out["provenance"]["overlap_decision"] == "conflicting_entity_type"
 
 
 def test_merged_duplicate_provenance_is_surfaced_as_warning_only(
@@ -432,7 +555,8 @@ def test_merged_duplicate_provenance_is_surfaced_as_warning_only(
 
     entity_out = _get_contract(client, document_id)["entities"][0]
 
-    # A merge is informational: it appears in warnings but does not force review on its own.
+    # A merge is informational: it appears in warnings but does not force review on its own here
+    # (no anchor graph for the run, so binding is not_applicable, not a review reason).
     assert entity_out["display"]["needs_review"] is False
     assert "merged_provenance" in entity_out["warnings"]
     assert "recognizer_duplicate" in entity_out["warnings"]
@@ -442,26 +566,30 @@ def test_merged_duplicate_provenance_is_surfaced_as_warning_only(
 # --- review state reflects the existing decision overlay -----------------------------------------
 
 
-def test_review_decision_is_reflected_in_review_state(
+def test_review_decision_is_reflected_on_anchor_bound_entity(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
-    _save_pii(settings, document_id, [_entity("LOCATION", "Wien", 0)])
+    entity = _entity("LOCATION", "Wien", 0)
+    _save_pii_over_text(settings, document_id, "Wien Graz", [entity])
     review = client.get(f"/api/documents/{document_id}/pii/review").json()
     group_id = review["groups"][0]["entity_group_id"]
     occurrence_id = review["occurrences"][0]["occurrence_id"]
 
-    client.post(
+    ack = client.post(
         f"/api/documents/{document_id}/pii/review/decisions",
         json={"target_type": "entity_group", "target_id": group_id, "decision": "false_positive"},
     )
+    assert ack.status_code == 201
 
     entity_out = _get_contract(client, document_id)["entities"][0]
-    assert entity_out["source_entity_id"] == occurrence_id
+    assert entity_out["source_entity_ids"] == [occurrence_id]
     assert entity_out["entity_group_id"] == group_id
     assert entity_out["review_state"] == "rejected"
     assert entity_out["review_decision"] == "false_positive"
     assert entity_out["decision_scope"] == "entity_group"
+    # The review decision keys on the occurrence id and does not change the anchor-derived identity.
+    assert entity_out["identity_basis"] == "anchor_exact"
 
 
 # --- backward compatibility ----------------------------------------------------------------------
@@ -478,33 +606,39 @@ def test_existing_pii_and_review_endpoints_are_unchanged(
     entity = pii.json()["content"]["entities"][0]
     assert entity["entity_type"] == "LOCATION"
     assert entity["text"] == "Wien"
-    # The immutable artifact never grows the review-ready contract fields.
-    assert "mapping_status" not in entity
-    assert "entity_id" not in entity or entity.get("id") is not None
+    # The immutable artifact never grows the anchor-bound contract fields.
+    assert "binding_status" not in entity
+    assert "identity_basis" not in entity
 
     review = client.get(f"/api/documents/{document_id}/pii/review")
     assert review.status_code == 200
     assert "entity-contract" not in review.text
 
 
-# --- privacy: value confined, no context snippet leaks -------------------------------------------
+# --- privacy: value confined, no snippet/token leaks ----------------------------------------------
 
 
-def test_value_is_confined_and_no_context_snippet_leaks(
+def test_value_is_confined_and_no_token_text_leaks(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
-    secret = "geheim@example.at"
-    entity = _entity("EMAIL_ADDRESS", secret, 0, projection_status="partial")
-    _save_pii(settings, document_id, [entity], reading_text_char_count=40)
+    secret = "Geheimname"
+    _save_pii_over_text(
+        settings, document_id, f"{secret} in Wien", [_entity("PERSON", secret, 0)]
+    )
 
     response = client.get(_CONTRACT_URL.format(document_id=document_id))
     entity_out = response.json()["entities"][0]
 
-    # The value appears only in the dedicated value field, never in display/warnings/provenance.
+    # The value appears only in the dedicated value field, never in identity/binding metadata.
     assert entity_out["value"] == secret
+    assert secret not in entity_out["entity_id"]
+    assert secret not in json.dumps(entity_out["anchor_set"])
+    assert secret not in json.dumps(entity_out["anchor_refs"])
+    assert secret not in json.dumps(entity_out["binding_reasons"])
+    assert secret not in json.dumps(entity_out["source_observations"])
     assert secret not in json.dumps(entity_out["display"])
     assert secret not in json.dumps(entity_out["warnings"])
     assert secret not in json.dumps(entity_out.get("provenance"))
     # Neighbour context words from the raw text are never sent by this endpoint at all.
-    assert "Kontakt" not in response.text
+    assert "in Wien" not in response.text

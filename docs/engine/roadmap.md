@@ -10,7 +10,7 @@ documents.
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
 | OCR / Text | **L15 (built on the required L10.5 step) + output-contract stabilization** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), L15 additive noise/token artifact evidence in the same list, and Document Text Package v1 (`contract_version = "1.0"`, `valid`/`degraded`/`invalid`) | PII L12 overlap resolution downstream; future OCR capabilities plug into the contract |
-| PII / Sensitive-Data | **L12; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **review-ready entity contract** (raw↔canonical mapping status, stable ids, display model) ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md)) | formal Review L8 `review_result` model, then the PII validation transparency report |
+| PII / Sensitive-Data | **L12; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **anchor-bound entity contract** (Text Anchor Graph binding where available, explicit evidence-only fallback, source observations, display model) ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) | frontend highlight consistency via anchors, then formal Review L8 `review_result` |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
@@ -291,18 +291,19 @@ cross-type auto-suppression precedence table (structured id > generic id, `ADDRE
 deferred in favour of flag-for-review. See
 [ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
 
-### PII review-ready entity contract (additive stabilization) — delivered
+### Anchor-bound PII entity contract (additive stabilization) — delivered
 
-On top of L12, a pure derived view (`pii_entity_contract.py`, `GET …/pii/entity-contract`) packages
-the resolved entities review-ready: a **stable `entity_id`** (hash of document id + type + raw
-span), the authoritative raw span, an optional canonical reading span, an explicit `mapping_status`
-(`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), the overlap provenance, the
-resolved review state, and a text-free display model. A missing/partial/ambiguous canonical mapping
-never drops an entity (it is flagged for review); `not_applicable` (no canonical text for the run)
-is not flagged. It mutates nothing and adds no detection. This is a cross-cutting stabilization
-milestone (like the OCR Output Contract), **not** a level bump and **not** the formal binding
-`review_result` — it is the stable review-ready read model that model will build on. See
-[ADR-0029](../adr/0029-pii-review-ready-entity-contract.md).
+On top of L12 and ADR-0031 Phase B, a pure derived view (`pii_anchor_binding.py`,
+`pii_entity_contract.py`, `GET …/pii/entity-contract`) packages the resolved entities review-ready:
+anchor-derived identity where the matching Text Anchor Graph binds, explicit evidence-only fallback
+when binding is missing/ambiguous/not applicable, detector source observations, raw + optional
+canonical display ranges, canonical `mapping_status`, overlap provenance, resolved review state, and
+a text-free display model. Missing/partial/ambiguous anchor or canonical mapping never drops an
+entity. It mutates nothing, adds no detection, and keeps technical raw text as the active PII input.
+This is a cross-cutting stabilization milestone (like the OCR Output Contract), **not** a level bump
+and **not** the formal binding `review_result` — it is the stable review-ready read model that model
+will build on. See [ADR-0029](../adr/0029-pii-review-ready-entity-contract.md) and
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md).
 
 ### Review L6 — grouped occurrences — delivered
 
@@ -328,16 +329,19 @@ Add per-profile PII metrics in one invocation at L9. The L10 OCR confidence/cove
 already delivered out of order using L7 `quality_report` with a legacy artifact fallback; cumulative
 benchmark maturity remains L8 until L9 lands.
 
-### Text identity / anchor lineage — Phase B delivered, downstream binding open
+### Text identity / anchor lineage — Phases B-C delivered, frontend consistency next
 
 [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) frames the stable **text
 anchor** identity layer: raw/canonical/layout/structured are *views* of one document, married by an
 OCR/Text-owned anchor graph (`text_lineage_map` made concrete). Phase B is now implemented
 additively as Text Anchor Graph v1 (`document_text_anchors.py`, `GET …/text-anchors`): raw anchors
 are primary, canonical ranges attach through `reading_text_map`, layout ranges attach only when
-safely byte-aligned in v1, and missing/partial/ambiguous states are explicit. It stores no copied
-text, adds no DB, and does not change PII. PII anchor binding, frontend highlight consistency,
-pseudonymization, and reconstruction remain later phases.
+safely byte-aligned in v1, and missing/partial/ambiguous states are explicit. Phase C is now
+implemented additively as PII anchor binding (`pii_anchor_binding.py`,
+`GET …/pii/entity-contract`): detections bind to anchors where available, otherwise degrade to
+explicit evidence-only identity. It stores no copied binding text, adds no DB, and does not change
+the active PII detection input. Frontend highlight consistency, pseudonymization, and reconstruction
+remain later phases.
 
 ### Redaction remains blocked
 
