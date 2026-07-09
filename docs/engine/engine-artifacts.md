@@ -39,7 +39,7 @@ input, or report may be committed.
 | `pii_input_text` | ✅ v1 (field on `text_result`) | internal, experimental semantic reading-order text for PDF text layer (L9 v1: left/right block grouping, row-wise tables); **not** the active PII input, no lineage map yet | yes | additive optional field on `text_result` |
 | `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping technical raw spans (persisted `canonical_*` compatibility names) to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; source-anchoring/traceability only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
 | `structured_content` | ✅ OCR L11 + L13 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags; L13 adds multiline label/value field continuation | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
-| `quality_evidence` | ✅ OCR L14 (field on `text_result`) | metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence for the run: a list of `QualityEvidenceItem`s plus a `QualityEvidenceSummary` with `QualityLineageCoverage`; explains where text came from and how well it maps back, without changing any text | no raw text (offsets, counts, flags, page zones, coarse bounds, stable reason codes; `details` is `dict[str, int]`) | additive optional versioned field on `text_result` |
+| `quality_evidence` | ✅ OCR L14 + L15 (field on `text_result`) | metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence for the run: a list of `QualityEvidenceItem`s plus a `QualityEvidenceSummary` with `QualityLineageCoverage`; explains where text came from and how well it maps back, without changing any text. L15 adds deterministic noise/token artifact *evidence* (glyph artifacts, suspicious token shapes, character-confusion candidates, spacing candidates, and a document-level `ocr_noise_summary`) into the same list | no raw text (offsets, counts, flags, page zones, coarse bounds, stable reason codes; `details` is `dict[str, int]`) | additive optional versioned field on `text_result` |
 | `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
@@ -125,7 +125,12 @@ Distinct text layers, structured layout blocks, and a lineage map are fixed by t
   text layer, OCR, or fallback), which parts were confidently reconstructed versus fell back,
   conservative page zones from existing geometry, and how well canonical reading text maps back to
   technical raw text and source geometry. It carries **no raw text** (`details` is `dict[str, int]`
-  by construction) and changes no text layer, PII input, or PII decision.
+  by construction) and changes no text layer, PII input, or PII decision. **OCR L15** extends the
+  same list with deterministic noise/token artifact evidence — glyph artifacts, suspicious token
+  shapes, O/0, I/l/1, and rn/m character-confusion candidates, and spacing candidates (single-letter
+  token runs, long letters-only tokens with one internal case transition) — plus a document-level
+  `ocr_noise_summary` item; it is *evidence, not correction* and never rewrites, removes, or reorders
+  any text.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
   its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.
@@ -174,6 +179,25 @@ reason codes, with an integer-only `details` map. It is not a PII input and neve
 detection or review decisions; benchmark loaders ignore it, and it follows the same sensitive-artifact
 handling as the other text-artifact fields (never logged, never committed). Legacy `text_result`
 artifacts without it remain valid.
+
+## Noise/token artifact evidence boundary (OCR L15)
+
+OCR L15 extends the same `quality_evidence` list — no new artifact, no new schema version — with
+deterministic noise/token artifact *evidence*: a dedicated builder (`ocr_noise.py`) scans technical
+raw per-page text only (never `reading_text` or `structured_content`) for glyph artifacts, suspicious
+token shapes, character-confusion candidates (O/0, I/l/1, rn/m, and a general letter↔digit
+*alternation*-based `mixed_alnum_confusion`), and spacing candidates (single-letter-token runs, long
+letters-only tokens with one internal case transition), tags findings with the existing L14 page-zone
+classification, and always appends one document-level `ocr_noise_summary` item (even when clean).
+Structured-identifier- and IBAN-shaped tokens are exempted, as are intentional divider/bullet/leader
+character runs; trailing sentence punctuation is stripped before shape analysis so an abbreviation is
+judged on its own shape. It is **evidence, not correction**: nothing is ever rewritten, removed, or
+reordered, and no dictionary/lexicon, second OCR engine, or local LLM is used. It carries no raw
+token text — every locator is an offset range, page number, page zone, count, or stable
+`reason_code`, and `details` remains `dict[str, int]` — and never changes PII detection, review
+decisions, or any text layer. A local, metrics-only private-corpus validation pass (never committed;
+`.local` outputs) found and fixed four generic (non-corpus-specific) over-flagging patterns before
+this reached its final state; see [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md).
 
 ## Dev feedback side-channel
 
@@ -228,9 +252,11 @@ short:
   plus short labels/headings but no duplicated field values or table contents. Both follow the same
   sensitive-artifact handling — geometry offsets/bounds and structured labels must never be logged —
   and benchmark loaders do not copy their payloads into summaries. Additive `quality_evidence`
-  (OCR L14) is metrics-only by construction — offsets, counts, flags, page zones, coarse bounds, and
-  stable reason codes, with an integer-only `details` map — so it carries no raw text; it still lives
-  inside the sensitive text artifact and is never logged or committed, and benchmark loaders ignore it.
+  (OCR L14, extended by L15's noise/token artifact evidence) is metrics-only by construction —
+  offsets, counts, flags, page zones, coarse bounds, and stable reason codes, with an integer-only
+  `details` map — so it carries no raw text (L15 never stores a suspicious token's own characters,
+  only its location and shape-derived counts); it still lives inside the sensitive text artifact and
+  is never logged or committed, and benchmark loaders ignore it.
 - **PII and review artifacts** contain spans and may contain raw entity values. They remain local and
   are never written to application logs.
 - **Private benchmark reports** remain under `volumes/` and pass through `privacy_guard.py` before

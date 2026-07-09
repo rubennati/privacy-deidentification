@@ -523,6 +523,9 @@ class ReadingTextMapSegment(BaseModel):
 # and how well the derived reading text maps back to technical raw text. It never carries raw
 # document text: every locator is an offset range, page zone, coarse bound, count, flag, or stable
 # reason code. It does not change PII input, PII decisions, or any existing text layer.
+# OCR/Text L15 extends the same additive model with noise/token artifact *evidence* (see
+# ocr_noise.py): glyph artifacts, suspicious token shapes, character-confusion candidates, and
+# spacing candidates. It is suspicion, not truth — it never corrects, removes, or rewrites text.
 QualityEvidenceLevel = Literal[
     "document",
     "page",
@@ -553,6 +556,17 @@ QualityEvidenceType = Literal[
     "low_confidence",
     "lineage_coverage",
     "projection_lineage",
+    # OCR/Text L15 noise/token artifact evidence types (see ocr_noise.py). These are additive,
+    # deterministic shape-based *suspicion* signals — never a correction, never raw token text.
+    "glyph_artifact",
+    "suspicious_token_shape",
+    "suspicious_spacing",
+    "character_confusion",
+    "low_information_symbol_run",
+    "joined_word_candidate",
+    "split_word_candidate",
+    "non_text_artifact",
+    "ocr_noise_summary",
 ]
 QualityEvidenceStatus = Literal[
     "confident",

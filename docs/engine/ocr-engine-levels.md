@@ -19,8 +19,8 @@ the PII, Review, Benchmark, or Redaction ladders. This engine uses the **0–19 
 ([why 0–19](README.md#maturity-scale)); a mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
-**Current standing:** **L14 reached (L0–L10 done plus the required L10.5 contract step, then L11,
-L12, L13, and L14).** Each successful OCR/Text run now persists additive readable/layout views, versioned
+**Current standing:** **L15 reached (L0–L10 done plus the required L10.5 contract step, then L11,
+L12, L13, L14, and L15).** Each successful OCR/Text run now persists additive readable/layout views, versioned
 ordered/typed `layout_blocks` with coarse normalized page bounds, and additive `text_geometry` that
 maps technical raw line spans to page-local line boxes (`pdf_points` for text-layer, `image_pixels`
 for OCR). L10.5 added versioned `reading_text`, its heuristic/fallback status and non-sensitive
@@ -33,7 +33,10 @@ partially fused (not just fully fused) header recovery, and multiline label/valu
 both `reading_text` and `structured_content` fields. L14 adds additive, optional, versioned
 `quality_evidence`: metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence
 for every run (offsets, counts, flags, page zones, coarse bounds, and stable reason codes — never raw
-text), so quality is measurable and regression-safe without changing any text. Technical raw text,
+text), so quality is measurable and regression-safe without changing any text. L15 extends the same
+`quality_evidence` list with deterministic noise/token artifact *evidence*: glyph artifacts,
+suspicious token shapes, O/0, I/l/1, and rn/m character-confusion candidates, and broken-spacing
+candidates — evidence before correction, never an automatic fix. Technical raw text,
 routing, active PII input, PII decisions, public API shape, and the `quality_report` artifact remain
 unchanged; L10 geometry provides source anchoring and traceability for review/debug and future
 placeholder mapping, and L11/L12/L13 structure supports future context-preserving pseudonymization —
@@ -50,7 +53,7 @@ redaction.
 | Quality routing | 4–7 | Text-layer quality gate, page routing, confidence, `quality_report` |
 | Readable & structured | 8–11 | Human-readable text, layout order, bounding boxes, tables/forms |
 | Understanding & assist | 12–14 | Layout reconstruction, document understanding, local AI assist |
-| De-identification readiness | 15–19 | Redaction-ready geometry, reproducibility, observability, regression gate, production |
+| De-identification readiness | 15–19 | Noise/token evidence, reproducibility, observability, regression gate, production |
 
 ---
 
@@ -408,8 +411,8 @@ redaction.
   agreement, and a local LLM for document-type/section/structure/quality-explanation hints are
   **evidence, not truth** — they may raise or lower confidence but must never silently rewrite
   OCR/Text or change PII decisions. See [ADR-0025](../adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md).
-- **Boundary to L15:** L0–L14 produce, understand, and now *explain* text; L15 makes text+geometry
-  *redaction-ready*.
+- **Boundary to L15:** L0–L14 produce, understand, and now *explain* text; L15 adds noise/token
+  artifact *evidence* on top of that same explanation.
 
 > Migration note: earlier planning placeholders described OCR/Text L14 as local AI assist for hard
 > pages (a local vision/OCR model behind an adapter; see the
@@ -418,17 +421,58 @@ redaction.
 > quality evidence and lineage coverage described here, mirroring how ADR-0022/ADR-0024 re-scoped
 > L12/L13. See [ADR-0025](../adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md).
 
-## Level 15 — Redaction-ready text/geometry mapping  ⛔ *open*
+## Level 15 — Noise / token artifact evidence  ✅ *done*
 
-- **Description:** provide the stable text↔geometry mapping that de-identification will build on.
-- **Engine must:** guarantee a stable mapping from canonical-text offset ranges to page pixel boxes
-  across a document, sufficient for the [Redaction engine](redaction-engine-levels.md) to black out
-  or replace a reviewed span in the source rendering.
-- **Artifacts:** a documented offset↔box mapping usable by redaction.
-- **Acceptance:** for a reviewed span, the engine returns the exact page region(s) covering it, with
-  no drift against the canonical offsets.
-- **Boundary to L16:** L15 makes results *usable* for redaction; L16 makes them *reproducible* by
-  recording engine settings.
+- **Description:** make likely OCR noise and token-shape artifacts *measurable and explainable* —
+  glyph artifacts, suspicious token shapes, character-confusion candidates, and broken spacing — as
+  additive evidence, before any correction is ever attempted.
+- **Engine must:** deterministically scan technical raw per-page text for shape-based signals
+  (symbol/glyph runs, suspicious token shapes, O/0, I/l/1, and rn/m confusion candidates, and
+  spacing candidates) and fold them into the existing `quality_evidence` list; never rewrite,
+  remove, or reorder text; never use a dictionary, second OCR engine, or local LLM; classify
+  confidence conservatively rather than asserting a correction.
+- **Artifacts:** no new artifact or schema version. `QualityEvidenceType` gains nine additive
+  values (`glyph_artifact`, `suspicious_token_shape`, `suspicious_spacing`, `character_confusion`,
+  `low_information_symbol_run`, `joined_word_candidate`, `split_word_candidate`,
+  `non_text_artifact`, `ocr_noise_summary`); `QualityEvidenceLevel`/`QualityEvidenceStatus` already
+  covered every value needed (`span`/`document`;
+  `confident`/`partial`/`low_confidence`/`skipped`/`not_applicable`).
+- **Delivered:** a dedicated deterministic builder (`ocr_noise.py`) scans technical raw per-page
+  text only (never reading text or structured content) for symbol/glyph runs (exempting
+  intentional divider/bullet/leader runs and requiring a minimum count of non-structural characters
+  before flagging, so one incidental character next to a long blank-field run is not enough),
+  suspicious token shapes (after exempting structured-identifier- and IBAN-shaped tokens and
+  stripping trailing sentence punctuation), character-confusion candidates (O/0, I/l/1, rn/m as
+  narrow digit-adjacent patterns, plus a general letter↔digit *alternation* count for
+  `mixed_alnum_confusion` so same-class segments split by symbols — e.g. a hyphenated compound word
+  — never count), and spacing candidates (runs of single-letter tokens; a long letters-only token
+  with exactly one internal lower→upper transition as a joined-word candidate). Noise items reuse
+  the existing L14 page-zone classification rather than inventing a second one, and a
+  document-level `ocr_noise_summary` item is always present (even when clean) with total/reason/
+  status/zone counts, the strongest reason code, and a `noise_density_ratio`.
+- **Acceptance:** synthetic tests cover every signal type's positive detection and a wide
+  false-positive guard set (normal prose, invoice/policy numbers, IBAN-like and phone-like strings,
+  legal section references, dates, prices, percentages, acronyms, filenames, bullet lists, and
+  table rows); a local private-corpus validation pass found and fixed four generic (non-corpus-
+  specific) over-flagging patterns — superscript measurement units, incidental characters beside
+  intentional divider/blank-field runs, hyphenated compound words, and abbreviations followed by
+  sentence punctuation — each now covered by a synthetic regression test, diagnosed throughout via
+  a privacy-safe character-*class*-only signature tool that never printed or persisted real text.
+  Technical raw text, `reading_text`, `structured_content`, active PII input, PII decisions, the
+  `quality_report` artifact, benchmark payloads, dependencies, and public APIs remain unchanged.
+- **Future evidence (deferred, additive):** dictionary/lexicon checks for non-word tokens (L16),
+  multi-OCR agreement, and a local LLM for structure/quality hints remain *evidence, not truth* —
+  they may raise or lower confidence but must never silently rewrite OCR/Text or change PII
+  decisions. Correction *suggestions* (not automatic fixes) remain a later, explicitly separate
+  level.
+- **Boundary to L16:** L15 makes noise/token-shape quality *measurable*; L16 makes OCR results
+  *reproducible* by recording engine settings.
+
+> Migration note: earlier planning placeholders described OCR/Text L15 as redaction-ready text/
+> geometry mapping. That capability is deferred to a later level once redaction/review/PII
+> prerequisites justify it; L15 now means the noise/token artifact evidence described here, mirroring
+> how ADR-0022/ADR-0024/ADR-0025 re-scoped L12/L13/L14. See
+> [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md).
 
 ## Level 16 — Reproducible OCR engine settings in artifact  ⛔ *open*
 
@@ -507,7 +551,7 @@ OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md).
 | 12 Multi-column layout reconstruction | ✅ done | safe column ordering, fused table headers, and geometry-bound label/value pairing in `reading_text`; raw/PII input unchanged |
 | 13 Table / form reconstruction v2 | ✅ done | geometry-only table detection, partially fused header recovery, and multiline label/value continuation in `reading_text` and `structured_content`; raw/PII input unchanged |
 | 14 Quality evidence & lineage coverage | ✅ done | additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage); no raw text; raw/PII input, `quality_report`, and benchmark unchanged |
-| 15 Redaction-ready geometry | ⛔ open | prerequisite for [Redaction](redaction-engine-levels.md) |
+| 15 Noise / token artifact evidence | ✅ done | additive `quality_evidence` gains glyph-artifact, suspicious-token-shape, character-confusion, and spacing evidence; no raw token text; evidence, not correction |
 | 16 Reproducible settings | ⛔ open | OCR `engine_settings` not recorded yet |
 | 17 Observability / budget | ⛔ open | — |
 | 18 Regression gate | ⛔ open | benchmark exists but is not a CI gate |
@@ -518,14 +562,15 @@ text layer. On the local benchmark corpus, routing matched the expected category
 documents; the 2 "mismatches" were the gate routing *all* pages of a bad scan to OCR where a partial
 fallback was expected — i.e. more conservative, not wrong.
 
-**What is missing for the next level (L15 and beyond):**
+**What is missing for the next level (L16 and beyond):**
 
-1. Redaction-ready text↔pixel geometry (L15), reproducible OCR engine settings (L16), observability
-   budgets (L17), a regression gate (L18), and production hardening (L19). Local AI assist for hard
-   pages (the earlier placeholder meaning of L14, now deferred — see the migration note under L14),
-   document type/section/zone classification (the earlier placeholder meaning of L13, deferred),
-   word-level/redaction-ready geometry, placeholder mapping, export, dictionary/lexicon OCR-quality
-   checks, and multi-OCR stay open at later levels/spikes, and are additive **evidence, not truth**.
+1. Reproducible OCR engine settings (L16), observability budgets (L17), a regression gate (L18), and
+   production hardening (L19). Redaction-ready text↔pixel geometry (the earlier placeholder meaning
+   of L15, now deferred — see the migration note under L15), local AI assist for hard pages (the
+   earlier placeholder meaning of L14, deferred), document type/section/zone classification (the
+   earlier placeholder meaning of L13, deferred), word-level/redaction-ready geometry, placeholder
+   mapping, export, dictionary/lexicon OCR-quality checks, and multi-OCR stay open at later
+   levels/spikes, and are additive **evidence, not truth**.
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.

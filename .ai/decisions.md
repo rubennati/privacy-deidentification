@@ -62,3 +62,11 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   label/value continuation) inside `reading_text`/`structured_content`; the older
   document-understanding placeholder is deferred and technical raw text/active PII input remain
   unchanged.
+- [ADR-0025](../docs/adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md) — OCR/Text L14 is
+  additive, metrics-only `quality_evidence` and lineage coverage on `text_result`; the older local
+  AI assist placeholder is deferred and technical raw text/active PII input remain unchanged.
+- [ADR-0026](../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md) — OCR/Text L15 is
+  deterministic noise/token artifact *evidence* (glyph artifacts, suspicious token shapes,
+  character-confusion candidates, spacing candidates) folded into the same `quality_evidence` list;
+  the older redaction-ready-geometry placeholder is deferred, and no OCR text is ever corrected,
+  removed, or rewritten.
