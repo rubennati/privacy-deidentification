@@ -53,8 +53,13 @@ class JobExecutionMode(StrEnum):
     FUTURE_WORKER = "future_worker"
 
 
-def _now_utc_iso() -> str:
+def now_utc_iso() -> str:
+    """Return the current UTC time as a ``...Z`` microsecond ISO-8601 string."""
     return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+# Internal alias kept for the existing call sites below.
+_now_utc_iso = now_utc_iso
 
 
 @dataclass(frozen=True)

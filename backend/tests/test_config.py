@@ -81,6 +81,63 @@ def test_job_store_db_path_can_be_overridden_or_left_empty() -> None:
     assert defaulted.resolved_job_store_db_path == Path("/tmp/document-data/jobs.sqlite3")
 
 
+def test_ocr_execution_mode_defaults_to_sync_and_worker_settings_are_conservative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for var in (
+        "OCR_EXECUTION_MODE",
+        "OCR_WORKER_POLL_INTERVAL_SECONDS",
+        "OCR_WORKER_CONCURRENCY",
+        "OCR_WORKER_MAX_ATTEMPTS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    settings = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+    )
+
+    # Default preserves the Phase 2 in-process behavior; the frontend/API are unchanged.
+    assert settings.ocr_execution_mode == "sync"
+    assert settings.ocr_worker_poll_interval_seconds == 2.0
+    assert settings.ocr_worker_concurrency == 1
+    assert settings.ocr_worker_max_attempts == 1
+
+
+def test_ocr_execution_mode_is_normalized_and_empty_stays_sync() -> None:
+    worker = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+        OCR_EXECUTION_MODE=" Worker ",
+    )
+    empty = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+        OCR_EXECUTION_MODE="",
+    )
+
+    assert worker.ocr_execution_mode == "worker"
+    assert empty.ocr_execution_mode == "sync"
+
+
+def test_unknown_ocr_execution_mode_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        Settings(
+            UPLOAD_STORAGE_DIR="/tmp/originals",
+            DOCUMENT_DATA_DIR="/tmp/document-data",
+            OCR_EXECUTION_MODE="celery",
+        )
+
+
+def test_ocr_worker_concurrency_above_one_is_rejected() -> None:
+    with pytest.raises(ValueError, match="OCR_WORKER_CONCURRENCY must be 1"):
+        Settings(
+            UPLOAD_STORAGE_DIR="/tmp/originals",
+            DOCUMENT_DATA_DIR="/tmp/document-data",
+            OCR_WORKER_CONCURRENCY=2,
+        )
+
+
 @pytest.mark.parametrize(
     ("upload_dir", "document_data_dir", "archive_dir"),
     [

@@ -19,6 +19,7 @@ from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
 from app.main import app
 from app.services.artifact_service import get_latest_quality_report_artifact
+from app.services.job_store import get_job_store
 from app.services.layout_text import build_pdf_layout_blocks
 from app.services.ocr_adapters import (
     OcrExtractionResult,
@@ -26,6 +27,7 @@ from app.services.ocr_adapters import (
     OcrLineMetric,
     OcrUnavailableError,
 )
+from app.services.ocr_worker import OcrJobWorker
 from app.services.pdf_renderer import get_pdf_renderer
 
 
@@ -1571,3 +1573,101 @@ def test_delete_removes_audit_text_and_quality_artifacts(
 
     assert response.status_code == 204
     assert not artifact_directory.exists()
+
+
+# --- Worker-mode OCR endpoint (ADR-0023 Phase 3) -----------------------------------------------
+
+
+def test_ocr_worker_mode_enqueues_job_and_returns_202(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    settings.ocr_execution_mode = "worker"
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 202
+    body = response.json()
+    job_id = response.headers["x-job-id"]
+    assert body["job_id"] == job_id
+    assert body["kind"] == "ocr_text"
+    assert body["status"] == "pending"
+    assert body["execution_mode"] == "future_worker"
+    assert body["document_id"] == upload["id"]
+    assert body["result_artifact_id"] is None
+    # The API stayed thin: it enqueued but ran no OCR and produced no text_result yet.
+    assert adapter.calls == []
+    assert renderer.calls == []
+    artifact_types = {
+        json.loads(path.read_text(encoding="utf-8")).get("artifact_type")
+        for path in (document_data_dir / str(upload["id"]) / "artifacts").glob("*.json")
+    }
+    assert "text_result" not in artifact_types
+    # The job is visible and pending through the existing status APIs.
+    assert client.get(f"/api/jobs/{job_id}").json()["status"] == "pending"
+    document_jobs = client.get(f"/api/documents/{upload['id']}/jobs").json()
+    assert [item["job_id"] for item in document_jobs] == [job_id]
+
+
+def test_ocr_worker_mode_unknown_document_returns_404(
+    client: TestClient,
+    settings: Settings,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    settings.ocr_execution_mode = "worker"
+
+    response = client.post("/api/documents/" + "a" * 32 + "/ocr")
+
+    assert response.status_code == 404
+
+
+def test_ocr_worker_mode_job_is_runnable_by_the_worker(
+    client: TestClient,
+    settings: Settings,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    settings.ocr_execution_mode = "worker"
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    job_id = client.post(f"/api/documents/{upload['id']}/ocr").headers["x-job-id"]
+
+    # Drive the worker as the isolated process would; a text-layer PDF never touches the OCR fakes.
+    store = get_job_store(settings)
+    worker = OcrJobWorker(settings, store, adapter, renderer, max_attempts=1)
+    assert worker.process_next() is True
+
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["status"] == "succeeded"
+    assert job["result_artifact_type"] == "text_result"
+    ocr = client.get(f"/api/documents/{upload['id']}/ocr")
+    assert ocr.status_code == 200
+    assert ocr.json()["id"] == job["result_artifact_id"]
+    assert ocr.json()["content"]["text"] == "Digital text"
+    assert adapter.calls == []
+    assert renderer.calls == []
+
+
+def test_ocr_sync_mode_is_the_default_and_returns_201(
+    client: TestClient,
+    settings: Settings,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    # No OCR_EXECUTION_MODE override: the endpoint stays synchronous and returns the artifact body.
+    assert settings.ocr_execution_mode == "sync"
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    assert response.json()["artifact_type"] == "text_result"
+    assert response.headers["x-job-id"]

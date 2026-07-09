@@ -20,6 +20,7 @@ from app.services.job_models import (
     JobKind,
     JobRecord,
     JobStatus,
+    now_utc_iso,
 )
 
 _SCHEMA_VERSION = 1
@@ -181,6 +182,54 @@ class JobStore:
             _raise_if_missing(cursor)
 
         self._run(_mark)
+
+    def claim_next_pending_job(
+        self, kind: JobKind, *, max_attempts: int = 1
+    ) -> JobRecord | None:
+        """Atomically claim the oldest pending job of ``kind`` and mark it ``running``.
+
+        Returns the claimed record (already in ``running`` state) or ``None`` when nothing is
+        pending. The transition is one ``UPDATE ... RETURNING`` statement whose ``WHERE`` re-selects
+        the target row, so under SQLite's single-writer WAL lock two concurrent workers can never
+        claim the same job: the second worker's statement runs after the first commits and no longer
+        sees the row as ``pending``. Jobs whose ``attempt_count`` already reached ``max_attempts``
+        are left untouched. OCR execution then runs *outside* this short transaction — the DB is
+        only touched to claim and, later, to record the terminal status.
+        """
+
+        claimed_at = now_utc_iso()
+
+        def _claim(connection: sqlite3.Connection) -> JobRecord | None:
+            row = connection.execute(
+                """
+                UPDATE jobs
+                SET status = ?,
+                    started_at = ?,
+                    updated_at = ?,
+                    attempt_count = attempt_count + 1,
+                    error_code = NULL,
+                    error_message = NULL
+                WHERE job_id = (
+                    SELECT job_id
+                    FROM jobs
+                    WHERE status = ? AND kind = ? AND attempt_count < ?
+                    ORDER BY created_at ASC, job_id ASC
+                    LIMIT 1
+                )
+                RETURNING *
+                """,
+                (
+                    JobStatus.RUNNING.value,
+                    claimed_at,
+                    claimed_at,
+                    JobStatus.PENDING.value,
+                    kind.value,
+                    max_attempts,
+                ),
+            ).fetchone()
+            return _row_to_record(row) if row is not None else None
+
+        return self._run(_claim)
 
     def get_job(self, job_id: str) -> JobRecord | None:
         """Return a job by id, or ``None`` for an unknown id."""

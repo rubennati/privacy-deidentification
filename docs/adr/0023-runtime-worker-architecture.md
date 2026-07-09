@@ -3,9 +3,11 @@
 ## Status
 
 Proposed — 2026-07-08. Planning-only for the overall worker architecture; **Phase 1 (the internal
-job model abstraction) and Phase 2 (SQLite-backed job state + status API) are implemented** while
-execution remains synchronous/in-process — see [Implementation status](#implementation-status)
-below. Phases 3+ (workers, queue, isolation) remain proposed and unimplemented. Builds on
+job model abstraction), Phase 2 (SQLite-backed job state + status API), and Phase 3 (isolated
+`ocr-worker` container, opt-in) are implemented** — see
+[Implementation status](#implementation-status) below. Synchronous in-process execution remains the
+default and fallback; Phases 4+ (PII worker, concurrency/timeout/retry controls, optional Redis/RQ,
+quality/LLM workers) remain proposed and unimplemented. Builds on
 [ADR-0001](0001-stack-and-architecture.md) (Docker-first FastAPI + React behind nginx),
 [ADR-0003](0003-audit-station.md)/[ADR-0004](0004-ocr-workstation.md)/[ADR-0005](0005-pii-workstation.md)
 (synchronous stations behind adapters), [ADR-0007](0007-ocr-runtime-and-model-provisioning.md)
@@ -268,7 +270,7 @@ stores their raw text or PII.
 | 0 — document current architecture (this ADR) | Done. |
 | **1 — internal job model abstraction** | **Done.** In-process only; no runtime behavior change. |
 | **2 — SQLite job store + status API** | **Done.** Durable metadata/status only; OCR/PII still execute synchronously in-process. |
-| 3 — isolate `ocr-worker` | Not started (proposed). |
+| **3 — isolate `ocr-worker`** | **Done (opt-in).** `OCR_EXECUTION_MODE=worker` moves OCR into an isolated polling worker container; `sync` (default) keeps in-process execution. PII stays synchronous. |
 | 4+ — PII worker, concurrency controls, optional Redis/RQ, quality/LLM workers | Not started (proposed). |
 
 ### Phase 1 — internal job model abstraction (implemented)
@@ -331,3 +333,48 @@ optional produced artifact id/type, and a small string metadata map. It never st
 raw OCR text, canonical reading text, layout text, structured content payloads, PII values, artifact
 JSON payloads, stack traces, or raw exception messages. Job rows are deleted with their document's
 document-data boundary; artifacts remain file-based and immutable.
+
+### Phase 3 — isolate the OCR worker (implemented, opt-in)
+
+Phase 3 moves OCR execution out of the FastAPI process into an isolated `ocr-worker` container that
+claims jobs from the Phase 2 SQLite store. It is **the stability win**: an OCR OOM/crash can no
+longer take the API down. It is a DB-backed polling worker — **not** Redis/Celery/RQ — and PII stays
+synchronous in the API.
+
+- **Execution mode (`OCR_EXECUTION_MODE`, default `sync`).** `sync` preserves Phase 2 exactly: the
+  OCR endpoint runs `create_text_artifact` inline through the `SyncJobRunner` and returns the
+  `text_result` artifact with `201` (existing clients and the frontend are unchanged). `worker`
+  makes `POST /api/documents/{id}/ocr` enqueue a `pending` OCR job and return `202` with the job's
+  safe status; the endpoint touches no OCR runtime. Both modes set `X-Job-Id`.
+- **The worker** (`backend/app/services/ocr_worker.py` + entrypoint `backend/app/ocr_worker.py`,
+  run as `python -m app.ocr_worker`): initializes the shared store, then polls. Each cycle it
+  atomically claims the oldest pending `ocr_text` job, runs the unchanged `create_text_artifact`
+  station in its own process, and records a terminal `succeeded` (with produced artifact id/type)
+  or sanitized `failed`. It drains back-to-back jobs and sleeps `OCR_WORKER_POLL_INTERVAL_SECONDS`
+  when idle. `SIGTERM`/`SIGINT` requests a graceful stop after the in-flight job.
+- **Safe claiming.** `JobStore.claim_next_pending_job` is one `UPDATE … RETURNING` statement whose
+  `WHERE` re-selects the target row. Under SQLite's single-writer WAL lock (with `busy_timeout`),
+  two workers can never claim the same job: the second runs after the first commits and no longer
+  sees the row as `pending`. OCR runs **outside** that short transaction, so there is no long DB
+  transaction during extraction. `OCR_WORKER_MAX_ATTEMPTS` bounds re-claims (default 1; Phase 3 does
+  not auto-retry — a failed job is terminal).
+- **Concurrency.** `OCR_WORKER_CONCURRENCY` is validated to be exactly `1` (one memory-heavy OCR job
+  at a time); higher concurrency is deferred to Phase 4 and rejected loudly rather than ignored.
+- **Docker/Compose.** A new `ocr-worker` service behind the `worker` Compose profile shares the
+  same backend image (command override `python -m app.ocr_worker`) and the document-data / uploads /
+  ocr-models / job-DB volumes with the API. It has its own memory ceiling (`OCR_WORKER_MEMORY_LIMIT`,
+  default `2g`) and `restart: unless-stopped`, so it restarts independently and its ceiling never
+  touches the API's. `make up-ocr-worker` / `make up-full-worker` start it. The default
+  slim/pii/ocr/full flows never run it. Splitting a slimmer API image from the worker image is a
+  deliberate future optimization — Phase 3 uses one image for correctness/stability first.
+- **Failure model (as tested):** an OCR error marks the job `failed` with a sanitized code/message
+  and writes no artifact (never a partial `succeeded`); the API keeps listing documents/jobs while
+  the worker is down; with no worker running, jobs simply stay `pending`; a worker crash mid-job
+  leaves the row `running` (stale-lease reclaim/heartbeat is **deferred to Phase 4** and documented
+  as a known limitation); job metadata and logs never carry raw text or stack traces.
+
+**Intentionally unchanged in Phase 3:** the OCR algorithm, technical raw/canonical text,
+`quality_evidence`, PII model and its technical-raw-text input, PII projection, review decisions,
+benchmark payloads, and artifact contracts. There is still no Redis/Celery/RQ, no PII worker split,
+no pseudonymization/redaction/export, and no local LLM. The synchronous runner remains the default
+and the fallback for tests/dev.

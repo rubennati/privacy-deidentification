@@ -31,7 +31,7 @@ def get_job_status(
     record = store.get_job(job_id)
     if record is None:
         raise JobNotFoundError()
-    return _to_response(record)
+    return to_job_status_response(record)
 
 
 @router.get(
@@ -49,10 +49,11 @@ def get_document_jobs(
     if get_document_record(settings, document_id) is None:
         raise DocumentNotFoundError()
     records = store.list_jobs_for_document(document_id, limit=limit)
-    return [_to_response(record) for record in records]
+    return [to_job_status_response(record) for record in records]
 
 
-def _to_response(record: JobRecord) -> JobStatusResponse:
+def to_job_status_response(record: JobRecord) -> JobStatusResponse:
+    """Map a safe ``JobRecord`` to its public status view (reused by the worker-mode OCR route)."""
     return JobStatusResponse(
         job_id=record.job_id,
         document_id=record.document_id,

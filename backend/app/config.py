@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -55,6 +55,29 @@ class Settings(BaseSettings):
         alias="DOCUMENT_DATA_DIR",
     )
     job_store_db_path: Path | None = Field(default=None, alias="JOB_STORE_DB_PATH")
+    # OCR execution mode (ADR-0023 Phase 3). ``sync`` keeps the current in-process behavior: the
+    # OCR endpoint runs extraction inline and returns the artifact (201). ``worker`` makes the
+    # endpoint enqueue a pending OCR job (202) that the isolated ``ocr-worker`` process claims and
+    # runs, so an OCR OOM/crash can no longer take the API down. Default stays ``sync`` so existing
+    # deployments and the frontend are unchanged unless a worker profile explicitly opts in.
+    ocr_execution_mode: Literal["sync", "worker"] = Field(
+        default="sync", alias="OCR_EXECUTION_MODE"
+    )
+    # How long the OCR worker sleeps between polls when no pending job is available.
+    ocr_worker_poll_interval_seconds: float = Field(
+        default=2.0, gt=0, le=3600, alias="OCR_WORKER_POLL_INTERVAL_SECONDS"
+    )
+    # Bounded OCR concurrency. Phase 3 runs one OCR job at a time; higher concurrency is deferred to
+    # ADR-0023 Phase 4 (see the validator below), so this is validated to be exactly 1 for now.
+    ocr_worker_concurrency: int = Field(
+        default=1, ge=1, alias="OCR_WORKER_CONCURRENCY"
+    )
+    # A pending OCR job is claimed only while its attempt count is below this bound, so a job that
+    # keeps failing can never be re-run without limit. Phase 3 does not auto-retry (a failed job is
+    # terminal); this guards any future requeue and defaults to a single attempt.
+    ocr_worker_max_attempts: int = Field(
+        default=1, ge=1, le=10, alias="OCR_WORKER_MAX_ATTEMPTS"
+    )
     # Root for the dev-only PII review-feedback archive (see feedback_service.py). Deliberately a
     # third, separate root from document_data_dir: feedback here is retained across a document's
     # deletion by design, so it can later feed PII improvement/benchmark work, whereas
@@ -158,6 +181,15 @@ class Settings(BaseSettings):
         """Compose may pass an empty optional DB path; keep that on the derived default."""
         return None if value == "" else value
 
+    @field_validator("ocr_execution_mode", mode="before")
+    @classmethod
+    def _normalize_ocr_execution_mode(cls, value: object) -> object:
+        """Accept ``SYNC``/``Worker`` etc.; an empty Compose value keeps the safe ``sync`` mode."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return "sync" if normalized == "" else normalized
+        return value
+
     @field_validator(
         "ocr_detection_model_name", "ocr_recognition_model_name", mode="before"
     )
@@ -171,6 +203,17 @@ class Settings(BaseSettings):
         """Derive the allowlist from the profile unless a non-empty override was supplied."""
         if "pii_entity_types" not in self.model_fields_set or not self.pii_entity_types:
             self.pii_entity_types = get_pii_profile(self.pii_profile).entity_types
+        return self
+
+    @model_validator(mode="after")
+    def _ocr_worker_concurrency_is_bounded(self) -> Settings:
+        """Phase 3 supports exactly one OCR job at a time. Reject higher concurrency loudly rather
+        than silently ignoring it; multi-worker concurrency is deferred to ADR-0023 Phase 4."""
+        if self.ocr_worker_concurrency != 1:
+            raise ValueError(
+                "OCR_WORKER_CONCURRENCY must be 1; higher OCR concurrency is deferred to "
+                "ADR-0023 Phase 4"
+            )
         return self
 
     @model_validator(mode="after")

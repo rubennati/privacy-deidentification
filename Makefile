@@ -21,8 +21,14 @@ PII   := INSTALL_OCR=false INSTALL_PII=true  BACKEND_MEMORY_LIMIT=1g
 OCR   := INSTALL_OCR=true  INSTALL_PII=false BACKEND_MEMORY_LIMIT=2g
 FULL  := INSTALL_OCR=true  INSTALL_PII=true  BACKEND_MEMORY_LIMIT=2g
 
-.PHONY: help up up-pii up-ocr up-full down build build-pii build-ocr build-full rebuild \
-	ocr-models ocr-smoke pii-smoke logs ps lint typecheck test lock clean \
+# Worker profiles (ADR-0023 Phase 3): OCR runs in the isolated ocr-worker container, so the API
+# stays small even with the OCR extras installed. OCR_EXECUTION_MODE=worker makes the API enqueue
+# OCR jobs (202) instead of running them in-process; the worker gets the 2g memory ceiling.
+OCR_WORKER  := INSTALL_OCR=true INSTALL_PII=false OCR_EXECUTION_MODE=worker BACKEND_MEMORY_LIMIT=512M OCR_WORKER_MEMORY_LIMIT=2g
+FULL_WORKER := INSTALL_OCR=true INSTALL_PII=true  OCR_EXECUTION_MODE=worker BACKEND_MEMORY_LIMIT=1g   OCR_WORKER_MEMORY_LIMIT=2g
+
+.PHONY: help up up-pii up-ocr up-full up-ocr-worker up-full-worker down build build-pii build-ocr \
+	build-full rebuild ocr-models ocr-smoke pii-smoke logs ps lint typecheck test lock clean \
 	benchmark-private benchmark-private-json benchmark-test \
 	docker-df docker-prune docker-prune-project dev-rebuild
 
@@ -42,8 +48,14 @@ up-ocr: ## Start with the OCR runtime, 2g memory (needs `make ocr-models` first)
 up-full: ## Start with OCR + PII runtimes, 2g memory (needs `make ocr-models` first)
 	$(FULL) $(COMPOSE) up -d --build
 
-down: ## Stop the stack
-	$(COMPOSE) down
+up-ocr-worker: ## Start API + isolated OCR worker (OCR runs out-of-process; needs `make ocr-models`)
+	$(OCR_WORKER) $(COMPOSE) --profile worker up -d --build
+
+up-full-worker: ## Start API + PII + isolated OCR worker (needs `make ocr-models` first)
+	$(FULL_WORKER) $(COMPOSE) --profile worker up -d --build
+
+down: ## Stop the stack (including the OCR worker if running)
+	$(COMPOSE) --profile worker down
 
 build: ## Build both images (slim)
 	$(SLIM) $(COMPOSE) build

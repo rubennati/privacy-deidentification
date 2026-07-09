@@ -50,7 +50,9 @@ input, or report may be committed.
 only when a later station requires it.
 
 The `job_record` is durable metadata, not an engine artifact. ADR-0023 Phase 1 introduced the
-in-process seam; Phase 2 persists that seam in SQLite while OCR/PII execution remains synchronous.
+in-process seam; Phase 2 persists that seam in SQLite; Phase 3 reuses the same rows as the OCR
+worker's claim/status mechanism (an atomic `UPDATE … RETURNING` claim under WAL — no Redis/broker)
+when `OCR_EXECUTION_MODE=worker`, while the default `sync` mode keeps OCR/PII execution in-process.
 It carries only non-sensitive lifecycle metadata and references the immutable artifacts a job
 produces; raw document text, canonical reading text, layout text, structured-content payloads, PII
 values, artifact JSON, stack traces, and raw exception text never enter it.

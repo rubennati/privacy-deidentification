@@ -2,15 +2,18 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **Runtime Architecture Phase 2 — SQLite-backed job state and status API**.
-- Current objective: ADR-0023 Phase 2 is now delivered on top of the Phase 1 in-process job seam.
-  OCR/PII still execute synchronously in the backend request thread, but each run writes durable,
-  metadata-only SQLite job state and can be queried through a safe status API. Artifacts remain
-  file-based; the DB stores ids/status/timestamps/sanitized errors/result artifact references only.
-  There is still no worker container, queue, Redis/Celery, background task, OCR/PII engine change,
-  pseudonymization, redaction, export, or frontend workflow change. PII L12 overlap resolution
-  remains the next planned engine step; Runtime Phase 3 (`ocr-worker` isolation) is the next runtime
-  step.
+- Current phase: **Runtime Architecture Phase 3 — isolated OCR worker (opt-in)**.
+- Current objective: ADR-0023 Phase 3 is now delivered on top of the Phase 1/2 job seam and SQLite
+  job state. OCR execution can be isolated out of the FastAPI process into an `ocr-worker` container
+  via `OCR_EXECUTION_MODE=worker`: the API enqueues a pending OCR job and returns `202`, and the
+  worker atomically claims the job (SQLite `UPDATE … RETURNING` under WAL — no Redis/broker), runs
+  the unchanged `create_text_artifact` station out-of-process, and records `succeeded`/`failed`. The
+  default stays `sync` (OCR in-process, `201`), so existing behavior and the frontend are unchanged.
+  Artifacts remain file-based; the DB stores metadata only. PII stays synchronous in the API. There
+  is still no Redis/Celery/RQ, no PII worker split, no OCR/PII engine change, no pseudonymization,
+  redaction, export, or frontend workflow change. Stale-running-job reclaim (lease/heartbeat),
+  bounded parallel concurrency (>1), and the PII worker are deferred to Phase 4. PII L12 overlap
+  resolution remains the next planned *engine* step.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -330,6 +333,29 @@ sanitized error code/message, produced artifact id/type, and tiny string metadat
 text, OCR text, canonical reading text, PII values, artifact JSON, stack traces, or raw exception
 messages — and are deleted with their document boundary. Next runtime step: **Phase 3 (`ocr-worker`
 isolation)**, kept aligned with — not ahead of — the OCR/PII engine sequence below.
+
+**Latest checkpoint (Runtime Architecture Phase 3 — isolated OCR worker, opt-in):** Implements
+[ADR-0023](../docs/adr/0023-runtime-worker-architecture.md) Phase 3, the first real runtime isolation
+step. A new `OCR_EXECUTION_MODE` setting (default `sync`) gates behavior: `sync` keeps Phase 2 exactly
+(OCR runs in-process through `SyncJobRunner`, `201` with the `text_result` body), while `worker` makes
+`POST …/ocr` enqueue a `pending` OCR job and return `202` with safe job status. An isolated
+`ocr-worker` container (`backend/app/ocr_worker.py`, `python -m app.ocr_worker`, behind the `worker`
+Compose profile; `make up-ocr-worker`/`up-full-worker`) polls the shared SQLite store, **atomically**
+claims the oldest pending `ocr_text` job (`JobStore.claim_next_pending_job` — one
+`UPDATE … RETURNING` under WAL, so two workers never double-claim), runs the unchanged
+`create_text_artifact` station in its own process, and records `succeeded` (artifact id/type) or a
+sanitized `failed`. OCR runs **outside** the short claim transaction; the worker gets its own 2g
+memory ceiling and independent `restart`, so an OCR OOM/crash can no longer take the API down. This is
+a runtime step — **no engine level changes**: OCR algorithm, technical raw/canonical text,
+`quality_evidence`, PII model/technical-raw input, PII projection, review decisions, benchmark
+payloads, and artifact contracts are all unchanged, and PII stays synchronous. Concurrency is bounded
+to exactly 1 (higher is rejected, deferred to Phase 4). Known limitations, **deferred to Phase 4**: a
+worker crash mid-job leaves the row `running` (no lease/heartbeat reclaim yet), auto-retry (a failed
+job is terminal), parallel concurrency >1, the PII worker split, any queue broker (Redis/RQ), and a
+slimmer API-vs-worker image split (Phase 3 uses one image for stability). The frontend still uses the
+default `sync` mode, so worker-mode polling in the UI is a follow-up. Next runtime step: **Phase 4
+(PII worker + concurrency/timeout/retry controls, stale-lease reclaim)**; next *engine* step remains
+**PII L12 overlap resolution**.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

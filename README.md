@@ -108,12 +108,23 @@ by the make target (not by `.env`), so `make up` is always slim:
 | --- | --- | --- | --- |
 | `make up` | – | – | default, slim/CI |
 | `make up-pii` | – | ✓ | Presidio/spaCy |
-| `make up-ocr` | ✓ | – | needs `make ocr-models` first |
-| `make up-full` | ✓ | ✓ | needs `make ocr-models` first |
+| `make up-ocr` | ✓ | – | in-process OCR; needs `make ocr-models` first |
+| `make up-full` | ✓ | ✓ | in-process OCR; needs `make ocr-models` first |
+| `make up-ocr-worker` | ✓ (worker) | – | isolated OCR worker; needs `make ocr-models` first |
+| `make up-full-worker` | ✓ (worker) | ✓ | isolated OCR worker + PII; needs `make ocr-models` first |
 
 `make build`, `build-pii`, `build-ocr`, `build-full` build the matching images without starting
 them. Text PDFs and DOCX (including tables) are extracted **without** OCR; only image documents
 and scanned PDF pages need the OCR runtime plus provisioned models.
+
+**OCR worker mode (ADR-0023 Phase 3, opt-in).** By default OCR runs in-process
+(`OCR_EXECUTION_MODE=sync`): `POST /api/documents/{id}/ocr` returns the text artifact with `201`. The
+`make up-*-worker` targets set `OCR_EXECUTION_MODE=worker` and start an isolated `ocr-worker`
+container (behind the `worker` Compose profile) that shares the job DB and document volumes with the
+API. In worker mode the endpoint instead **enqueues** an OCR job and returns `202` with the job's
+status; poll `GET /api/jobs/{job_id}` and read the result via `GET /api/documents/{id}/ocr` once it
+succeeds. Because OCR then runs out-of-process with its own memory ceiling, an OCR OOM/crash can no
+longer take the API down. PII stays synchronous. The frontend currently uses the default `sync` mode.
 
 `INSTALL_OCR=true` pulls in PaddleOCR/PaddlePaddle/MKL and makes backend images significantly
 larger on disk. For PDF-text-layer development (`layout_text_result`, `pii_input_text`), the slim
