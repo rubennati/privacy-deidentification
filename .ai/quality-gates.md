@@ -109,3 +109,12 @@ via `pii_input.py`; later Review, pseudonymization, analysis, export, local AI) 
 - **Deterministic resolution.** Overlap/precedence resolution must be deterministic (order-
   independent) and provenance-preserving; competing evidence is merged/flagged, never dropped
   silently.
+- **Derived review views stay pure and non-destructive.** A derived, review-facing view over an
+  immutable artifact (entity grouping, review overlay, and the review-ready entity contract —
+  [ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md)) must not mutate the artifact or
+  its offsets, must not drop an entity because a canonical mapping is missing/partial/ambiguous (it
+  is classified and flagged instead), and must expose a **stable, deterministic id** independent of
+  volatile per-run ids where downstream review depends on identity across re-runs. Any raw/canonical
+  span info is offsets + status codes; an entity's `value` may appear only where `GET …/pii` already
+  exposes it and never inside display metadata, warnings, or provenance — a test must assert a
+  synthetic sensitive value and its surrounding context never leak into those.

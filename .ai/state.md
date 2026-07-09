@@ -24,6 +24,11 @@
   `text_result` artifacts ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)); PII is
   now its first migrated consumer via the `pii_input` intake adapter, and **PII L12 overlap
   resolution** is delivered ([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
+  On top of that, the **PII review-ready entity contract v1** is delivered additively
+  ([ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md)): a derived
+  `GET …/pii/entity-contract` view giving each resolved entity a stable id, raw↔canonical mapping
+  status, overlap provenance, resolved review state, and a text-free display model — a
+  stabilization milestone, not a level bump and not the formal binding `review_result`.
   The next planned *engine* step is the formal Review L8 `review_result` model.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
@@ -158,8 +163,13 @@
   input — and `pii_overlap` deterministically merges duplicate/nested/same-type spans and flags
   cross-type overlaps for review, recording additive optional provenance/summary fields on
   `pii_result` (no raw text). See
-  [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). The formal binding-review
-  artifact model (L13) remains open.
+  [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). On top of L12, the derived
+  **review-ready entity contract v1** (`pii_entity_contract.py`, `GET …/pii/entity-contract`,
+  [ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md)) packages each resolved entity
+  review-ready — stable `entity_id`, raw + optional canonical span, explicit `mapping_status`
+  (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), provenance, resolved
+  review state, text-free display model — without dropping unmapped entities or mutating the
+  artifact. The formal binding-review artifact model (L13/Review L8) remains open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6 done; L7–L9 partial.** Grouped
   occurrences (L6) are delivered, and a file-based (JSONL, not yet a single artifact-per-run)
   decision overlay covers much of L7–L9's practical intent (decisions persist, restore on reload,
@@ -209,6 +219,10 @@ confidence capture (L6), `quality_report` (L7), L14 quality-evidence/lineage-cov
 observability, and L15 noise/token artifact evidence. **PII L12 overlap resolution is now delivered**
 as the first downstream consumer step: PII consumes the contract through the `pii_input` adapter and
 resolves overlaps deterministically ([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
+On top of that, the **PII review-ready entity contract v1** is delivered additively — a derived
+`GET …/pii/entity-contract` view (stable ids, raw↔canonical mapping status, provenance, resolved
+review state, text-free display model), a stabilization milestone that is **not** the binding
+`review_result` ([ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md)).
 PII still detects on technical raw text only. The next engine priority is the formal **Review L8
 `review_result`** artifact model, then the **PII validation transparency report**.
 
@@ -521,6 +535,27 @@ review/feedback flows, runtime/worker behavior, benchmark payloads, pseudonymiza
 export. Existing PII API routes and the frontend review flow are unchanged (only additive optional
 TS types were added). See
 [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). Next: formal **Review L8
+`review_result`**, then the **PII validation transparency report**.
+
+**Latest checkpoint (PII review-ready entity contract v1):** On top of PII L12, a derived,
+additive, review-facing contract is delivered without a level bump (a stabilization milestone like
+the OCR Output Contract). `pii_entity_contract.py` builds a `PiiEntityContractV1` from the latest
+`pii_result` (and, where available, the matching text artifact's canonical reading text), exposed by
+the additive `GET /api/documents/{document_id}/pii/entity-contract`. Each `ReviewReadyPiiEntity`
+carries a **stable `entity_id`** (hash of document id + entity type + raw span; the volatile
+occurrence id is kept as `source_entity_id`), the authoritative `raw_text_range`, an optional
+`canonical_reading_text_range`, an explicit `mapping_status`
+(`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), the overlap `provenance`,
+the resolved review state (reusing the existing decision overlay), and a text-free `display` model
+(preferred source, raw + optional canonical highlight ranges, entity-type label, `needs_review`,
+review reason codes). A missing/partial/ambiguous canonical mapping never drops an entity — it stays
+reviewable and flagged; `not_applicable` (no canonical text for the run) is not flagged. The entity
+`value` mirrors `pii_result` (already on `GET …/pii`) and never enters display/warnings/provenance,
+and no context snippet is copied anywhere. It mutates nothing, adds no detection, keeps technical raw
+text the primary/only active input, and leaves `GET …/pii` and `GET …/pii/review` byte-for-byte
+unchanged; only additive frontend TS types + a fetch helper were added. This is **not** the formal
+binding `review_result` (still open). See
+[ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md). Next: formal **Review L8
 `review_result`**, then the **PII validation transparency report**.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still

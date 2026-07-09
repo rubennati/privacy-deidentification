@@ -280,6 +280,15 @@ stage that runs after detection**. This stage is a first-class part of the engin
   deliberately deferred in favour of flag-for-review, pending benchmark/review evidence.
 - **Acceptance:** overlapping candidates resolve deterministically without dropping distinct
   (cross-type) entities; merge/drop/flag decisions are recorded in provenance and the run summary.
+- **Review-ready entity contract (additive stabilization, not a level bump):** on top of L12, a
+  pure derived view (`pii_entity_contract.py`, `GET …/pii/entity-contract`) packages the resolved
+  entities review-ready — a **stable `entity_id`** (hash of document id + type + raw span), raw +
+  optional canonical span, explicit `mapping_status`
+  (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), overlap provenance, the
+  resolved review state, and a text-free display model. Missing/partial/ambiguous canonical mapping
+  never drops an entity (it is flagged for review); `not_applicable` is not flagged. This is the
+  stable foundation the formal L13 `review_result` builds on, **not** that binding artifact itself.
+  See [ADR-0029](../adr/0029-pii-review-ready-entity-contract.md).
 - **Boundary to L13:** L12 makes the machine's entity set clean; L13 makes a human's decision binding.
 
 ## Level 13 — Review confirm / reject  ⛔ *open*

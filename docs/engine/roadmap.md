@@ -10,7 +10,7 @@ documents.
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
 | OCR / Text | **L15 (built on the required L10.5 step) + output-contract stabilization** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), L15 additive noise/token artifact evidence in the same list, and Document Text Package v1 (`contract_version = "1.0"`, `valid`/`degraded`/`invalid`) | PII L12 overlap resolution downstream; future OCR capabilities plug into the contract |
-| PII / Sensitive-Data | **L12; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)) | formal Review L8 `review_result` model, then the PII validation transparency report |
+| PII / Sensitive-Data | **L12; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **review-ready entity contract** (raw↔canonical mapping status, stable ids, display model) ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md)) | formal Review L8 `review_result` model, then the PII validation transparency report |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
@@ -289,6 +289,19 @@ separation gate is not bypassed), and existing PII API/frontend behavior is unch
 cross-type auto-suppression precedence table (structured id > generic id, `ADDRESS` > `LOCATION`) is
 deferred in favour of flag-for-review. See
 [ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
+
+### PII review-ready entity contract (additive stabilization) — delivered
+
+On top of L12, a pure derived view (`pii_entity_contract.py`, `GET …/pii/entity-contract`) packages
+the resolved entities review-ready: a **stable `entity_id`** (hash of document id + type + raw
+span), the authoritative raw span, an optional canonical reading span, an explicit `mapping_status`
+(`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), the overlap provenance, the
+resolved review state, and a text-free display model. A missing/partial/ambiguous canonical mapping
+never drops an entity (it is flagged for review); `not_applicable` (no canonical text for the run)
+is not flagged. It mutates nothing and adds no detection. This is a cross-cutting stabilization
+milestone (like the OCR Output Contract), **not** a level bump and **not** the formal binding
+`review_result` — it is the stable review-ready read model that model will build on. See
+[ADR-0029](../adr/0029-pii-review-ready-entity-contract.md).
 
 ### Review L6 — grouped occurrences — delivered
 

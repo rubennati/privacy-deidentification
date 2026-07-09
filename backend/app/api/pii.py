@@ -8,6 +8,7 @@ from app.config import Settings, get_settings
 from app.schemas import (
     ErrorResponse,
     PiiArtifact,
+    PiiEntityContractV1,
     PiiFeedbackAck,
     PiiFeedbackRequest,
     PiiFeedbackSummary,
@@ -20,6 +21,7 @@ from app.services.feedback_service import record_pii_feedback, summarize_pii_fee
 from app.services.job_models import JobContext, JobKind
 from app.services.job_runner import SyncJobRunner, provide_job_runner
 from app.services.pii_adapters import PiiAnalyzer, get_pii_analyzer
+from app.services.pii_entity_contract import build_pii_entity_contract
 from app.services.pii_review_service import get_pii_review_result, set_pii_review_decision
 from app.services.pii_service import create_pii_artifact, get_latest_pii
 
@@ -129,6 +131,25 @@ def get_document_pii_review(
 ) -> PiiReviewResult:
     """Return reviewable entity groups and occurrences for the document's latest PII result."""
     return get_pii_review_result(settings, document_id)
+
+
+@router.get(
+    "/{document_id}/pii/entity-contract",
+    response_model=PiiEntityContractV1,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_document_pii_entity_contract(
+    document_id: str, settings: Settings = Depends(get_settings)
+) -> PiiEntityContractV1:
+    """Return the review-ready PII entity contract for the document's latest PII result (ADR-0029).
+
+    Additive alongside ``GET …/pii`` and ``GET …/pii/review``: a derived, review-facing view that
+    connects each detected entity to the technical raw text and canonical reading text with an
+    explicit mapping status, a stable entity id, deterministic overlap provenance, the resolved
+    review state, and a text-free display model. It never mutates the immutable ``pii_result`` and
+    raises the same clean 404 as ``GET …/pii/review`` when no PII result exists yet.
+    """
+    return build_pii_entity_contract(settings, document_id)
 
 
 @router.post(

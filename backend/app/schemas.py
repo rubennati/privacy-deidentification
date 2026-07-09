@@ -1729,6 +1729,198 @@ class PiiReviewResult(BaseModel):
     occurrences: list[PiiReviewOccurrence] = Field(default_factory=list)
 
 
+# --- Review-ready PII entity contract v1 (ADR-0029) ----------------------------------------------
+# A derived, additive, review-facing view over the immutable ``pii_result``. It connects every
+# detected entity to the technical raw text and the canonical reading text with an explicit mapping
+# status, a stable entity id, deterministic overlap provenance, and a text-free display model —
+# without mutating the artifact or switching the active detection input. Raw text stays the primary
+# detection source; canonical reading text is display/context/projection only. See
+# docs/adr/0029-pii-review-ready-entity-contract.md.
+
+# How well one entity's raw span connects to the canonical reading text. ``exact``/``projected`` are
+# the two mapped states (offset map vs. value re-match); ``partial``/``missing``/``ambiguous`` keep
+# the entity fully reviewable without a canonical span; ``not_applicable`` means the run had no
+# canonical reading text at all (a degraded package), so no mapping was ever possible. A code is
+# never removed or repurposed.
+PiiEntityMappingStatus = Literal[
+    "exact", "projected", "partial", "missing", "ambiguous", "not_applicable"
+]
+# Stable review reason codes surfaced on the review-ready entity. Mapping codes are derived here;
+# overlap codes are lifted from the entity's overlap provenance (see ``pii_entity_contract.py``).
+PiiEntityReviewReasonCode = Literal[
+    "canonical_mapping_missing",
+    "canonical_mapping_partial",
+    "canonical_mapping_ambiguous",
+    "conflicting_entity_type",
+    "ambiguous_overlap_review_required",
+    "exact_duplicate",
+    "recognizer_duplicate",
+    "same_type_overlap",
+    "nested_entity",
+    "merged_provenance",
+    "stronger_candidate_selected",
+]
+PiiEntityPreferredTextSource = Literal["technical_raw_text", "canonical_reading_text"]
+
+
+class PiiEntitySpan(BaseModel):
+    """A half-open ``[start, end)`` character range into one text layer."""
+
+    start: int = Field(ge=0)
+    end: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _validate_span(self) -> PiiEntitySpan:
+        if self.end <= self.start:
+            raise ValueError("span end offset must be after start offset")
+        return self
+
+
+class PiiEntitySourceSpan(PiiEntitySpan):
+    """The entity's authoritative range in the technical raw text, with optional page anchoring."""
+
+    page_number: int | None = Field(default=None, ge=1)
+    page_start: int | None = Field(default=None, ge=0)
+    page_end: int | None = Field(default=None, ge=1)
+
+
+class PiiEntityDisplaySpan(PiiEntitySpan):
+    """The entity's range in the canonical reading text, present only when a mapping exists."""
+
+    projection_method: Literal["offset_map", "text_match"] | None = None
+
+
+class PiiEntityDisplay(BaseModel):
+    """Text-free display metadata so a reviewer can render one entity consistently.
+
+    Ranges and codes only: no surrounding text snippet is ever copied here. The UI highlights the
+    entity inside already-loaded raw/canonical text using these offsets, and ``display_label`` is
+    the entity type (never the raw value).
+    """
+
+    preferred_text_source: PiiEntityPreferredTextSource
+    raw_highlight_range: PiiEntitySpan
+    canonical_highlight_range: PiiEntitySpan | None = None
+    display_label: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    display_context_available: bool
+    needs_review: bool
+    review_reason_codes: list[PiiEntityReviewReasonCode] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_review_flag(self) -> PiiEntityDisplay:
+        if self.needs_review != bool(self.review_reason_codes):
+            raise ValueError("needs_review must be set iff review reason codes are present")
+        return self
+
+
+class ReviewReadyPiiEntity(BaseModel):
+    """One detected entity presented review-ready (ADR-0029).
+
+    Carries a stable ``entity_id`` (same for the same document + raw span + type across re-runs),
+    the authoritative raw span, the canonical reading span where a mapping exists, an explicit
+    ``mapping_status``, deterministic overlap provenance, the resolved review state, and a text-free
+    display model. Derived from ``pii_result`` and never persisted; the immutable artifact and its
+    offsets are untouched. ``value`` mirrors ``PiiEntity.text`` (the same value already returned by
+    ``GET …/pii``) and appears only here — never inside display metadata, warnings, or provenance.
+    """
+
+    entity_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    source_entity_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity_group_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    package_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    value: str
+    confidence: float = Field(ge=0, le=1)
+    detection_source: PiiEntityDetectionSource = "raw_text"
+    source_role: PiiInputSourceRole = "primary"
+    page_number: int | None = Field(default=None, ge=1)
+    raw_text_range: PiiEntitySourceSpan
+    canonical_reading_text_range: PiiEntityDisplaySpan | None = None
+    mapping_status: PiiEntityMappingStatus
+    overlap_decision: PiiOverlapReason | None = None
+    provenance: PiiEntityProvenance | None = None
+    review_state: PiiReviewStatus = "accepted"
+    review_decision: PiiReviewDecisionValue | None = None
+    decision_scope: PiiReviewDecisionScope | None = None
+    display: PiiEntityDisplay
+    warnings: list[PiiEntityReviewReasonCode] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_entity(self) -> ReviewReadyPiiEntity:
+        if self.raw_text_range.end - self.raw_text_range.start != len(self.value):
+            raise ValueError("raw text range length must match value length")
+        has_canonical = self.canonical_reading_text_range is not None
+        if has_canonical != (self.mapping_status in ("exact", "projected")):
+            raise ValueError("canonical range present iff mapping status is exact or projected")
+        if self.display.raw_highlight_range != PiiEntitySpan(
+            start=self.raw_text_range.start, end=self.raw_text_range.end
+        ):
+            raise ValueError("display raw highlight range must match the raw text range")
+        if self.display.display_label != self.entity_type:
+            raise ValueError("display label must be the entity type")
+        return self
+
+
+class PiiEntityMappingSummary(BaseModel):
+    """Per-run counts of entities by canonical mapping status. Counts only, never entity text."""
+
+    exact: int = Field(default=0, ge=0)
+    projected: int = Field(default=0, ge=0)
+    partial: int = Field(default=0, ge=0)
+    missing: int = Field(default=0, ge=0)
+    ambiguous: int = Field(default=0, ge=0)
+    not_applicable: int = Field(default=0, ge=0)
+
+
+class PiiEntityContractV1(BaseModel):
+    """Review-ready PII entity contract for one document's latest ``pii_result`` (ADR-0029).
+
+    A pure, derived, additive view: it never mutates the artifact and adds no detection. Existing
+    ``GET …/pii`` and ``GET …/pii/review`` responses are unchanged; this is a separate additive
+    surface built entirely by the backend, so the frontend never has to call the text-package
+    endpoint itself.
+    """
+
+    contract_version: Literal["1.0"] = "1.0"
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    pii_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    package_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    reading_text_available: bool
+    input_contract: PiiInputContractSummary | None = None
+    overlap_resolution: PiiOverlapResolutionSummary | None = None
+    entities: list[ReviewReadyPiiEntity] = Field(default_factory=list)
+    mapping_summary: PiiEntityMappingSummary
+    needs_review_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate_contract(self) -> PiiEntityContractV1:
+        order_keys = [
+            (entity.raw_text_range.start, entity.raw_text_range.end, entity.entity_type)
+            for entity in self.entities
+        ]
+        if order_keys != sorted(order_keys):
+            raise ValueError("entities must be deterministically ordered by raw span then type")
+        entity_ids = [entity.entity_id for entity in self.entities]
+        if len(entity_ids) != len(set(entity_ids)):
+            raise ValueError("entity ids must be unique within a contract")
+        expected = PiiEntityMappingSummary(
+            exact=sum(e.mapping_status == "exact" for e in self.entities),
+            projected=sum(e.mapping_status == "projected" for e in self.entities),
+            partial=sum(e.mapping_status == "partial" for e in self.entities),
+            missing=sum(e.mapping_status == "missing" for e in self.entities),
+            ambiguous=sum(e.mapping_status == "ambiguous" for e in self.entities),
+            not_applicable=sum(e.mapping_status == "not_applicable" for e in self.entities),
+        )
+        if self.mapping_summary != expected:
+            raise ValueError("mapping summary does not match entities")
+        if self.needs_review_count != sum(e.display.needs_review for e in self.entities):
+            raise ValueError("needs_review_count does not match entities")
+        return self
+
+
 class UploadAccepted(BaseModel):
     """Returned when an upload passes validation and is stored."""
 

@@ -78,6 +78,14 @@ candidates deterministically (`pii_overlap`, PII L12) with reason-code/count/id 
 `pii_result`. Switching the active PII detection input away from raw still requires the tested
 `text_lineage_map` separation gate.
 
+On top of that, the **review-ready entity contract v1**
+([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md)) is the stable, review-facing shape the
+Review UI (and later pseudonymization/analysis/export) depend on: a derived, additive view
+(`pii_entity_contract.py`, `GET …/pii/entity-contract`) that packages each resolved entity with a
+stable `entity_id`, its raw span, an optional canonical reading span, an explicit `mapping_status`,
+overlap provenance, the resolved review state, and a text-free display model — without mutating the
+`pii_result` or being the formal binding `review_result`.
+
 ## Runtime job contract
 
 Runtime work is exposed as a **stable job contract**, separate from the OCR Output Contract above:

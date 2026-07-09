@@ -88,3 +88,15 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   them. Additive optional `pii_result` fields (`PiiEntity.provenance`, `PiiContent.input_contract`,
   `PiiContent.overlap_resolution`) carry the outcome; no raw text enters that metadata. Existing PII
   API/frontend behavior and the active-input separation gate are unchanged.
+- [ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md) — **PII review-ready entity
+  contract v1.** A pure, derived, additive view over the latest `pii_result`
+  (`pii_entity_contract.py`, `GET …/pii/entity-contract`) packages each L12-resolved entity
+  review-ready: a stable `entity_id` (hash of document id + type + raw span; volatile occurrence id
+  kept as `source_entity_id`), the authoritative raw span, an optional canonical reading span, an
+  explicit `mapping_status` (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`),
+  overlap provenance, the resolved review state (reusing the decision overlay), and a text-free
+  display model. Missing/partial/ambiguous canonical mapping never drops an entity (it is flagged);
+  `not_applicable` is not flagged. Cross-cutting stabilization milestone, not a level bump and not
+  the formal binding `review_result`; it mutates nothing, adds no detection, keeps raw text the
+  primary/only active input, and existing `GET …/pii`/`…/pii/review` responses are unchanged. Only
+  additive frontend TS types + a fetch helper were added.
