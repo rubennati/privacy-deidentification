@@ -27,10 +27,13 @@ import {
   type PiiFeedbackStatus,
 } from "../api/piiFeedback";
 import {
-  buildReviewStatusMap,
   fetchPiiReview,
   type PiiReviewResult,
 } from "../api/piiReview";
+import {
+  fetchPiiEntityContract,
+  type PiiEntityContractV1,
+} from "../api/piiEntityContract";
 import { PiiEntityList } from "../components/pii/PiiEntityList";
 import { PiiReviewGroupList } from "../components/pii/PiiReviewGroupList";
 import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
@@ -52,6 +55,7 @@ import {
 } from "../lib/documentAnalysis";
 import { toStationError, type StationName } from "../lib/stationErrors";
 import { buildRuntimeNotice, buildStationRuntimeNotice } from "../lib/runtimeNotice";
+import { buildAnchorBoundPiiHighlights } from "../lib/piiHighlights";
 import { formatBytes, formatTimestamp } from "../lib/format";
 
 interface UiError {
@@ -75,6 +79,7 @@ export default function DocumentDetailPage() {
   const [pii, setPii] = useState<PiiArtifact | null>(null);
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
   const [reviewResult, setReviewResult] = useState<PiiReviewResult | null>(null);
+  const [piiEntityContract, setPiiEntityContract] = useState<PiiEntityContractV1 | null>(null);
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
   const [analysisStep, setAnalysisStep] = useState<AnalysisStep>("idle");
@@ -174,16 +179,30 @@ export default function DocumentDetailPage() {
     setSelectedOccurrenceId(null);
     if (!documentId || !piiArtifactId) {
       setReviewResult(null);
+      setPiiEntityContract(null);
       return;
     }
     let active = true;
-    void fetchPiiReview(documentId).then((result) => {
-      if (active) setReviewResult(result);
-    });
+    void Promise.all([fetchPiiReview(documentId), fetchPiiEntityContract(documentId)]).then(
+      ([review, contract]) => {
+        if (!active) return;
+        setReviewResult(review);
+        setPiiEntityContract(contract);
+      },
+    );
     return () => {
       active = false;
     };
   }, [documentId, piiArtifactId]);
+
+  const refreshPiiReviewAndContract = async (review: PiiReviewResult) => {
+    setReviewResult(review);
+    if (!documentId || !piiArtifactId) {
+      setPiiEntityContract(null);
+      return;
+    }
+    setPiiEntityContract(await fetchPiiEntityContract(documentId));
+  };
 
   // Reload recovery: rehydrate any tracked OCR job for this document and resume polling it (a
   // no-op if a live `runOcr` call already owns polling — see jobActivity's try-lock), then keep the
@@ -280,8 +299,11 @@ export default function DocumentDetailPage() {
     : text && pii.input_text_artifact_id === text.id
       ? "current"
       : "stale";
-  const currentPiiEntities = piiStatus === "current" ? (pii?.content.entities ?? []) : [];
-  const reviewStatusByOccurrenceId = buildReviewStatusMap(reviewResult);
+  const currentPiiEntityContract =
+    piiStatus === "current" && piiEntityContract?.pii_artifact_id === piiArtifactId
+      ? piiEntityContract
+      : null;
+  const highlightModel = buildAnchorBoundPiiHighlights(currentPiiEntityContract);
   // Hide the recovered-job banner once a succeeded job's result has been applied (the loaded
   // content below speaks for itself); keep showing a failed/canceled job so the user always has a
   // controlled explanation, since that is the only user-view surface for a recovered failure.
@@ -525,12 +547,11 @@ export default function DocumentDetailPage() {
                   rawText={text.content.text}
                   readingText={text.content.reading_text}
                   layoutText={text.content.layout_text_result}
-                  entities={currentPiiEntities}
+                  highlightModel={highlightModel}
                   mode={reviewTextMode}
                   onModeChange={setReviewTextMode}
                   devMode={isDevView}
                   showEntityMeta={isDevView}
-                  reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
                   onSelectEntity={showReviewColumn ? setSelectedOccurrenceId : undefined}
                 />
                 {isDevView && !pii && (
@@ -552,7 +573,7 @@ export default function DocumentDetailPage() {
                       <PiiReviewGroupList
                         documentId={documentId}
                         review={reviewResult}
-                        onReviewChanged={setReviewResult}
+                        onReviewChanged={(review) => void refreshPiiReviewAndContract(review)}
                         selectedOccurrenceId={selectedOccurrenceId}
                         showTechnicalDetails
                       />
@@ -570,7 +591,7 @@ export default function DocumentDetailPage() {
                     <PiiReviewGroupList
                       documentId={documentId}
                       review={reviewResult}
-                      onReviewChanged={setReviewResult}
+                      onReviewChanged={(review) => void refreshPiiReviewAndContract(review)}
                       selectedOccurrenceId={selectedOccurrenceId}
                       showTechnicalDetails={false}
                     />

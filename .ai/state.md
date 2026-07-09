@@ -13,9 +13,10 @@
   cases become explicit evidence-only fallbacks, and duplicate observations for the same anchor set
   + entity type merge provenance. Raw/canonical ranges remain evidence/display fields; review state
   still resolves through the existing decision overlay; no detection input switch, SQLite migration,
-  OCR extraction change, frontend highlight UI, pseudonymization, redaction, reconstruction, export,
-  runtime/job change, dependency, or private-corpus fixture is introduced. Next: frontend highlight
-  consistency via the server entity contract, then formal Review L8 `review_result`.
+  OCR extraction change, pseudonymization, redaction, reconstruction, export, runtime/job change,
+  dependency, or private-corpus fixture is introduced. Frontend PII highlights now consume that
+  server entity contract as their source of truth and derive raw/canonical/layout view ranges from
+  the same anchor-bound entity identity. Next: formal Review L8 `review_result`.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -216,9 +217,11 @@ degrades to evidence-only identity when anchors are unavailable or ambiguous. Th
 stabilization milestone, not the binding `review_result`
 ([ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md),
 [ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md)). PII still detects on
-technical raw text only. The next engine priority is frontend highlight consistency over the server
-entity contract, then formal **Review L8 `review_result`** and the **PII validation transparency
-report**.
+technical raw text only. Frontend highlight rendering now uses the server entity contract as the
+single PII highlight source of truth: raw/canonical/layout views render only the view-specific
+ranges the contract provides, and missing/partial/ambiguous or evidence-only states are visible
+instead of guessed. The next engine priority is formal **Review L8 `review_result`** and the
+**PII validation transparency report**.
 
 **Strategic direction (OCR/Text as an independent module).** The **OCR Output Contract v1 /
 Document Text Package** stabilizes OCR/Text output as a versioned package of
@@ -542,12 +545,12 @@ state, and a text-free display model. Missing/partial/ambiguous anchor or canoni
 drops an entity; value remains confined to the entity value field already mirrored from
 `GET …/pii`, and no surrounding text snippet is copied. It mutates nothing, adds no detection, keeps
 technical raw text the primary/only active input, and leaves `GET …/pii` and `GET …/pii/review`
-unchanged; only additive frontend TS types and tests were updated. This is **not** the formal
-binding `review_result` (still open). See
+unchanged; the frontend now consumes the entity contract for review highlights. This is **not** the
+formal binding `review_result` (still open). See
 [ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md) and
-[ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md). Next: frontend highlight
-consistency via anchors, then formal **Review L8 `review_result`** and the **PII validation
-transparency report**.
+[ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md). Frontend highlight
+consistency via anchors is now wired through the entity contract; next is formal **Review L8
+`review_result`** and the **PII validation transparency report**.
 
 **Latest checkpoint (Runtime Job UX / in-app notifications v1):** Cross-cutting runtime/UX step, not
 an engine level change. On top of ADR-0023's job model/status API, the product-facing presentation

@@ -10,7 +10,7 @@ documents.
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
 | OCR / Text | **L15 (built on the required L10.5 step) + output-contract stabilization** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), L15 additive noise/token artifact evidence in the same list, and Document Text Package v1 (`contract_version = "1.0"`, `valid`/`degraded`/`invalid`) | PII L12 overlap resolution downstream; future OCR capabilities plug into the contract |
-| PII / Sensitive-Data | **L12; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **anchor-bound entity contract** (Text Anchor Graph binding where available, explicit evidence-only fallback, source observations, display model) ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) | frontend highlight consistency via anchors, then formal Review L8 `review_result` |
+| PII / Sensitive-Data | **L12; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **anchor-bound entity contract** (Text Anchor Graph binding where available, explicit evidence-only fallback, source observations, display model) plus frontend highlight rendering from that contract ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) | formal Review L8 `review_result` |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
@@ -339,9 +339,10 @@ are primary, canonical ranges attach through `reading_text_map`, layout ranges a
 safely byte-aligned in v1, and missing/partial/ambiguous states are explicit. Phase C is now
 implemented additively as PII anchor binding (`pii_anchor_binding.py`,
 `GET …/pii/entity-contract`): detections bind to anchors where available, otherwise degrade to
-explicit evidence-only identity. It stores no copied binding text, adds no DB, and does not change
-the active PII detection input. Frontend highlight consistency, pseudonymization, and reconstruction
-remain later phases.
+explicit evidence-only identity. Frontend highlights now consume that contract as the source of
+truth for raw/canonical/layout view ranges, making missing/partial/ambiguous mappings visible rather
+than guessed. It stores no copied binding text, adds no DB, and does not change the active PII
+detection input. Pseudonymization and reconstruction remain later phases.
 
 ### Redaction remains blocked
 

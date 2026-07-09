@@ -93,7 +93,9 @@ shape the Review UI (and later pseudonymization/analysis/export) depend on: a de
 anchor-derived identity where available, explicit evidence-only fallback when binding is missing or
 ambiguous, detector source observations, raw/canonical display ranges, overlap provenance, resolved
 review state, and a text-free display model — without mutating the `pii_result` or being the formal
-binding `review_result`.
+binding `review_result`. The frontend now renders PII highlights from this contract rather than
+deriving independent raw/canonical/layout highlight sets; view-specific ranges are used only when
+the contract provides them, and missing/partial/ambiguous mappings remain visible states.
 
 ## Runtime job contract
 

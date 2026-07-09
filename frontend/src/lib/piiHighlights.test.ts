@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import type { PiiEntityContractV1, ReviewReadyAnchorBoundPiiEntity } from "../api/piiEntityContract";
 import type { PiiEntity } from "../api/workstations";
-import { buildHighlightSegments } from "./piiHighlights";
+import {
+  buildAnchorBoundHighlightSegments,
+  buildAnchorBoundPiiHighlights,
+  buildHighlightSegments,
+} from "./piiHighlights";
 
 function entity(
   id: string,
@@ -22,6 +27,111 @@ function entity(
     page_end_offset: null,
     score,
     recognizer: "TestRecognizer",
+  };
+}
+
+function anchorEntity(
+  overrides: Partial<ReviewReadyAnchorBoundPiiEntity> = {},
+): ReviewReadyAnchorBoundPiiEntity {
+  const base: ReviewReadyAnchorBoundPiiEntity = {
+    entity_id: "1".repeat(32),
+    entity_type: "LOCATION",
+    identity_basis: "anchor_exact",
+    binding_status: "exact",
+    binding_reasons: ["anchor_exact_match"],
+    anchor_set: { anchor_ids: ["a".repeat(32)], binding_status: "exact", count: 1 },
+    anchor_refs: [
+      {
+        anchor_id: "a".repeat(32),
+        source_name: "technical_raw_text",
+        source_range: { start: 0, end: 4 },
+        binding_status: "exact",
+        binding_role: "entity_span",
+        confidence: 1,
+        reason_codes: ["anchor_exact_match"],
+      },
+      {
+        anchor_id: "a".repeat(32),
+        source_name: "canonical_reading_text",
+        source_range: { start: 7, end: 11 },
+        binding_status: "exact",
+        binding_role: "display_span",
+        confidence: null,
+        reason_codes: [],
+      },
+    ],
+    source_observations: [
+      {
+        detection_id: "2".repeat(32),
+        recognizer: "TestRecognizer",
+        entity_type: "LOCATION",
+        source_name: "technical_raw_text",
+        detection_source: "raw_text",
+        detection_role: "primary",
+        source_range: { start: 0, end: 4, page_number: null, page_start: null, page_end: null },
+        confidence: 0.9,
+        binding_status: "exact",
+        binding_reasons: ["anchor_exact_match"],
+        provenance: null,
+      },
+    ],
+    provenance: null,
+    confidence: 0.9,
+    value: "Wien",
+    raw_text_range: { start: 0, end: 4, page_number: null, page_start: null, page_end: null },
+    entity_group_id: "3".repeat(32),
+    source_entity_ids: ["2".repeat(32)],
+    mapping_status: "exact",
+    canonical_reading_text_range: { start: 7, end: 11, projection_method: "offset_map" },
+    review_state: "accepted",
+    review_decision: null,
+    decision_scope: null,
+    display: {
+      preferred_text_source: "canonical_reading_text",
+      raw_highlight_range: { start: 0, end: 4 },
+      canonical_highlight_range: { start: 7, end: 11 },
+      display_label: "LOCATION",
+      display_context_available: true,
+      needs_review: false,
+      review_reason_codes: [],
+    },
+    warnings: [],
+  };
+  return { ...base, ...overrides };
+}
+
+function contract(entities: ReviewReadyAnchorBoundPiiEntity[]): PiiEntityContractV1 {
+  return {
+    contract_version: "1.0",
+    document_id: "d".repeat(32),
+    pii_artifact_id: "p".repeat(32),
+    package_id: "t".repeat(32),
+    text_artifact_id: "t".repeat(32),
+    reading_text_available: true,
+    anchor_graph_available: true,
+    anchor_graph_status: "valid",
+    input_contract: null,
+    overlap_resolution: null,
+    entities,
+    binding_summary: {
+      total: entities.length,
+      anchor_bound: entities.filter((item) => item.identity_basis !== "evidence_only").length,
+      evidence_only: entities.filter((item) => item.identity_basis === "evidence_only").length,
+      exact: entities.filter((item) => item.binding_status === "exact").length,
+      partial: entities.filter((item) => item.binding_status === "partial").length,
+      missing: entities.filter((item) => item.binding_status === "missing").length,
+      ambiguous: entities.filter((item) => item.binding_status === "ambiguous").length,
+      not_applicable: entities.filter((item) => item.binding_status === "not_applicable").length,
+    },
+    mapping_summary: {
+      exact: entities.filter((item) => item.mapping_status === "exact").length,
+      projected: entities.filter((item) => item.mapping_status === "projected").length,
+      partial: entities.filter((item) => item.mapping_status === "partial").length,
+      missing: entities.filter((item) => item.mapping_status === "missing").length,
+      ambiguous: entities.filter((item) => item.mapping_status === "ambiguous").length,
+      not_applicable: entities.filter((item) => item.mapping_status === "not_applicable").length,
+    },
+    needs_review_count: entities.filter((item) => item.display.needs_review).length,
   };
 }
 
@@ -128,5 +238,97 @@ describe("buildHighlightSegments", () => {
         { kind: "entity", text: "Anna", entity: accepted, reviewStatus: "accepted" },
       ]);
     });
+  });
+});
+
+describe("buildAnchorBoundPiiHighlights", () => {
+  it("builds raw and canonical highlights from one anchor-bound identity", () => {
+    const model = buildAnchorBoundPiiHighlights(contract([anchorEntity()]));
+
+    expect(model.byView.technical_raw_text).toMatchObject([
+      { entity_id: "1".repeat(32), entity_type: "LOCATION", start: 0, end: 4 },
+    ]);
+    expect(model.byView.canonical_reading_text).toMatchObject([
+      { entity_id: "1".repeat(32), entity_type: "LOCATION", start: 7, end: 11 },
+    ]);
+  });
+
+  it("keeps evidence-only fallback raw highlights but marks the fallback state", () => {
+    const evidenceOnly = anchorEntity({
+      identity_basis: "evidence_only",
+      binding_status: "missing",
+      binding_reasons: ["anchor_missing", "detection_evidence_only"],
+      anchor_set: { anchor_ids: [], binding_status: "missing", count: 0 },
+      anchor_refs: [],
+      mapping_status: "missing",
+      canonical_reading_text_range: null,
+      display: {
+        preferred_text_source: "technical_raw_text",
+        raw_highlight_range: { start: 0, end: 4 },
+        canonical_highlight_range: null,
+        display_label: "LOCATION",
+        display_context_available: false,
+        needs_review: true,
+        review_reason_codes: ["anchor_binding_missing", "canonical_mapping_missing"],
+      },
+      warnings: ["anchor_binding_missing", "canonical_mapping_missing"],
+    });
+
+    const model = buildAnchorBoundPiiHighlights(contract([evidenceOnly]));
+
+    expect(model.byView.technical_raw_text[0]).toMatchObject({
+      entity_id: "1".repeat(32),
+      identity_basis: "evidence_only",
+      binding_status: "missing",
+      needs_review: true,
+    });
+    expect(model.byView.canonical_reading_text).toEqual([]);
+    expect(model.summary.evidence_only_count).toBe(1);
+    expect(model.summary.missing_canonical_count).toBe(1);
+  });
+
+  it("does not invent canonical highlights for missing, partial, or ambiguous mappings", () => {
+    const entities = (["missing", "partial", "ambiguous"] as const).map((mapping_status, index) =>
+      anchorEntity({
+        entity_id: `${index + 1}`.repeat(32),
+        mapping_status,
+        canonical_reading_text_range: null,
+        display: {
+          preferred_text_source: "technical_raw_text",
+          raw_highlight_range: { start: index * 5, end: index * 5 + 4 },
+          canonical_highlight_range: null,
+          display_label: "LOCATION",
+          display_context_available: false,
+          needs_review: true,
+          review_reason_codes: [`canonical_mapping_${mapping_status}`],
+        },
+      }),
+    );
+
+    const model = buildAnchorBoundPiiHighlights(contract(entities));
+
+    expect(model.byView.technical_raw_text).toHaveLength(3);
+    expect(model.byView.canonical_reading_text).toEqual([]);
+    expect(model.summary.missing_canonical_count).toBe(1);
+    expect(model.summary.partial_canonical_count).toBe(1);
+    expect(model.summary.ambiguous_canonical_count).toBe(1);
+  });
+
+  it("uses contract ranges instead of globally highlighting repeated words by value", () => {
+    const model = buildAnchorBoundPiiHighlights(contract([anchorEntity()]));
+    const segments = buildAnchorBoundHighlightSegments(
+      "Wien und Wien",
+      model.byView.technical_raw_text,
+    );
+
+    expect(segments.filter((segment) => segment.kind === "entity")).toHaveLength(1);
+  });
+
+  it("does not copy private values into highlight metadata", () => {
+    const model = buildAnchorBoundPiiHighlights(contract([anchorEntity({ value: "Secret Value" })]));
+    const metadata = JSON.stringify(model.byView);
+
+    expect(metadata).not.toContain("Secret Value");
+    expect(metadata).not.toContain("Wien");
   });
 });
