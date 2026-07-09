@@ -141,7 +141,13 @@ Distinct text layers, structured layout blocks, and a lineage map are fixed by t
   any text.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
-  its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.
+  its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction. Its
+  target design — a stable **text anchor** identity with per-view ranges, plus the downstream
+  conceptual model (`text_anchors`, `anchor_ranges`, `entity_anchors`, `review_decisions`,
+  `replacement_groups`/`replacement_tokens`, `reconstruction_map`, `audit_events`) and a hybrid
+  JSON+SQLite persistence path — is specified in
+  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only, no
+  schema yet**).
 
 These layers are additive and never mutate technical raw text or shift PII offsets. `reading_text`
 is a deterministic view over the same extracted source, not an independent source artifact. Until
