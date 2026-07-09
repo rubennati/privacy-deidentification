@@ -12,6 +12,17 @@ runtime). It elevates the existing five-layer text model in
 **output contract** that downstream engines consume. It changes no algorithm, artifact, or
 runtime behavior on its own.
 
+## Position in the sequence
+
+This is the **next OCR/Text implementation/design step after L15** — a cross-cutting stabilization
+milestone, not a numbered level (the 0–19 scale, [ADR-0016](0016-engine-maturity-levels-0-19.md), is
+unchanged). **PII is a consumer of the contract and a downstream migration target, not the immediate
+next driver:** PII L12 overlap resolution and other consumer work follow once the OCR/Text contract
+boundary is implemented or at least stabilized. Future OCR capability tracks — dictionary/lexicon
+evidence, correction suggestions, multi-OCR/source agreement, feedback-driven improvement — **enrich
+the contract additively without breaking consumers**; their formal level numbering stays governed by
+ADR-0016 and future ADRs.
+
 ## Context
 
 OCR/Text has matured to L15: technical raw text, canonical `reading_text` (L10.5/L12/L13),

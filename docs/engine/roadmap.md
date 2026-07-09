@@ -9,8 +9,8 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L15 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), and L15 additive noise/token artifact evidence in the same list | **OCR Output Contract v1** (stabilize output as a versioned Document Text Package — [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)); then PII L12 overlap resolution |
-| PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution |
+| OCR / Text | **L15 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), and L15 additive noise/token artifact evidence in the same list | **OCR Output Contract v1 / Stable Document Text Package** (the next step — stabilize output as a versioned package with a `contract_status`; [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)); future OCR capabilities plug into the contract |
+| PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution (downstream — after the OCR Output Contract boundary is implemented/stabilized) |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
@@ -220,8 +220,13 @@ earlier placeholder meaning) is deferred — see
 
 ### OCR Output Contract v1 — Document Text Package (cross-cutting stabilization) — proposed
 
-Before further OCR/Text capability levels, stabilize the engine's output as an independent,
-reusable module with a **stable, versioned output contract**. Today a consumer such as PII reaches
+**Sequencing:** L15 complete → **OCR Output Contract v1 / Stable Document Text Package next** →
+future OCR capabilities plug into the contract → PII continuation (L12 overlap resolution and
+beyond) downstream, as a consumer of the contract.
+
+This is the **next OCR/Text step after L15**, before further capability levels: stabilize the
+engine's output as an independent, reusable module with a **stable, versioned output contract**.
+Today a consumer such as PII reaches
 into individual `text_result` fields and OCR internals (pypdf/PaddleOCR provenance, reading-order
 heuristics, worker details); the **OCR Output Contract v1 / Document Text Package** packages the
 already-produced layers together so consumers depend on the contract, not the internals:
@@ -256,10 +261,13 @@ derived view (`pii_grouping.group_pii_entities`) recomputed from the latest `pii
 request — `pii_result`'s schema is unchanged. See
 [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 
-### PII L12 — overlap resolution
+### PII L12 — overlap resolution (downstream)
 
 Define and apply auditable engine-level precedence for duplicate, nested, and overlapping candidates.
-The current display-only highlight resolver is not engine-level entity resolution.
+The current display-only highlight resolver is not engine-level entity resolution. This is
+**downstream work**, sequenced *after* the OCR Output Contract v1 stabilization above — PII takes it
+up as a consumer once the OCR/Text contract boundary is implemented or at least stabilized, so it is
+not the immediate next step.
 
 ### Review L6 — grouped occurrences — delivered
 

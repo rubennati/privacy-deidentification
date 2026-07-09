@@ -477,6 +477,18 @@ redaction.
 > how ADR-0022/ADR-0024/ADR-0025 re-scoped L12/L13/L14. See
 > [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md).
 
+> **Capability tracks vs. the fixed ladder (resolves the L16+ ambiguity).** The **next OCR/Text
+> step after L15 is the cross-cutting OCR Output Contract v1 / Stable Document Text Package**
+> ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)) — a stabilization milestone, **not** a
+> numbered level. The fixed 0–19 ladder ([ADR-0016](../adr/0016-engine-maturity-levels-0-19.md))
+> keeps **L16–L19 as reproducible settings, observability/budget, regression gate, and
+> production-grade** (below), and is **not renumbered** here. Separately,
+> **dictionary/lexicon evidence, correction suggestions, multi-OCR/source agreement, and
+> feedback-driven improvement** are future OCR **capability tracks / candidate work items** that must
+> **plug into the OCR Output Contract** and `quality_evidence` without changing how PII (or any
+> consumer) receives text. They are **not** labelled formal L16/L17/L18/L20 unless a future ADR
+> explicitly changes the ladder.
+
 ## Level 16 — Reproducible OCR engine settings in artifact  ⛔ *open*
 
 - **Description:** make every text result reproducible from recorded, pinned settings.

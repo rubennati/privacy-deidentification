@@ -117,8 +117,11 @@ dependency gap on an encrypted file (`LINEAGE_BOTTLENECK`), both predating this 
   private-corpus value is hard-coded, and each is covered by a synthetic regression test.
 - Redaction-ready geometry remains explicitly open and deferred, avoiding the placeholder-mixing
   risk ADR-0022/ADR-0024/ADR-0025 called out for L12/L13/L14.
-- Future L16 may add dictionary/lexicon evidence; future L17 may add correction *suggestions* — both
-  remain out of scope here and must stay additive evidence, never silent rewrites.
+- Future OCR capability work may add dictionary/lexicon evidence, correction *suggestions*,
+  multi-OCR/source agreement, or feedback-driven improvement. These remain out of scope here, must
+  stay additive evidence (never silent rewrites), and are expected to plug into the OCR Output
+  Contract ([ADR-0027](0027-ocr-output-contract-v1-strategy.md)). Exact level numbering remains
+  governed by [ADR-0016](0016-engine-maturity-levels-0-19.md) and future ADRs.
 
 > Migration note: earlier planning placeholders described OCR/Text L15 as redaction-ready text/
 > geometry mapping. That capability is deferred to a later level once redaction/review/PII

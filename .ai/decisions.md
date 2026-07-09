@@ -74,6 +74,7 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   only).* Stabilize OCR/Text as an independent, reusable module with a versioned **OCR Output
   Contract v1 / Document Text Package** (raw/canonical/layout/structured/evidence layers + source
   roles + `contract_status`), so PII and future consumers depend on the contract, not OCR
-  internals; external OCR/PDF tool output is normalized before crossing it. A cross-cutting
-  stabilization milestone, not a numbered level; the 0–19 scale (ADR-0016) is unchanged and nothing
-  is implemented.
+  internals; external OCR/PDF tool output is normalized before crossing it. **This is the next
+  OCR/Text step after L15**; PII (L12 overlap resolution and beyond) is a downstream consumer, not
+  the immediate next driver. A cross-cutting stabilization milestone, not a numbered level; the
+  0–19 scale (ADR-0016) is unchanged and nothing is implemented.

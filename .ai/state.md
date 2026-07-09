@@ -19,8 +19,10 @@
   split, no OCR/PII engine change, no `reading_text`/`quality_evidence` change, no pseudonymization,
   redaction, export, local LLM, dictionary/multi-OCR, Kubernetes, or reverse-proxy expansion.
   Stale-running-job reclaim (lease/heartbeat), bounded parallel concurrency (>1), retry/timeout/
-  cancel controls, and the PII worker are deferred to Phase 4. PII L12 overlap resolution remains
-  the next planned *engine* step.
+  cancel controls, and the PII worker are deferred to Phase 4. The next planned *engine* step is the
+  **OCR Output Contract v1 / Stable Document Text Package** — stabilize the OCR/Text output boundary
+  ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)); PII L12 overlap resolution
+  follows as downstream work once PII consumes that contract.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -187,12 +189,16 @@ See [`docs/engine/`](../docs/engine/README.md),
 
 The binding OCR/PII sequence, cadence, and next-PR list live in
 [`docs/engine/ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md)
-([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after OCR L15:
-PII/Sensitive-Data L12 overlap resolution**, now that entity grouping and a review-decision overlay
-build on L12/L13 reading and structure order, the L10.5 canonical-reading/raw-text contract, L10
+([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after OCR L15: the
+OCR Output Contract v1 / Stable Document Text Package**
+([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)) — stabilize the OCR/Text engine's
+output boundary before further engine work, building on entity grouping and the review-decision
+overlay, L12/L13 reading and structure order, the L10.5 canonical-reading/raw-text contract, L10
 span geometry, L9 layout-aware blocks, readable text (L8), confidence capture (L6),
 `quality_report` (L7), L14 quality-evidence/lineage-coverage observability, and L15 noise/token
-artifact evidence.
+artifact evidence. **PII L12 overlap resolution is downstream work**, taken up after the OCR/Text
+contract boundary is implemented or at least stabilized — PII consumes the contract; it is not the
+immediate next driver.
 
 **Strategic direction (OCR/Text as an independent module).** The next cross-cutting OCR/Text step
 is the **OCR Output Contract v1 / Document Text Package** ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md),
@@ -224,13 +230,20 @@ layout/PII-input layers are additive and never a standalone PII input.
 The checkpoint leaves OCR/Text at L15 (built on the L10.5 prerequisite), PII at L11 done/L10
 partial, and Redaction L0; after reconfirming the next-three cadence, the plan is:
 
-1. Advance PII **L12 — overlap resolution** (deterministic engine-level precedence for
-   duplicate/nested/overlapping candidates).
-2. Formalize the **Review L8 `review_result`** artifact model — today's JSONL decision overlay
+1. Stabilize the **OCR Output Contract v1 / Stable Document Text Package**
+   ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)) — the next implementation/design
+   step after L15: package raw/canonical/layout/structured/evidence layers under a `contract_version`
+   and `contract_status` so PII and future consumers depend on the contract, not OCR internals.
+   Future OCR capability work (dictionary/lexicon evidence, correction suggestions, multi-OCR/source
+   agreement, feedback-driven improvement) enriches the contract without breaking consumers.
+2. Advance PII **L12 — overlap resolution** (deterministic engine-level precedence for
+   duplicate/nested/overlapping candidates) as **downstream work**, once PII consumes the OCR/Text
+   contract boundary (implemented or at least stabilized).
+3. Formalize the **Review L8 `review_result`** artifact model — today's JSONL decision overlay
    (see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md)) covers much of
    L8/L9's practical intent but not the single-artifact-per-run shape or an explicit stale-decision
-   flag (L7); keep `pii_result` immutable.
-3. Add the **PII validation transparency report** (surfaces already-stored L6 validation counts).
+   flag (L7); keep `pii_result` immutable. The **PII validation transparency report** (surfacing
+   already-stored L6 validation counts) remains a small follow-on.
 
 **Previous checkpoint (OCR L10.5 intermediate):** OCR/Text retained formal L10 maturity and completed
 the canonical-reading-text/raw-text prerequisite before L11. Versioned `reading_text` is additive
@@ -388,8 +401,10 @@ worker crash mid-job leaves the row `running` (no lease/heartbeat reclaim yet), 
 job is terminal), parallel concurrency >1, the PII worker split, any queue broker (Redis/RQ), and a
 slimmer API-vs-worker image split (Phase 3 uses one image for stability). At that time, the frontend
 still used the default `sync` mode; Phase 3.6 below closes that worker-mode UI gap. Next runtime step: **Phase 4
-(PII worker + concurrency/timeout/retry controls, stale-lease reclaim)**; next *engine* step remains
-**PII L12 overlap resolution**.
+(PII worker + concurrency/timeout/retry controls, stale-lease reclaim)**; next *engine* step is the
+**OCR Output Contract v1 / Stable Document Text Package**
+([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)), with **PII L12 overlap
+resolution** downstream as a consumer of that contract.
 
 **Latest hardening checkpoint (Runtime Architecture Phase 3.5 — worker persistence audit):** A
 pre-PR audit confirmed the Phase 3 API and `ocr-worker` share the same Compose environment anchors
@@ -456,8 +471,11 @@ against the existing L14 baseline) and no raw-text leak. The PR introduces no de
 routing, technical raw/page text, active PII input, PII projection/decision, public API,
 review-decision, `quality_report`, benchmark-payload, pseudonymization, redaction, or export change.
 Dictionary/lexicon checks, multi-OCR, a local LLM, and correction *suggestions* (a later, explicitly
-separate level) remain deferred additive *evidence, not truth*. Next: **PII L12 overlap resolution**,
-formal **Review L8 `review_result`**, then the **PII validation transparency report**.
+separate level) remain deferred additive *evidence, not truth*. Next: the **OCR Output Contract v1 /
+Stable Document Text Package** ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)) as
+the OCR/Text stabilization step, with **PII L12 overlap resolution**, formal **Review L8
+`review_result`**, and the **PII validation transparency report** downstream as consumers of that
+contract.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
