@@ -289,6 +289,35 @@ build on the
 block/geometry structure from OCR L10 and gate on the separation rule above. See the sequence in
 [`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md).
 
+## OCR Output Contract v1 (Document Text Package) — proposed
+
+This document fixes the *internal* multi-layer text model. The proposed **OCR Output Contract v1 /
+Document Text Package** ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)) is the
+*external* boundary built on top of it: a single, versioned container that packages the layers
+already defined here — with explicit source roles and a trust status — so that PII, Review,
+pseudonymization, document analysis, export, and future local AI consume **one stable contract**
+instead of reaching into `text_result` fields or the external OCR/PDF tool.
+
+- **Packaged layers (roles):** `technical_raw_text` (**raw** — authoritative offset source),
+  `canonical_reading_text` (**canonical** — human-readable, not authoritative), `layout_text`
+  (**layout** — visual/debug), `structured_content` (**structured** — semantic hints),
+  `reading_text_map`/lineage, and `quality_evidence` incl. L15 noise evidence (**evidence** —
+  trust/uncertainty, never correction).
+- **Versioning + status:** a `contract_version` plus a `contract_status`
+  (`valid`/`degraded`/`invalid`) with `warnings`/`blockers`/`missing_capabilities`, so a consumer
+  knows before use whether the text is trustworthy (encodes the existing fail-loud invariant).
+- **Normalization:** external OCR/PDF tool output (pypdf, PaddleOCR, python-docx, any future
+  engine) is normalized **before** crossing the contract boundary.
+- **Consumer rules:** PII may use raw (primary), canonical/structured (secondary/hint), and
+  evidence (confidence/review flags); it must not treat canonical as authoritative and must not
+  break when optional layers are absent. Making `pii_input_text` (or canonical) the *active* PII
+  detection input still requires the tested `text_lineage_map` [separation gate](#invariants) — the
+  contract packages the layers, it does not bypass that gate.
+
+The contract is a **cross-cutting stabilization milestone, not a new OCR level** — the 0–19 ladder
+([`ocr-engine-levels.md`](ocr-engine-levels.md)) is unchanged, and no field/schema/behavior changes
+until it is implemented.
+
 ## Implementation status (v1)
 
 - **Delivered:** `readable_text` as an **additive optional field on the existing `text_result`**

@@ -95,7 +95,7 @@ suppression rules L12, manual add L10, and reusable cross-run decisions L13).
   per-reason explanation) and an optional comment. After submission the card locks to a status line
   so the same feedback is not submitted twice for one entity in one artifact.
 - **Persisted (twice):**
-  1. Append-only JSONL at `document-data/{document_id}/feedback/pii_feedback.jsonl` — the copy the
+  1. Append-only JSONL at `document-store/{document_id}/feedback/pii_feedback.jsonl` — the copy the
      UI reads back to restore per-entity review state. Deleted with the document (ADR-0008).
   2. The same line, unchanged (`document_id` retained), appended to the separate, cross-document
      `pii-feedback-archive/pii_feedback.jsonl` — **not** touched by document deletion, by design
@@ -105,7 +105,7 @@ suppression rules L12, manual add L10, and reusable cross-run decisions L13).
   recognizer + score), the verdict/issue_type/optional comment, the artifact's engine settings, and
   app/schema version. New feedback is accepted only when type, offsets, and recognizer match an
   entity in the referenced `pii_result`; the stored score comes from that artifact. On load,
-  `GET …/pii/feedback?artifact_id=…` collapses the **document-data copy's** validated lines to the
+  `GET …/pii/feedback?artifact_id=…` collapses the **document-store copy's** validated lines to the
   **latest verdict per entity key** (type + start + end + recognizer) and returns counts/verdicts
   only; the archive is write-only from the API's perspective (no read endpoint yet — read the
   JSONL directly for aggregate analysis, like the private benchmark runner does with its inputs).
@@ -128,9 +128,9 @@ suppression rules L12, manual add L10, and reusable cross-run decisions L13).
 
 ### Feedback storage (local dev)
 
-- **Per-document copy:** append-only JSONL under the host side of the existing `document-data` bind
-  mount (`volumes/document-data/<document_id>/feedback/pii_feedback.jsonl`; inside the container
-  `/data/document-data/<id>/feedback/…`). Created on first write. Survives `docker compose down`
+- **Per-document copy:** append-only JSONL under the host side of the existing `document-store` bind
+  mount (`volumes/document-store/<document_id>/feedback/pii_feedback.jsonl`; inside the container
+  `/data/document-store/<id>/feedback/…`). Created on first write. Survives `docker compose down`
   (host bind mount), removed with the document's directory.
 - **Cross-document archive:** append-only JSONL under its own bind mount, `PII_FEEDBACK_ARCHIVE_DIR`
   (default `/data/pii-feedback-archive`, host side `volumes/pii-feedback-archive/pii_feedback.jsonl`).
@@ -184,7 +184,7 @@ suppression rules L12, manual add L10, and reusable cross-run decisions L13).
   `pii_result` stays immutable; file-based first (see
   [target-architecture](target-architecture.md#database-considerations)).
 - **Delivered:** a file-based, lineage-bound decision overlay exists
-  (`document-data/<id>/review/pii_review_decisions.jsonl`, an append-only log collapsed to the
+  (`document-store/<id>/review/pii_review_decisions.jsonl`, an append-only log collapsed to the
   latest decision per target on read) and `pii_result` is never mutated. **Not yet delivered:** the
   formal single-artifact-per-run model this level describes (with its own id/version, "the first
   place a database becomes genuinely useful") — this reuses the existing feedback-archive JSONL
@@ -312,7 +312,7 @@ Design constraints (not features) for L8+:
 - **What later needs a DB?** review state, decision history, and rules (lookup/versioning/history).
   See the [DB chapter](target-architecture.md#database-considerations).
 - **What can stay file-based for now?** first-cut `review_result` JSON artifacts and small rule files
-  under the document-data root — mirroring how audit/OCR/PII artifacts already work.
+  under the document-store root — mirroring how audit/OCR/PII artifacts already work.
 - **How does feedback improve the PII engine?** rules feed candidate validation (PII post-processing);
   corrections feed the benchmark. The engine consumes rules at post-processing time — it does not
   retrain.

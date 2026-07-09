@@ -56,3 +56,33 @@ future evidence source plugged into that list — dictionary/lexicon, multi-OCR,
   (suspicion, explainable, reviewable) and does not automatically correct, remove, or rewrite OCR
   text, `reading_text`, or `structured_content` — any future correction/suggestion capability is a
   separate, explicitly re-scoped level.
+
+The same discipline applies to any OCR/Text **output** change (`reading_text`,
+`structured_content`, reconstruction heuristics): synthetic tests are required; a private-corpus
+validation pass is required for behavior changes with an explicit stable-document no-regression
+statement; no private-corpus files are ever committed; and no raw document/token text enters
+metrics or evidence metadata.
+
+## Contract changes
+
+Additional gates when a change touches a versioned output/artifact contract — most notably the
+proposed **OCR Output Contract v1 / Document Text Package**
+([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)), and equally any change to an
+existing artifact schema (`text_result` fields, `quality_evidence`, `pii_result`) or the runtime
+job contract:
+
+- **Versioned schema + contract status.** A contract change bumps or introduces an explicit version
+  (`contract_version` / per-field `*_version`) and, where the contract has one, keeps a meaningful
+  `contract_status` (`valid`/`degraded`/`invalid`) with warnings/blockers rather than silently
+  emitting partial output.
+- **Legacy artifact compatibility considered.** Legacy artifacts written before the change must
+  still validate/read (additive optional fields), or the migration is explicit and documented.
+- **Consumer impact documented.** The PR/ADR states which consumers (PII, Review, benchmark,
+  frontend) are affected and how; a consumer must not silently break when an optional layer is
+  absent.
+- **Breaking changes are explicit and tested.** A breaking contract change is called out as such,
+  gated behind a version bump, and covered by tests for both the old and new shape where both are
+  supported. Additive, backward-compatible changes are strongly preferred.
+- **No raw text across the boundary beyond existing text layers.** A packaging/contract change adds
+  no new raw document or entity text to metrics-only layers; the existing text-artifact privacy
+  rules still apply.

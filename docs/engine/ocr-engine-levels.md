@@ -460,19 +460,34 @@ redaction.
   a privacy-safe character-*class*-only signature tool that never printed or persisted real text.
   Technical raw text, `reading_text`, `structured_content`, active PII input, PII decisions, the
   `quality_report` artifact, benchmark payloads, dependencies, and public APIs remain unchanged.
-- **Future evidence (deferred, additive):** dictionary/lexicon checks for non-word tokens (L16),
+- **Future evidence (deferred, additive):** dictionary/lexicon checks for non-word tokens,
   multi-OCR agreement, and a local LLM for structure/quality hints remain *evidence, not truth* —
   they may raise or lower confidence but must never silently rewrite OCR/Text or change PII
   decisions. Correction *suggestions* (not automatic fixes) remain a later, explicitly separate
-  level.
-- **Boundary to L16:** L15 makes noise/token-shape quality *measurable*; L16 makes OCR results
-  *reproducible* by recording engine settings.
+  level. These additive-evidence sources are intended to **plug into the OCR Output Contract and
+  `quality_evidence`** (see the [OCR Output Contract v1](roadmap.md#ocr-output-contract-v1--document-text-package-cross-cutting-stabilization--proposed)
+  stabilization milestone and [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)); their
+  final level numbering is decided when each is planned.
+- **Boundary to L16:** L15 makes noise/token-shape quality *measurable*; L16 (as currently
+  scoped on the ladder) makes OCR results *reproducible* by recording engine settings.
 
 > Migration note: earlier planning placeholders described OCR/Text L15 as redaction-ready text/
 > geometry mapping. That capability is deferred to a later level once redaction/review/PII
 > prerequisites justify it; L15 now means the noise/token artifact evidence described here, mirroring
 > how ADR-0022/ADR-0024/ADR-0025 re-scoped L12/L13/L14. See
 > [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md).
+
+> **Capability tracks vs. the fixed ladder (resolves the L16+ ambiguity).** The **next OCR/Text
+> step after L15 is the cross-cutting OCR Output Contract v1 / Stable Document Text Package**
+> ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)) — a stabilization milestone, **not** a
+> numbered level. The fixed 0–19 ladder ([ADR-0016](../adr/0016-engine-maturity-levels-0-19.md))
+> keeps **L16–L19 as reproducible settings, observability/budget, regression gate, and
+> production-grade** (below), and is **not renumbered** here. Separately,
+> **dictionary/lexicon evidence, correction suggestions, multi-OCR/source agreement, and
+> feedback-driven improvement** are future OCR **capability tracks / candidate work items** that must
+> **plug into the OCR Output Contract** and `quality_evidence` without changing how PII (or any
+> consumer) receives text. They are **not** labelled formal L16/L17/L18/L20 unless a future ADR
+> explicitly changes the ladder.
 
 ## Level 16 — Reproducible OCR engine settings in artifact  ⛔ *open*
 
@@ -571,6 +586,14 @@ fallback was expected — i.e. more conservative, not wrong.
    earlier placeholder meaning of L13, deferred), word-level/redaction-ready geometry, placeholder
    mapping, export, dictionary/lexicon OCR-quality checks, and multi-OCR stay open at later
    levels/spikes, and are additive **evidence, not truth**.
+2. A cross-cutting **OCR Output Contract v1 / Document Text Package** stabilization step (not a
+   numbered level) is proposed before further capability work: it packages technical raw, canonical
+   reading, layout, structured, and evidence layers under a `contract_version` and
+   `contract_status`, so PII and other consumers depend on a stable contract rather than
+   `text_result` internals or the external OCR/PDF tool. The additive-evidence sources above plug
+   into that contract. See
+   [OCR Output Contract v1](roadmap.md#ocr-output-contract-v1--document-text-package-cross-cutting-stabilization--proposed)
+   and [ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md).
 
 See the [current sequence](roadmap.md#current-sequence) and
 [later engine work](roadmap.md#later-engine-work) for the sequencing.
