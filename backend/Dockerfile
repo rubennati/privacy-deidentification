@@ -3,9 +3,6 @@
 # --- Build stage: resolve and install dependencies into a virtualenv ---------------------
 FROM python:3.12-slim AS builder
 
-ARG INSTALL_OCR=false
-ARG INSTALL_PII=false
-
 # uv is only a build tool here; runtime dependencies are pinned by uv.lock.
 RUN pip install --no-cache-dir "uv>=0.5,<1.0"
 
@@ -15,37 +12,25 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Install dependencies first (cached layer), then the project itself (baked into the venv).
 COPY pyproject.toml uv.lock ./
-RUN extras=""; \
-    if [ "$INSTALL_OCR" = "true" ]; then extras="$extras --extra ocr"; fi; \
-    if [ "$INSTALL_PII" = "true" ]; then extras="$extras --extra pii"; fi; \
-    uv sync --frozen --no-install-project --no-dev $extras
+RUN uv sync --frozen --no-install-project --no-dev --extra ocr --extra pii
 COPY README.md ./
 COPY app ./app
-RUN extras=""; \
-    if [ "$INSTALL_OCR" = "true" ]; then extras="$extras --extra ocr"; fi; \
-    if [ "$INSTALL_PII" = "true" ]; then extras="$extras --extra pii"; fi; \
-    uv sync --frozen --no-dev --no-editable $extras
+RUN uv sync --frozen --no-dev --no-editable --extra ocr --extra pii
 
 # --- Runtime stage: minimal, non-root -----------------------------------------------------
 FROM python:3.12-slim AS runtime
 
-# Match the build stage so the OCR system libraries are installed for OCR/full images only.
-ARG INSTALL_OCR=false
-
-# Poppler provides pdftoppm/pdftocairo for pdf2image. When the optional OCR runtime is built in,
-# PaddleOCR/OpenCV need libGL + glib and PaddlePaddle's core needs libgomp (OpenMP) at import
-# time; install these only for OCR builds so the default slim image stays minimal. Create an
-# unprivileged user to run the service and pre-create both persistent storage directories owned
-# by that user so initially empty mounted volumes inherit writable ownership.
+# Poppler provides pdftoppm/pdftocairo for pdf2image. PaddleOCR/OpenCV need libGL + glib and
+# PaddlePaddle's core needs libgomp (OpenMP) at import time. Create an unprivileged user to run
+# the service and pre-create persistent storage directories owned by that user so initially empty
+# mounted volumes inherit writable ownership.
 RUN apt-get update \
     && apt-get install --no-install-recommends --yes poppler-utils \
-    && if [ "$INSTALL_OCR" = "true" ]; then \
-        apt-get install --no-install-recommends --yes libgl1 libglib2.0-0 libgomp1; \
-    fi \
+    && apt-get install --no-install-recommends --yes libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --no-create-home app \
-    && mkdir -p /data/uploads /data/document-data \
+    && mkdir -p /data/uploads /data/document-store /data/job-state /data/pii-feedback-archive \
     && chown -R app:app /data
 
 WORKDIR /app

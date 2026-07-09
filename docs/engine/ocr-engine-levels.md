@@ -476,8 +476,9 @@ redaction.
 
 OCR runtime settings are analysed in [`engine-settings.md`](engine-settings.md). In short:
 
-- **Runtime/provisioning (not maturity):** `OCR_MODEL_DIR`, `INSTALL_OCR`, `BACKEND_MEMORY_LIMIT`,
-  Poppler/tmpfs render workspace, MKL-DNN-off — operational config, chosen server-side.
+- **Runtime/provisioning (not maturity):** `OCR_MODEL_DIR`, the default runtime image,
+  `OCR_EXECUTION_MODE`, `API_MEMORY_LIMIT`, `OCR_WORKER_MEMORY_LIMIT`, Poppler/tmpfs render
+  workspace, MKL-DNN-off — operational config, chosen server-side.
 - **Reproducibility (maturity — L16):** `OCR_DETECTION_MODEL_NAME`, `OCR_RECOGNITION_MODEL_NAME`
   and pinned engine/model versions determine *which* recognition capability ran and must be recorded
   in the artifact to make a result reproducible and comparable.

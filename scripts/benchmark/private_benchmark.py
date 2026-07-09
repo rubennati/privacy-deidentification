@@ -9,7 +9,7 @@ never calls the API, never writes or deletes a document. See ``README.md`` in th
 Usage:
     python scripts/benchmark/private_benchmark.py \\
         --uploads-dir volumes/uploads \\
-        --document-data-dir volumes/document-data \\
+        --document-data-dir volumes/document-store \\
         --metadata volumes/benchmark/ocr_pii_benchmark_metadata.json \\
         --groundtruth volumes/benchmark/ocr_pii_benchmark_pii_groundtruth.json \\
         --output-dir volumes/benchmark/reports
@@ -50,7 +50,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--uploads-dir", default="volumes/uploads", type=Path)
-    parser.add_argument("--document-data-dir", default="volumes/document-data", type=Path)
+    parser.add_argument("--document-data-dir", default="volumes/document-store", type=Path)
     parser.add_argument(
         "--metadata", default="volumes/benchmark/ocr_pii_benchmark_metadata.json", type=Path
     )

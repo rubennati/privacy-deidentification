@@ -1,53 +1,72 @@
-name: deid-pilot
+name: ${COMPOSE_PROJECT_NAME:-privacy-deidentification}
+
+# Shared application runtime configuration. The API and OCR worker intentionally use the same
+# image in Phase 3.6; they share storage and job state, and differ only by command and resource
+# limits. A slimmer API image can be split later when the dependency trees actually diverge.
+x-app-environment: &app-environment
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+  ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-pdf,docx,png,jpg,jpeg}
+  # Container-internal storage paths. Deployments configure the host location via DATA_ROOT below;
+  # these stable internal defaults keep API and worker on the same paths and are advanced overrides
+  # only (not part of .env.example). JOB_STORE_DB_PATH is derived from DATA_JOB_STATE_DIR by default.
+  UPLOAD_STORAGE_DIR: ${UPLOAD_STORAGE_DIR:-/data/uploads}
+  DOCUMENT_DATA_DIR: ${DOCUMENT_DATA_DIR:-/data/document-store}
+  DATA_JOB_STATE_DIR: ${DATA_JOB_STATE_DIR:-/data/job-state}
+  JOB_STORE_DB_PATH: ${JOB_STORE_DB_PATH:-}
+  OCR_EXECUTION_MODE: ${OCR_EXECUTION_MODE:-worker}
+  OCR_WORKER_POLL_INTERVAL_SECONDS: ${OCR_WORKER_POLL_INTERVAL_SECONDS:-2.0}
+  OCR_WORKER_CONCURRENCY: ${OCR_WORKER_CONCURRENCY:-1}
+  OCR_WORKER_MAX_ATTEMPTS: ${OCR_WORKER_MAX_ATTEMPTS:-1}
+  PII_FEEDBACK_ARCHIVE_DIR: ${PII_FEEDBACK_ARCHIVE_DIR:-/data/pii-feedback-archive}
+  OCR_MODEL_DIR: ${OCR_MODEL_DIR:-/models/ocr}
+  OCR_DETECTION_MODEL_NAME: ${OCR_DETECTION_MODEL_NAME:-PP-OCRv5_mobile_det}
+  OCR_RECOGNITION_MODEL_NAME: ${OCR_RECOGNITION_MODEL_NAME:-latin_PP-OCRv5_mobile_rec}
+  PII_LANGUAGE: ${PII_LANGUAGE:-de}
+  PII_SPACY_MODEL: ${PII_SPACY_MODEL:-de_core_news_sm}
+  PII_SCORE_THRESHOLD: ${PII_SCORE_THRESHOLD:-0.5}
+  PII_PROFILE: ${PII_PROFILE:-review-heavy}
+  PII_ENTITY_TYPES: ${PII_ENTITY_TYPES:-}
+  PII_CANDIDATE_VALIDATION_ENABLED: ${PII_CANDIDATE_VALIDATION_ENABLED:-true}
+  ENABLE_DEV_ENGINE_SETTINGS: ${ENABLE_DEV_ENGINE_SETTINGS:-false}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  TZ: ${TZ:-Europe/Vienna}
+
+# Host storage. Deployments set a single DATA_ROOT; Compose maps its subdirectories onto the stable
+# internal container paths above. The API and OCR worker share these exact mounts (YAML anchor), so
+# job state and artifacts can never split between the two services.
+x-app-volumes: &app-volumes
+  - ${DATA_ROOT:-./volumes}/uploads:${UPLOAD_STORAGE_DIR:-/data/uploads}
+  - ${DATA_ROOT:-./volumes}/document-store:${DOCUMENT_DATA_DIR:-/data/document-store}
+  - ${DATA_ROOT:-./volumes}/job-state:${DATA_JOB_STATE_DIR:-/data/job-state}
+  - ${DATA_ROOT:-./volumes}/pii-feedback-archive:${PII_FEEDBACK_ARCHIVE_DIR:-/data/pii-feedback-archive}
+  - ${DATA_ROOT:-./volumes}/ocr-models:${OCR_MODEL_DIR:-/models/ocr}:ro
 
 services:
-  backend:
+  api:
+    # --- Identity ---
     build:
       context: ./backend
-      args:
-        INSTALL_OCR: ${INSTALL_OCR:-false}
-        INSTALL_PII: ${INSTALL_PII:-false}
-    image: deid-pilot-backend:0.1.0
-    environment:
-      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
-      ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-pdf,docx,png,jpg,jpeg}
-      UPLOAD_STORAGE_DIR: ${UPLOAD_STORAGE_DIR:-/data/uploads}
-      DOCUMENT_DATA_DIR: ${DOCUMENT_DATA_DIR:-/data/document-data}
-      # Optional SQLite metadata DB for OCR/PII job state. Empty/default keeps it inside
-      # DOCUMENT_DATA_DIR as jobs.sqlite3 so it uses the existing persistent bind mount.
-      JOB_STORE_DB_PATH: ${JOB_STORE_DB_PATH:-}
-      # Dev-only PII review-feedback archive (ENABLE_DEV_ENGINE_SETTINGS gated). Deliberately a
-      # third, separate root from DOCUMENT_DATA_DIR: unlike document data, this survives a
-      # document's deletion by design, so it can later feed PII-quality improvement.
-      PII_FEEDBACK_ARCHIVE_DIR: ${PII_FEEDBACK_ARCHIVE_DIR:-/data/pii-feedback-archive}
-      # Container-internal model root. Ignored unless INSTALL_OCR=true and the read-only
-      # ./volumes/ocr-models mount below is populated (see scripts/fetch-ocr-models.sh). If the
-      # models are missing the OCR station correctly returns 503; it never downloads at runtime.
-      OCR_MODEL_DIR: ${OCR_MODEL_DIR:-/models/ocr}
-      OCR_DETECTION_MODEL_NAME: ${OCR_DETECTION_MODEL_NAME:-PP-OCRv5_mobile_det}
-      OCR_RECOGNITION_MODEL_NAME: ${OCR_RECOGNITION_MODEL_NAME:-latin_PP-OCRv5_mobile_rec}
-      PII_LANGUAGE: ${PII_LANGUAGE:-de}
-      PII_SPACY_MODEL: ${PII_SPACY_MODEL:-de_core_news_sm}
-      PII_SCORE_THRESHOLD: ${PII_SCORE_THRESHOLD:-0.5}
-      PII_PROFILE: ${PII_PROFILE:-structured-only}
-      PII_ENTITY_TYPES: ${PII_ENTITY_TYPES:-}
-      PII_CANDIDATE_VALIDATION_ENABLED: ${PII_CANDIDATE_VALIDATION_ENABLED:-true}
-      ENABLE_DEV_ENGINE_SETTINGS: ${ENABLE_DEV_ENGINE_SETTINGS:-false}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    volumes:
-      - ./volumes/uploads:${UPLOAD_STORAGE_DIR:-/data/uploads}
-      - ./volumes/document-data:${DOCUMENT_DATA_DIR:-/data/document-data}
-      - ./volumes/pii-feedback-archive:${PII_FEEDBACK_ARCHIVE_DIR:-/data/pii-feedback-archive}
-      # OCR models, read-only. Safe to mount even in slim mode: an empty/absent directory just
-      # keeps the OCR station at 503. Never commit the contents (see .gitignore).
-      - ./volumes/ocr-models:/models/ocr:ro
-    networks:
-      - internal
+    image: privacy-deidentification-api:0.1.0
+    restart: unless-stopped
+
+    # --- Security ---
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
+
+    # --- Configuration ---
+    environment: *app-environment
+
+    # --- Storage ---
+    volumes: *app-volumes
+
+    # --- Networking ---
+    networks:
+      - private
+
+    # --- Health ---
     healthcheck:
       test:
         - CMD
@@ -61,38 +80,73 @@ services:
     deploy:
       resources:
         limits:
-          # Slim default is intentionally small. The OCR/PII runtimes (PaddlePaddle/spaCy) need much
-          # more headroom: running the OCR-enabled image under this 512M default OOM-kills the
-          # backend while PaddleOCR loads/runs, which nginx then surfaces as a 502 Bad Gateway.
-          # `make up-ocr`/`make up-full` raise BACKEND_MEMORY_LIMIT to 2g; when running
-          # `docker compose` directly with INSTALL_OCR=true, set BACKEND_MEMORY_LIMIT=2g yourself.
-          cpus: "${BACKEND_CPU_LIMIT:-1.0}"
-          memory: ${BACKEND_MEMORY_LIMIT:-512M}
+          cpus: "${API_CPU_LIMIT:-1.0}"
+          memory: ${API_MEMORY_LIMIT:-1g}
+
+  ocr-worker:
+    # --- Identity ---
+    # Reuses the API image built above; the worker differs only by command and limits.
+    image: privacy-deidentification-api:0.1.0
+    command: ["python", "-m", "app.ocr_worker"]
     restart: unless-stopped
 
-  frontend:
-    build:
-      context: ./frontend
-    image: deid-pilot-frontend:0.1.0
-    ports:
-      - "${WEB_PORT:-8080}:8080"
-    depends_on:
-      backend:
-        condition: service_healthy
-    networks:
-      - internal
+    # --- Security ---
     read_only: true
     tmpfs:
-      # nginx (unprivileged) needs writable temp/pid/cache paths; everything else stays
-      # read-only.
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+    # --- Configuration ---
+    environment: *app-environment
+
+    # --- Storage ---
+    volumes: *app-volumes
+
+    # --- Networking ---
+    networks:
+      - private
+
+    # --- Health ---
+    deploy:
+      resources:
+        limits:
+          cpus: "${OCR_WORKER_CPU_LIMIT:-1.0}"
+          memory: ${OCR_WORKER_MEMORY_LIMIT:-2g}
+
+  frontend:
+    # --- Identity ---
+    build:
+      context: ./frontend
+    image: privacy-deidentification-frontend:0.1.0
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      ocr-worker:
+        condition: service_started
+
+    # --- Security ---
+    read_only: true
+    tmpfs:
       - /tmp
       - /run
       - /var/cache/nginx
     security_opt:
       - no-new-privileges:true
+
+    # --- Configuration ---
+
+    # --- Storage ---
+
+    # --- Networking ---
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    networks:
+      - private
+
+    # --- Health ---
     healthcheck:
-      # Use 127.0.0.1 (not localhost): BusyBox wget resolves localhost to IPv6 ::1, but
-      # nginx listens on IPv4 only.
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 3s
@@ -101,10 +155,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 128M
-    restart: unless-stopped
+          cpus: "${FRONTEND_CPU_LIMIT:-0.5}"
+          memory: ${FRONTEND_MEMORY_LIMIT:-128M}
 
 networks:
-  internal:
+  private:
+    name: ${COMPOSE_PROJECT_NAME:-privacy-deidentification}-private
     driver: bridge

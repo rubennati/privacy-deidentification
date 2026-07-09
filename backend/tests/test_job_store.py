@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
@@ -45,6 +46,41 @@ def test_schema_initializes_idempotently(tmp_path: Path) -> None:
     store.initialize()
 
     assert (tmp_path / "jobs.sqlite3").is_file()
+
+
+def test_store_creates_parent_directory_for_nested_db_path(tmp_path: Path) -> None:
+    db_path = tmp_path / "nested" / "state" / "jobs.sqlite3"
+    store = JobStore(db_path)
+
+    store.create_job(JobRecord.from_context(_context()))
+
+    assert db_path.is_file()
+
+
+def test_rows_persist_across_store_instances(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.sqlite3"
+    first_store = JobStore(db_path)
+    record = JobRecord.from_context(_context(metadata={"source": "synthetic"}))
+
+    first_store.create_job(record)
+
+    loaded = JobStore(db_path).get_job(record.job_id)
+    assert loaded is not None
+    assert loaded.job_id == record.job_id
+    assert loaded.document_id == record.document_id
+    assert loaded.metadata == {"source": "synthetic"}
+
+
+def test_initialize_sets_wal_mode_and_schema_version(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobs.sqlite3"
+
+    JobStore(db_path).initialize()
+
+    with sqlite3.connect(db_path) as connection:
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+    assert str(journal_mode).lower() == "wal"
+    assert schema_version == 1
 
 
 def test_create_and_get_job_roundtrips_enums_and_timestamps(tmp_path: Path) -> None:
@@ -134,6 +170,88 @@ def test_list_jobs_for_document_returns_newest_first_and_bounded(tmp_path: Path)
     jobs = store.list_jobs_for_document(document_id, limit=1)
 
     assert [job.job_id for job in jobs] == [newer.job_id]
+
+
+def test_claim_next_pending_job_marks_running_and_returns_record(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    record = JobRecord.from_context(_context(kind=JobKind.OCR_TEXT))
+    store.create_job(record)
+
+    claimed = store.claim_next_pending_job(JobKind.OCR_TEXT)
+
+    assert claimed is not None
+    assert claimed.job_id == record.job_id
+    assert claimed.status is JobStatus.RUNNING
+    assert claimed.started_at is not None
+    assert claimed.attempt_count == 1
+    # The transition is persisted, not only returned.
+    reloaded = store.get_job(record.job_id)
+    assert reloaded is not None
+    assert reloaded.status is JobStatus.RUNNING
+
+
+def test_claim_returns_none_when_no_pending_job(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.initialize()
+
+    assert store.claim_next_pending_job(JobKind.OCR_TEXT) is None
+
+
+def test_two_claims_do_not_both_run_the_same_job(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.create_job(JobRecord.from_context(_context(kind=JobKind.OCR_TEXT)))
+
+    first = store.claim_next_pending_job(JobKind.OCR_TEXT)
+    second = store.claim_next_pending_job(JobKind.OCR_TEXT)
+
+    assert first is not None
+    assert second is None
+
+
+def test_claim_skips_jobs_of_a_different_kind(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    pii_record = JobRecord.from_context(_context(kind=JobKind.PII_DETECTION))
+    store.create_job(pii_record)
+
+    claimed = store.claim_next_pending_job(JobKind.OCR_TEXT)
+
+    assert claimed is None
+    # The PII job stays pending — the OCR worker never touches it.
+    reloaded = store.get_job(pii_record.job_id)
+    assert reloaded is not None
+    assert reloaded.status is JobStatus.PENDING
+
+
+def test_claim_prefers_oldest_pending_job(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    older = JobRecord.from_context(
+        _context(kind=JobKind.OCR_TEXT, created_at="2026-07-08T10:00:00.000001Z")
+    )
+    newer = JobRecord.from_context(
+        _context(kind=JobKind.OCR_TEXT, created_at="2026-07-08T10:00:00.000002Z")
+    )
+    store.create_job(newer)
+    store.create_job(older)
+
+    claimed = store.claim_next_pending_job(JobKind.OCR_TEXT)
+
+    assert claimed is not None
+    assert claimed.job_id == older.job_id
+
+
+def test_claim_respects_max_attempts(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    # A pending job whose single allowed attempt is already spent (e.g. a future requeue) must not
+    # be reclaimed under max_attempts=1, but is claimable if the bound is raised.
+    record = JobRecord.from_context(_context(kind=JobKind.OCR_TEXT))
+    record.attempt_count = 1
+    store.create_job(record)
+
+    assert store.claim_next_pending_job(JobKind.OCR_TEXT, max_attempts=1) is None
+
+    claimed = store.claim_next_pending_job(JobKind.OCR_TEXT, max_attempts=2)
+    assert claimed is not None
+    assert claimed.attempt_count == 2
 
 
 def test_delete_jobs_for_document_removes_only_that_document(tmp_path: Path) -> None:

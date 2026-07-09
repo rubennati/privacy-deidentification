@@ -1473,8 +1473,8 @@ class RuntimeCapabilitiesResponse(BaseModel):
     ocr_memory_limit_low: bool = Field(
         description=(
             "OCR is installed but the container memory limit looks too low for PaddleOCR to run "
-            "without being OOM-killed mid-request. Restart with BACKEND_MEMORY_LIMIT=2g "
-            "(`make up-ocr`/`make up-full`)."
+            "without being OOM-killed mid-request in sync fallback mode. Use default worker mode "
+            "or set API_MEMORY_LIMIT=2g when OCR_EXECUTION_MODE=sync."
         )
     )
 

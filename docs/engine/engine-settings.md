@@ -79,18 +79,19 @@ Notes:
 | `OCR_MODEL_DIR` | runtime (provisioning) | [L3](ocr-engine-levels.md#level-3--basic-ocr-runtime---done) | ⚠️ path not meaningful to record | ❌ no | — |
 | `OCR_DETECTION_MODEL_NAME` | both (repro) | [L3](ocr-engine-levels.md#level-3--basic-ocr-runtime---done) / [L16](ocr-engine-levels.md#level-16--reproducible-ocr-engine-settings-in-artifact---open) | ✅ should (L16, not yet) | ❌ no | OCR-Q, Repro |
 | `OCR_RECOGNITION_MODEL_NAME` | both (repro) | [L3](ocr-engine-levels.md#level-3--basic-ocr-runtime---done) / [L16](ocr-engine-levels.md#level-16--reproducible-ocr-engine-settings-in-artifact---open) | ✅ should (L16, not yet) | ❌ no | OCR-Q, Repro |
-| `INSTALL_OCR` (build/profile) | runtime | [L3](ocr-engine-levels.md#level-3--basic-ocr-runtime---done) | ❌ no | ❌ no | — |
+| Default OCR/PII runtime image | runtime | [L3](ocr-engine-levels.md#level-3--basic-ocr-runtime---done) | ❌ no | ❌ no | — |
+| `OCR_EXECUTION_MODE` | runtime | ADR-0023 | ❌ no | ❌ no | stability |
 | OCR runtime provisioning (`make ocr-models`, read-only mount, Poppler, tmpfs, MKL-DNN-off) | runtime | [L3](ocr-engine-levels.md#level-3--basic-ocr-runtime---done) | ❌ no | ❌ no | OCR-Q (stability) |
 | Text-layer quality-gate thresholds (`text_quality.py`) | maturity | [L4](ocr-engine-levels.md#level-4--text-layer-quality-gate---done) | verdict recorded on `audit_result` | ❌ no (code-level, unit-tested) | OCR-Q (routing) |
 | OCR fallback behaviour (`503`-not-garbage) | maturity | [L5](ocr-engine-levels.md#level-5--page-level-ocr-routing--fallback---done--current-baseline) | routing recorded | ❌ no | OCR-Q |
-| `BACKEND_MEMORY_LIMIT` | runtime | — | ❌ no | ❌ no | OCR-Q (OOM avoidance) |
+| `API_MEMORY_LIMIT` / `OCR_WORKER_MEMORY_LIMIT` | runtime | ADR-0023 | ❌ no | ❌ no | OCR-Q (OOM avoidance) |
 
 Notes:
 
-- **`OCR_MODEL_DIR`, `INSTALL_OCR`, provisioning, `BACKEND_MEMORY_LIMIT`** are pure
-  runtime/provisioning: they decide *whether and where* OCR runs, not the quality of the resulting
-  domain capability. They stay server-side and are not recorded as engine reproducibility state (a
-  container path is not meaningful across machines).
+- **`OCR_MODEL_DIR`, runtime image contents, `OCR_EXECUTION_MODE`, provisioning, and memory
+  limits** are pure runtime/provisioning: they decide *whether and where* OCR runs, not the quality
+  of the resulting domain capability. They stay server-side and are not recorded as engine
+  reproducibility state (a container path is not meaningful across machines).
 - **`OCR_DETECTION_MODEL_NAME` / `OCR_RECOGNITION_MODEL_NAME`** determine which recognition capability
   ran (e.g. Latin recognizer for German umlauts/ß vs the default). They **affect OCR quality** and
   are a **reproducibility** concern — they *should* be recorded in the text/quality artifact at OCR
@@ -112,8 +113,9 @@ Notes:
 
 ## Summary answers to the review questions
 
-- **Pure runtime/default config:** `OCR_MODEL_DIR`, `INSTALL_OCR`, provisioning, `BACKEND_MEMORY_LIMIT`,
-  `ENABLE_DEV_ENGINE_SETTINGS` (a dev-ops gate). These decide *whether/where* engines run.
+- **Pure runtime/default config:** `OCR_MODEL_DIR`, runtime image contents, `OCR_EXECUTION_MODE`,
+  provisioning, `API_MEMORY_LIMIT`, `OCR_WORKER_MEMORY_LIMIT`, and `ENABLE_DEV_ENGINE_SETTINGS` (a
+  dev-ops gate). These decide *whether/where* engines run.
 - **Part of engine-domain maturity:** `PII_PROFILE`, `PII_ENTITY_TYPES`, `PII_SCORE_THRESHOLD`,
   `PII_CANDIDATE_VALIDATION_ENABLED` (its own pipeline stage), the quality-gate thresholds, OCR
   fallback, and the OCR/NER model choices.

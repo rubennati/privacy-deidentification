@@ -3,6 +3,51 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOcr, runPii, WorkstationApiError } from "./workstations";
 
 const GENERIC_ERROR_DETAIL = "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut.";
+const JOB_ID = "1234567890abcdef1234567890abcdef";
+
+const textArtifact = {
+  id: "text-id",
+  document_id: "doc-1",
+  artifact_type: "text_result",
+  station: "ocr",
+  input_artifact_id: "original-id",
+  input_audit_artifact_id: "audit-id",
+  media_type: "application/json",
+  created_at: "2026-07-02T10:00:00.000000Z",
+  content: {
+    document_id: "doc-1",
+    input_artifact_id: "original-id",
+    input_audit_artifact_id: "audit-id",
+    source: "docx_text",
+    ocr_version: "1",
+    text: "Synthetic text",
+    text_char_count: 14,
+    pages: [],
+    tool_versions: {},
+    flags: [],
+  },
+};
+
+function jobStatus(status: "pending" | "running" | "succeeded" | "failed") {
+  return {
+    job_id: JOB_ID,
+    document_id: "doc-1",
+    kind: "ocr_text",
+    status,
+    execution_mode: "future_worker",
+    created_at: "2026-07-02T10:00:00.000000Z",
+    started_at: status === "pending" ? null : "2026-07-02T10:00:01.000000Z",
+    finished_at:
+      status === "succeeded" || status === "failed" ? "2026-07-02T10:00:02.000000Z" : null,
+    updated_at: "2026-07-02T10:00:02.000000Z",
+    attempt_count: status === "pending" ? 0 : 1,
+    error_code: null,
+    error_message: null,
+    result_artifact_id: status === "succeeded" ? "text-id" : null,
+    result_artifact_type: status === "succeeded" ? "text_result" : null,
+    metadata: {},
+  };
+}
 
 describe("runPii", () => {
   afterEach(() => {
@@ -55,6 +100,61 @@ describe("runPii", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pii_profile: "review-heavy" }),
     });
+  });
+});
+
+describe("runOcr", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the text artifact directly in sync fallback mode", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(textArtifact), { status: 201 }));
+
+    const result = await runOcr("doc-1");
+
+    expect(result).toEqual(textArtifact);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith("/api/documents/doc-1/ocr", { method: "POST" });
+  });
+
+  it("polls a worker job after a 202 response and then fetches the text artifact", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(jobStatus("pending")), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(jobStatus("succeeded")), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(textArtifact), { status: 200 }));
+
+    const result = await runOcr("doc-1");
+
+    expect(result).toEqual(textArtifact);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/documents/doc-1/ocr", {
+      method: "POST",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, `/api/jobs/${JOB_ID}`, { method: "GET" });
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/documents/doc-1/ocr", {
+      method: "GET",
+    });
+  });
+
+  it("turns failed worker job metadata into a workstation error", async () => {
+    const failedJob = {
+      ...jobStatus("failed"),
+      error_code: "api_error_503",
+      error_message: "PaddleOCR is not available.",
+    };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(jobStatus("pending")), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(failedJob), { status: 200 }));
+
+    const error = await runOcr("doc-1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(WorkstationApiError);
+    const apiError = error as WorkstationApiError;
+    expect(apiError.status).toBe(503);
+    expect(apiError.message).toBe("PaddleOCR is not available.");
   });
 });
 

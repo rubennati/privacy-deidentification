@@ -30,7 +30,8 @@ A Docker-first application foundation for privacy-focused document preparation a
 
 Users can upload documents through a web interface. The backend validates each upload, stores
 only the original bytes under `./volumes/uploads`, and keeps metadata and processing artifacts
-separately under `./volumes/document-data`.
+separately under `./volumes/document-store`. All host storage lives under a single `DATA_ROOT`
+(default `./volumes`).
 
 > **Step 5:** This version provides upload/document management, structural Audit v1, the
 > synchronous OCR/Text and detection-only PII workstations, plus a manual document review UI.
@@ -52,7 +53,7 @@ central engine should do on a **0–19 maturity scale**, the artifacts and metri
 settings, the tool strategy, the target architecture (including the database and optional-local-AI
 questions), and the roadmap. See [ADR-0011](docs/adr/0011-engine-capability-model.md) and
 [ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md). Current standing (summary): OCR/Text
-**L10 plus the required L10.5 canonical-reading-text step**, PII **L9** (L10 dev-only feedback capture partial), Review **L2** (dev-only through L5),
+**L14**, PII **L11** (L10 partial), Review **L2 production / L6 done / L7-L9 partial**,
 Benchmark **L8**, Redaction **L0**.
 
 ## Architecture
@@ -60,17 +61,26 @@ Benchmark **L8**, Redaction **L0**.
 ```text
 Browser ──http://localhost:8080──▶ frontend (nginx)
                                      ├─ /       → React/Vite SPA
-                                     └─ /api/*  → reverse proxy ─▶ backend (FastAPI :8000)
-                                                                    ├─ originals
-                                                                    │  ./volumes/uploads
-                                                                    └─ metadata + artifacts
-                                                                       ./volumes/document-data
+                                     └─ /api/*  → reverse proxy ─▶ api (FastAPI :8000)
+                                                                    │ enqueue/read jobs
+                                                                    ▼
+                                                               jobs.sqlite3
+                                                                    ▲
+                                                                    │ claim OCR jobs
+                                                               ocr-worker
+
+Shared local storage (under DATA_ROOT, default ./volumes):
+  ./volumes/uploads         byte-identical originals
+  ./volumes/document-store  metadata, artifacts, review/feedback sidecars
+  ./volumes/job-state       jobs.sqlite3 (durable job metadata)
+  ./volumes/ocr-models      local PaddleOCR models, mounted read-only
 ```
 
-* **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. The frontend is the only public entry point and proxies API calls to the backend.
-* **backend** — Python 3.12 + FastAPI. Validates uploads, stores originals, and manages document metadata and immutable result artifacts in separate storage roots.
-* **networking** — the backend is not published to the host. It is reachable only inside the Docker Compose network through the frontend proxy.
-* **runtime data** — `/data/uploads` is bind-mounted from `./volumes/uploads` for originals only; `/data/document-data` is bind-mounted from `./volumes/document-data` for metadata and artifacts. Neither host directory is committed (see `.gitignore`).
+* **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. The frontend is the only public entry point and proxies API calls to the API.
+* **api** — Python 3.12 + FastAPI. Validates uploads, stores originals, enqueues OCR jobs, exposes safe job status, runs PII synchronously, and manages immutable result artifacts.
+* **ocr-worker** — the isolated OCR process. It claims pending OCR jobs from SQLite and writes the same immutable `text_result` artifacts the API used to create in-process.
+* **networking** — the API and OCR worker are not published to the host. They are reachable only inside the Docker Compose network.
+* **runtime data** — a single host `DATA_ROOT` (default `./volumes`) is mapped onto stable internal container paths: `${DATA_ROOT}/uploads` → `/data/uploads` (originals only), `${DATA_ROOT}/document-store` → `/data/document-store` (metadata, artifacts, review/feedback sidecars), and `${DATA_ROOT}/job-state` → `/data/job-state` (the SQLite job DB `jobs.sqlite3`). The API and OCR worker share these exact mounts, so job state and artifacts never split. Nothing under `DATA_ROOT` is committed (see `.gitignore`).
 
 See [`docs/adr/0001-stack-and-architecture.md`](docs/adr/0001-stack-and-architecture.md) for the stack decision and rationale.
 
@@ -84,7 +94,8 @@ No local Python or Node.js installation is required for normal development comma
 
 ```bash
 cp .env.example .env        # optional; defaults are built in
-make up                     # slim stack — no OCR/PII runtime
+make ocr-models             # once, for image/scanned-page OCR
+make up                     # frontend + api + ocr-worker
 ```
 
 Open:
@@ -99,27 +110,34 @@ Stop the stack:
 make down
 ```
 
-### Runtime profiles
+### Default runtime
 
-The optional OCR and PII runtimes are heavy, so the default image is slim. The profile is chosen
-by the make target (not by `.env`), so `make up` is always slim:
+`make up` starts the normal functional stack:
 
-| Target | OCR runtime | PII runtime | Notes |
-| --- | --- | --- | --- |
-| `make up` | – | – | default, slim/CI |
-| `make up-pii` | – | ✓ | Presidio/spaCy |
-| `make up-ocr` | ✓ | – | needs `make ocr-models` first |
-| `make up-full` | ✓ | ✓ | needs `make ocr-models` first |
+| Service | Role | Host exposure |
+| --- | --- | --- |
+| `frontend` | nginx + React SPA; proxies `/api/*` | `WEB_PORT` (`8080` by default) |
+| `api` | FastAPI scheduler/status/artifact reader; runs PII synchronously | private Compose network |
+| `ocr-worker` | isolated OCR execution, one job at a time | private Compose network |
 
-`make build`, `build-pii`, `build-ocr`, `build-full` build the matching images without starting
-them. Text PDFs and DOCX (including tables) are extracted **without** OCR; only image documents
-and scanned PDF pages need the OCR runtime plus provisioned models.
+OCR worker mode is the default (`OCR_EXECUTION_MODE=worker`). `POST /api/documents/{id}/ocr`
+enqueues a SQLite-backed job and returns `202` with safe job metadata; the frontend polls
+`GET /api/jobs/{job_id}` and reads the finished artifact via `GET /api/documents/{id}/ocr`. Because
+OCR runs in `ocr-worker` with its own memory ceiling, an OCR OOM/crash does not take down the API.
+PII remains synchronous in the API.
 
-`INSTALL_OCR=true` pulls in PaddleOCR/PaddlePaddle/MKL and makes backend images significantly
-larger on disk. For PDF-text-layer development (`layout_text_result`, `pii_input_text`), the slim
-`make up`/`make up-pii` profiles are usually enough; real scanned-document OCR needs
-`INSTALL_OCR=true` (`make up-ocr`/`make up-full`) plus provisioned models. See
-[Docker disk cleanup](#docker-disk-cleanup) if repeated OCR/full builds accumulate old images.
+The sync fallback remains available for development and targeted tests:
+
+```bash
+OCR_EXECUTION_MODE=sync make up
+```
+
+In sync mode, `POST /api/documents/{id}/ocr` returns the text artifact directly with `201`.
+
+The old slim/pii/ocr/full Make targets and `INSTALL_OCR`/`INSTALL_PII` build toggles were removed.
+The default backend image now includes the required OCR and PII dependencies; API and OCR worker use
+that same image for Phase 3.6. Splitting a slimmer API image from the worker image is documented as
+a future optimization, not current complexity.
 
 ## API
 
@@ -134,7 +152,7 @@ larger on disk. For PDF-text-layer development (`layout_text_result`, `pii_input
 | DELETE | `/api/documents/{id}`  | Delete a document's file and metadata                      |
 | POST   | `/api/documents/{id}/audit` | Create an immutable Audit v1 result (per-page text-quality) |
 | GET    | `/api/documents/{id}/audit`  | Get the newest Audit v1 result                       |
-| POST   | `/api/documents/{id}/ocr`   | Create an immutable text result (per-page text-layer/OCR) |
+| POST   | `/api/documents/{id}/ocr`   | Enqueue or create an immutable text result (mode-dependent) |
 | GET    | `/api/documents/{id}/ocr`    | Get the newest text result                            |
 | POST   | `/api/documents/{id}/pii`   | Detect and label PII in the newest text result         |
 | GET    | `/api/documents/{id}/pii`    | Get the newest PII result                              |
@@ -174,29 +192,37 @@ Stack traces are not exposed to clients.
 
 ### Storage layout
 
-New documents use three deliberately separate roots:
+All host storage lives under a single `DATA_ROOT` (default `./volumes`); deployments set only
+`DATA_ROOT`, and Compose maps its subdirectories onto stable internal container paths. New
+documents use deliberately separate roots:
 
 ```text
-volumes/
+${DATA_ROOT}/            # default ./volumes
 ├── uploads/
 │   └── <document_id>.<validated_extension>
-├── document-data/
+├── document-store/
 │   └── <document_id>/
 │       ├── document.json
 │       ├── artifacts/
 │       │   └── <artifact_id>.json
-│       └── feedback/
-│           └── pii_feedback.jsonl
+│       ├── feedback/
+│       │   └── pii_feedback.jsonl
+│       └── review/
+│           └── pii_review_decisions.jsonl
+├── job-state/
+│   └── jobs.sqlite3
 └── pii-feedback-archive/
     └── pii_feedback.jsonl
 ```
 
-`UPLOAD_STORAGE_DIR` contains byte-identical originals only. Storage filenames are generated
-from a server-side UUID; the user-visible Unicode filename is retained only in `document.json`
-and never used as a path. `DOCUMENT_DATA_DIR` contains one validated UUID-named directory per
-document. Audit, OCR/Text, and PII results are all immutable JSON files in that document's
-`artifacts/` directory. Deleting a document removes its UUID-named original and exactly its own
-document-data directory — including `feedback/pii_feedback.jsonl`.
+The internal paths (`UPLOAD_STORAGE_DIR` → `/data/uploads`, `DOCUMENT_DATA_DIR` →
+`/data/document-store`, `DATA_JOB_STATE_DIR` → `/data/job-state`) are advanced overrides only and
+are not part of `.env.example`. The upload root contains byte-identical originals only: storage
+filenames are generated from a server-side UUID; the user-visible Unicode filename is retained only
+in `document.json` and never used as a path. The document-store root contains one validated
+UUID-named directory per document; Audit, OCR/Text, and PII results are all immutable JSON files in
+that document's `artifacts/` directory. Deleting a document removes its UUID-named original and
+exactly its own document-store directory — including `feedback/pii_feedback.jsonl`.
 
 `PII_FEEDBACK_ARCHIVE_DIR` is a third, separate root: one shared, cross-document JSONL log that
 every recorded feedback entry is *also* appended to, unchanged (`document_id` retained). Unlike
@@ -209,13 +235,25 @@ or a binding review result. Their structured fingerprint excludes raw document/e
 optional comments can still contain sensitive input; treat both as protected data and never commit
 them.
 
+ADR-0023 also keeps durable job metadata in SQLite, in its own dedicated `job-state` root so the DB
+never sits next to per-document artifact folders. By default `JOB_STORE_DB_PATH` is empty and the
+API resolves it to `${DATA_JOB_STATE_DIR}/jobs.sqlite3`; in Docker/Compose that is
+`/data/job-state/jobs.sqlite3`, bind-mounted from `${DATA_ROOT}/job-state/jobs.sqlite3`. The API and
+`ocr-worker` use the same environment and volume mounts, so API-created pending jobs, worker status
+updates, worker-produced artifact references, and status reads all meet at the same file. If
+`JOB_STORE_DB_PATH` is overridden, it must still point at a path mounted into both services. For
+backup/restore, treat everything under `DATA_ROOT` as one unit and stop the stack before copying
+SQLite files, including any `jobs.sqlite3-wal` and `jobs.sqlite3-shm` sidecars.
+
 #### Existing local development data
 
-There is no automatic migration and startup never moves or deletes existing files. Data created
-by older versions (`<id>.meta.json` and `artifacts/<id>/` below `volumes/uploads`) is intentionally
-not discovered by the new layout. For local development, re-upload those documents if they are
-still needed, or copy them manually only after backing up `volumes/` and reshaping them to the
-layout above. Old files remain untouched until a developer removes them explicitly.
+There is no automatic migration and startup never moves or deletes existing files. If you have data
+from a previous layout under `./volumes/document-data` (including a `jobs.sqlite3` there), move
+`./volumes/document-data` to `./volumes/document-store` and relocate `jobs.sqlite3` (with any
+`-wal`/`-shm` sidecars) into `./volumes/job-state/` while the stack is stopped; back up `volumes/`
+first. Data created by much older versions (`<id>.meta.json` and `artifacts/<id>/` below
+`volumes/uploads`) is intentionally not discovered by the current layout — re-upload those documents
+if they are still needed. Old files remain untouched until a developer removes them explicitly.
 
 ### Text-layer quality gate and page-level OCR fallback
 
@@ -265,16 +303,17 @@ Consequences:
 - Audit artifacts written before this gate carry no `needs_ocr`; routing then falls back to the
   original rule (OCR only pages without any text layer).
 
-### Optional OCR runtime
+### OCR runtime and models
 
 PDF text layers and DOCX text are extracted without PaddleOCR. DOCX extraction is table-aware: a
 shared helper walks the document body in order and captures paragraphs, table cells (rows
 newline-separated, cells tab-separated), and defined section headers/footers, so table content is
 no longer dropped. Audit and OCR/Text use the same helper and therefore report the same DOCX
-character count. Image documents and PDF pages without a text layer require the optional PaddleOCR/PaddlePaddle
-runtime **plus** locally provisioned models. The regular image deliberately omits those heavy
-packages and returns `503` only when a request actually needs PaddleOCR. Imports and model
-initialization are lazy, so startup and all quality gates remain model-free. Poppler is installed
+character count. Image documents and PDF pages without a text layer require PaddleOCR/PaddlePaddle
+**plus** locally provisioned models. The default runtime image includes those packages, but
+imports and model initialization are lazy, so startup and all quality gates remain model-free.
+Requests return `503` only when a document actually needs OCR and models/runtime are unavailable.
+Poppler is installed
 for the encapsulated `pdf2image` PDF-page renderer; rendered pages use the container's `/tmp`
 tmpfs and are never written to the persistent upload volume.
 
@@ -302,10 +341,10 @@ default. Override the models via `OCR_DET_MODEL` / `OCR_REC_MODEL` for the scrip
 `OCR_DETECTION_MODEL_NAME` / `OCR_RECOGNITION_MODEL_NAME` for the backend. The models are never
 committed (`.gitignore: /volumes/*`) and never downloaded at request time.
 
-#### 2. Build and run the OCR runtime
+#### 2. Build and run the default stack
 
 ```bash
-make up-ocr        # or: make up-full  (OCR + PII)
+make up
 ```
 
 Compose mounts the models read-only at `/models/ocr` and sets `OCR_MODEL_DIR=/models/ocr`. The
@@ -330,34 +369,24 @@ packages are missing.
   default for CPU, but its oneDNN path crashes on the PP-OCRv5 models
   (`ConvertPirAttribute2RuntimeAttribute not support`). Disabling it trades a little speed for a
   stable CPU path.
-- **Speed.** OCR is synchronous by design (no queue). CPU OCR of a multi-page scan can take a few
-  minutes; the nginx `/api/` proxy timeout is raised to 600 s so browser requests do not 504.
-- **Memory (502 during OCR).** PaddleOCR runs in-process in the backend and needs headroom to load
-  models and run inference. `make up-ocr`/`make up-full` set `BACKEND_MEMORY_LIMIT=2g` for this.
-  Running the OCR-enabled image under the slim 512M default (e.g. plain `docker compose up` or
-  `make bf` with `INSTALL_OCR=true` in `.env`) OOM-kills the backend mid-OCR, which the browser
-  sees as an nginx **502 Bad Gateway**. Fix: use `make up-ocr`/`make up-full`, or set
-  `BACKEND_MEMORY_LIMIT=2g`. The user-view analysis then shows an OCR-specific error instead of a
-  generic one.
+- **Speed.** CPU OCR of a multi-page scan can take a few minutes. Default worker mode returns `202`
+  quickly and the frontend polls job status while the worker runs.
+- **Memory isolation.** PaddleOCR runs in `ocr-worker` by default with
+  `OCR_WORKER_MEMORY_LIMIT=2g`, so an OCR OOM/crash does not take down the API. If you explicitly
+  use `OCR_EXECUTION_MODE=sync`, set `API_MEMORY_LIMIT=2g` for scanned/image OCR.
 - **Apple Silicon / ARM.** PaddlePaddle's published wheels determine which CPU architectures can
   build the OCR image. It builds and runs natively on `linux/amd64`; on ARM hosts (Apple Silicon)
   an `amd64` build/emulation may be required and has not been verified here.
 - **buildx warning.** `docker compose build` may print a legacy-builder warning; it is benign.
   Set `DOCKER_BUILDKIT=1` to silence it.
 
-### Optional PII runtime
+### PII runtime
 
-PII Workstation v1 uses Microsoft Presidio Analyzer and spaCy behind a lazy adapter. The regular
-image omits both packages. Build a PII-capable image explicitly:
-
-```bash
-INSTALL_PII=true docker compose build backend
-```
-
-The optional `pii` dependency extra pins Presidio, spaCy, and the German
-`de_core_news_sm` model wheel, so the model is installed reproducibly during image build. Requests
-never download a model. Missing packages, an unavailable model, or a language/model mismatch
-returns `503`; normal tests replace the adapter and load no model.
+PII Workstation v1 uses Microsoft Presidio Analyzer and spaCy behind a lazy adapter. The default
+runtime image includes Presidio, spaCy, and the pinned German `de_core_news_sm` model wheel, so the
+model is installed reproducibly during image build. Requests never download a model. Missing
+packages, an unavailable model, or a language/model mismatch returns `503`; normal tests replace the
+adapter and load no model.
 
 PII coverage is selected with `PII_PROFILE`:
 
@@ -405,8 +434,7 @@ fall back to raw detection output. See
 The runtime can be smoke-tested separately from the standard quality gates:
 
 ```bash
-INSTALL_PII=true docker compose build backend
-docker compose run --rm --no-deps backend python -c "from app.services.pii_adapters import PresidioAnalyzerAdapter; a=PresidioAnalyzerAdapter('de', 'de_core_news_sm'); r=a.analyze('Kontakt: max@example.at', 'de', ('EMAIL_ADDRESS',), 0.5); print(r); assert any(x.entity_type == 'EMAIL_ADDRESS' for x in r)"
+make pii-smoke
 ```
 
 PII v1 only detects and labels spans in the persisted text artifact. It does not anonymize,
@@ -442,7 +470,7 @@ make benchmark-private-json     # JSON only
 ```
 
 It only **reads** existing `document.json`/`audit_result`/`text_result`/`pii_result` artifacts
-under `volumes/document-data/` — it never triggers audit/OCR/PII processing, calls the API, or
+under `volumes/document-store/` — it never triggers audit/OCR/PII processing, calls the API, or
 modifies/deletes a document. Missing artifacts are reported as `missing`, not generated. The
 private benchmark inputs (`volumes/benchmark/ocr_pii_benchmark_*.json`) and every generated
 report live under `volumes/`, which is entirely git-ignored (`/volumes/*`) — real documents,
@@ -455,25 +483,19 @@ for the full matching/metrics design and `make benchmark-test` for its synthetic
 
 Configuration is handled through environment variables.
 
-See [`.env.example`](.env.example) for available settings, including:
+See [`.env.example`](.env.example) for the intentionally small runtime surface:
 
-* upload size limit
-* allowed file extensions
-* original-upload directory (`UPLOAD_STORAGE_DIR`)
-* document metadata/artifact directory (`DOCUMENT_DATA_DIR`)
-* optional local OCR model directory
-* optional PII runtime, language, model, score threshold, and entity allowlist
-* named PII profile, candidate-validation toggle, and dev-only settings/feedback gate
-* log level
+* `COMPOSE_PROJECT_NAME`, `TZ`, and `WEB_PORT`
+* upload size and allowed extensions
+* `DATA_ROOT` — the single host storage root (uploads, document-store, job-state, feedback archive,
+  OCR models are subdirectories); container-internal paths are advanced overrides only
+* `OCR_EXECUTION_MODE` (`worker` by default, `sync` fallback)
+* API and OCR worker memory/polling limits
+* OCR model names
+* PII language/model/profile, score threshold, candidate validation, and dev gate
 
-### Environment profiles
-
-For normal local testing, copy [`.env.example`](.env.example) to `.env` — it is heavily commented
-and is the source of truth for every setting below.
-
-**Recommended local mode:** `PII_PROFILE=review-heavy` with
-`PII_CANDIDATE_VALIDATION_ENABLED=true`, run via `make up-full` (needs `make ocr-models` once).
-This is what `.env.example` sets by default.
+For normal local review, use the defaults: `PII_PROFILE=review-heavy`,
+`PII_CANDIDATE_VALIDATION_ENABLED=true`, and `OCR_EXECUTION_MODE=worker`.
 
 **PII profile quick guide:**
 
@@ -486,13 +508,12 @@ If too little is detected, use `review-heavy` and rerun PII.
 If too much is detected, use `insurance-at-de`.
 
 Leave `PII_ENTITY_TYPES` commented out unless you intentionally want a custom allowlist instead of
-a named profile — see `.env.example` section 7 for exactly how it interacts with `PII_PROFILE`.
+a named profile.
 
-**Common debugging steps:** after any `.env` change, recreate the containers (the relevant
-`make up*` target again) and re-run the affected station for the document you're checking —
-existing artifacts are immutable and never reflect a config change retroactively. If PII detection
-looks empty, see the "If PII detects nothing" checklist in `.env.example` section 8 before
-assuming something is broken.
+**Common debugging steps:** after any `.env` change, recreate the containers (`make up`) and re-run
+the affected station for the document you're checking — existing artifacts are immutable and never
+reflect a config change retroactively. If PII detection looks empty, make sure `PII_PROFILE` is a
+named profile, `PII_ENTITY_TYPES` is commented out, and candidate validation is enabled.
 
 ## Development and quality
 
@@ -501,36 +522,22 @@ Common commands are available through the `Makefile`:
 ```bash
 make lint        # Ruff and ESLint
 make typecheck   # mypy and TypeScript
-make test        # backend and frontend tests
+make test        # runtime surface checks, backend tests, and frontend tests
 make build       # build Docker images
 make up          # start the stack
 make down        # stop the stack
+make logs        # tail Compose logs
+make ps          # show Compose service status
+make shell-api   # open a shell in the API image
+make ocr-smoke   # smoke-test real OCR runtime (needs make ocr-models)
+make pii-smoke   # smoke-test real PII runtime
 make benchmark-private   # private local OCR/PII benchmark report (see above)
 make benchmark-test      # synthetic-data unit tests for the benchmark runner
 ```
 
-### Docker disk cleanup
-
-Repeated local `--build --force-recreate` cycles leave behind dangling (`<none>:<none>`) images
-and build cache that can grow to tens of GB over time. Safe cleanup targets:
-
-```bash
-make docker-df              # show current Docker disk usage
-make docker-prune           # remove dangling images/containers/networks + build cache
-make docker-prune-project   # same, filtered to this project's labeled images (best-effort)
-make dev-rebuild            # down + up --build --force-recreate + docker-prune (safe default)
-```
-
-These never delete volumes, uploads, or document data, and never stop running containers other
-than during `dev-rebuild`'s `docker compose down`. `make docker-prune-project` is best-effort:
-Docker's dangling-image filter does not reliably match unlabeled build-stage layers, so
-`make docker-prune` remains the reliable default.
-
-If you want to reclaim disk space more aggressively and are fine affecting *other* local Docker
-projects too, you can manually run `docker image prune -af`. This is **not** wired into any make
-target — run it explicitly, and never combine it with `--volumes` (that would delete Docker
-volumes, which is unrelated to and unnecessary for cleaning up this project's `./volumes/`
-bind-mounted directories, but destroys any named volumes from other projects on the machine).
+`make docker-df` is available as a read-only disk-usage check. Cleanup/prune commands are not wired
+into the Makefile; keep runtime data under `./volumes/` and remove Docker cache manually only when
+you deliberately want to affect your local Docker installation.
 
 ## Repository structure
 

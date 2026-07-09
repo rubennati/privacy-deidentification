@@ -80,4 +80,4 @@ EOF
 echo "✓ OCR models ready:"
 echo "    text_detection   = $DET_MODEL"
 echo "    text_recognition = $REC_MODEL"
-echo "  Set OCR_MODEL_DIR=/models/ocr and build the OCR runtime (make build-ocr / make up-ocr)."
+echo "  Set OCR_MODEL_DIR=/models/ocr and start the default stack with make up."

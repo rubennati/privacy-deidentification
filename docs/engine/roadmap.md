@@ -215,7 +215,7 @@ count, reading-text projection coverage, current decision) with an expandable pe
 ### Review L8–L9 — binding review — partially delivered
 
 A lineage-bound, file-based decision overlay now exists (`GET/POST …/pii/review[/decisions]`,
-append-only JSONL under `document-data/<id>/review/`, scoped to the exact current `pii_result.id` so
+append-only JSONL under `document-store/<id>/review/`, scoped to the exact current `pii_result.id` so
 a re-run never silently reapplies a stale decision). Every detected entity defaults to
 `pseudonymize` (no separate "pending" state, unlike a plain confirm/reject); a reviewer opts one out
 via `keep` or `false_positive`, at group or occurrence scope with occurrence-level override. This is
@@ -239,11 +239,14 @@ mapping exist. No masking, pseudonymisation, or de-identified export is implemen
 ### Runtime architecture (cross-cutting, not an engine level)
 
 [ADR-0023](../adr/0023-runtime-worker-architecture.md) stages the move from in-process OCR/PII to
-isolated worker containers. **Phase 1 (internal job model abstraction) and Phase 2 (SQLite-backed
-job state + status API) are implemented**: OCR/PII run through an in-process `SyncJobRunner` seam and
-write durable metadata-only job rows, but there is still no queue, worker, background task, or
-execution-mode change. Phase 3 (`ocr-worker` split), then PII/quality/LLM workers remain proposed and
-must stay aligned with — not ahead of — the OCR/PII engine prerequisites above.
+isolated worker containers. **Phases 1–3.6 are implemented**: OCR/PII run through a job seam that
+writes durable metadata-only job rows, and OCR is isolated by default in an `ocr-worker` container
+via `OCR_EXECUTION_MODE=worker` — the API enqueues OCR jobs (`202`) that the worker claims (atomic
+SQLite `UPDATE … RETURNING`, no Redis/broker) and runs out-of-process, so an OCR OOM/crash cannot
+take the API down. The default Compose stack is `frontend`, `api`, `ocr-worker`; sync mode remains a
+dev/test fallback. PII stays synchronous. The PII worker split, concurrency/timeout/retry controls,
+an optional Redis/RQ queue, and quality/LLM workers remain proposed and must stay aligned with — not
+ahead of — the OCR/PII engine prerequisites above.
 
 ## Legacy work-package cross-reference
 

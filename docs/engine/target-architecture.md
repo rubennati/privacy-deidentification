@@ -37,16 +37,18 @@ without its `pii_result` input — see
 - stays **local** — no bytes/text/PII leave the machine,
 - never mutates upstream artifacts; changed inputs mark downstream artifacts **stale**.
 
-Current runtime shape (additive Phase 2 state): a React SPA behind nginx is the only public entry
-point and proxies `/api/*` to a FastAPI backend that is not published to the host. Optional OCR/PII
-runtimes are heavy build profiles (slim / pii / ocr / full) baked into the *same* backend image, so
-heavy work runs in-process and shares the API's memory. The staged move to an isolated worker
-boundary — so an OCR/PII OOM/crash can no longer take the API down — is planned in
-[ADR-0023](../adr/0023-runtime-worker-architecture.md). Its **Phase 1 (internal job model
-abstraction) and Phase 2 (SQLite-backed job state + status API) are implemented**: OCR/PII now run
-*through* an in-process `SyncJobRunner` and every run writes durable, metadata-only job state to
-SQLite. There is still no queue, worker, background task, or execution-mode change — heavy work still
-fate-shares with the API until Phase 3 isolates the worker.
+Current runtime shape (additive Phase 3.6 state): a React SPA behind nginx is the only public entry
+point and proxies `/api/*` to a private FastAPI `api` service. The default Compose stack starts
+`frontend`, `api`, and `ocr-worker`; API and OCR worker share the same runtime image and the same
+file storage/job DB mounts. The staged move to an isolated worker boundary — so an OCR/PII OOM/crash
+can no longer take the API down — is defined in
+[ADR-0023](../adr/0023-runtime-worker-architecture.md). **Phases 1–3.6 are implemented:** OCR/PII
+run through the job seam, every run writes durable metadata-only job state to SQLite, and OCR is
+isolated by default via `OCR_EXECUTION_MODE=worker` — the API enqueues OCR jobs (`202`) that the
+worker claims and runs out-of-process, while the frontend polls status and then reads the finished
+artifact. `OCR_EXECUTION_MODE=sync` remains a development/test fallback (`201` artifact body). PII
+still runs synchronously in the API; the PII worker split, concurrency/timeout/retry controls, and
+any queue broker remain later phases.
 
 ## Design invariants the engine must keep
 
@@ -104,11 +106,12 @@ spike** (Engine-8 in [`roadmap.md`](roadmap.md)), not a pipeline integration.
 ## Database considerations
 
 Partially implemented for runtime job metadata only. ADR-0023 Phase 2 adds a small stdlib-SQLite
-job store (`DOCUMENT_DATA_DIR/jobs.sqlite3` by default, overrideable with `JOB_STORE_DB_PATH`) plus a
-safe status API. It stores only ids, lifecycle timestamps/status, sanitized errors, and produced
+job store (`DATA_JOB_STATE_DIR/jobs.sqlite3` by default — a dedicated job-state root separate from
+per-document artifacts, overrideable with `JOB_STORE_DB_PATH`) plus a safe status API. It stores only ids, lifecycle timestamps/status, sanitized errors, and produced
 artifact references. Artifact payloads, raw OCR/reading/layout text, structured-content contents,
 PII values, and uploaded bytes remain file-based and never enter SQLite. There is still no ORM,
-Alembic, queue, or worker.
+Alembic, or external queue/broker; Phase 3's OCR worker uses the same SQLite file as a local
+DB-backed polling queue.
 
 ### When does a database become worthwhile?
 
@@ -128,8 +131,9 @@ DB; the file layout serves it well.
 ### What belongs in a DB over time
 
 - **Index / lookup:** document list, artifact lineage, latest-artifact resolution, routing status.
-- **Runtime jobs:** OCR/PII job status and produced-artifact references — implemented first in
-  ADR-0023 Phase 2, before the worker split, as metadata only.
+- **Runtime jobs:** OCR/PII job status and produced-artifact references — implemented in ADR-0023
+  Phase 2 as metadata only, and reused in Phase 3 as the OCR worker's durable claim/status
+  mechanism (an atomic `UPDATE … RETURNING` claim under WAL, no Redis/broker).
 - **Run history:** benchmark runs and their aggregate metrics over time (trend, regression gate).
 - **Review state:** confirm/reject/add/comment decisions and their lineage (Review L2+).
 - **Rules:** suppression/allowlist rules with scope + version (Review L5, PII L8).

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -51,10 +51,39 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("UPLOAD_STORAGE_DIR", "UPLOAD_DIR"),
     )
     document_data_dir: Path = Field(
-        default=Path("/data/document-data"),
+        default=Path("/data/document-store"),
         alias="DOCUMENT_DATA_DIR",
     )
+    # Dedicated persistent root for durable job state (jobs.sqlite3). It is deliberately separate
+    # from document_data_dir so the SQLite DB never sits next to per-document artifact folders and
+    # so API and OCR worker always meet at the same file. See ADR-0023.
+    job_state_dir: Path = Field(
+        default=Path("/data/job-state"),
+        alias="DATA_JOB_STATE_DIR",
+    )
     job_store_db_path: Path | None = Field(default=None, alias="JOB_STORE_DB_PATH")
+    # OCR execution mode (ADR-0023 Phase 3.6). ``worker`` is the normal runtime: the endpoint
+    # enqueues a pending OCR job (202) that the isolated ``ocr-worker`` process claims and runs, so
+    # an OCR OOM/crash can no longer take the API down. ``sync`` remains available as an explicit
+    # development/test fallback that runs extraction inline and returns the artifact (201).
+    ocr_execution_mode: Literal["sync", "worker"] = Field(
+        default="worker", alias="OCR_EXECUTION_MODE"
+    )
+    # How long the OCR worker sleeps between polls when no pending job is available.
+    ocr_worker_poll_interval_seconds: float = Field(
+        default=2.0, gt=0, le=3600, alias="OCR_WORKER_POLL_INTERVAL_SECONDS"
+    )
+    # Bounded OCR concurrency. Phase 3 runs one OCR job at a time; higher concurrency is deferred to
+    # ADR-0023 Phase 4 (see the validator below), so this is validated to be exactly 1 for now.
+    ocr_worker_concurrency: int = Field(
+        default=1, ge=1, alias="OCR_WORKER_CONCURRENCY"
+    )
+    # A pending OCR job is claimed only while its attempt count is below this bound, so a job that
+    # keeps failing can never be re-run without limit. Phase 3 does not auto-retry (a failed job is
+    # terminal); this guards any future requeue and defaults to a single attempt.
+    ocr_worker_max_attempts: int = Field(
+        default=1, ge=1, le=10, alias="OCR_WORKER_MAX_ATTEMPTS"
+    )
     # Root for the dev-only PII review-feedback archive (see feedback_service.py). Deliberately a
     # third, separate root from document_data_dir: feedback here is retained across a document's
     # deletion by design, so it can later feed PII improvement/benchmark work, whereas
@@ -158,6 +187,15 @@ class Settings(BaseSettings):
         """Compose may pass an empty optional DB path; keep that on the derived default."""
         return None if value == "" else value
 
+    @field_validator("ocr_execution_mode", mode="before")
+    @classmethod
+    def _normalize_ocr_execution_mode(cls, value: object) -> object:
+        """Accept ``SYNC``/``Worker`` etc.; an empty Compose value keeps default worker mode."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return "worker" if normalized == "" else normalized
+        return value
+
     @field_validator(
         "ocr_detection_model_name", "ocr_recognition_model_name", mode="before"
     )
@@ -174,12 +212,24 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _ocr_worker_concurrency_is_bounded(self) -> Settings:
+        """Phase 3 supports exactly one OCR job at a time. Reject higher concurrency loudly rather
+        than silently ignoring it; multi-worker concurrency is deferred to ADR-0023 Phase 4."""
+        if self.ocr_worker_concurrency != 1:
+            raise ValueError(
+                "OCR_WORKER_CONCURRENCY must be 1; higher OCR concurrency is deferred to "
+                "ADR-0023 Phase 4"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _storage_directories_are_separate(self) -> Settings:
         """Reject equal or nested roots so originals, document data, and the feedback archive
         (which must outlive a document's deletion) can never mix."""
         roots = {
             "UPLOAD_STORAGE_DIR": self.upload_storage_dir.resolve(),
             "DOCUMENT_DATA_DIR": self.document_data_dir.resolve(),
+            "DATA_JOB_STATE_DIR": self.job_state_dir.resolve(),
             "PII_FEEDBACK_ARCHIVE_DIR": self.pii_feedback_archive_dir.resolve(),
         }
         names = list(roots)
@@ -203,8 +253,10 @@ class Settings(BaseSettings):
 
     @property
     def resolved_job_store_db_path(self) -> Path:
-        """SQLite job metadata DB path. Defaults beside document-data, not inside artifacts."""
-        return self.job_store_db_path or (self.document_data_dir / "jobs.sqlite3")
+        """SQLite job metadata DB path. Defaults inside the dedicated job-state root, never beside
+        per-document artifacts. ``JOB_STORE_DB_PATH`` is an advanced override that must still point
+        at a location mounted into both the API and the OCR worker."""
+        return self.job_store_db_path or (self.job_state_dir / "jobs.sqlite3")
 
 
 @lru_cache(maxsize=1)
