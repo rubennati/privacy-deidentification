@@ -77,3 +77,14 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   contract rather than OCR internals. PII is not migrated yet; existing OCR endpoints remain
   backward-compatible. Cross-cutting stabilization milestone, not a numbered level; the 0–19 scale
   (ADR-0016) is unchanged.
+- [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md) — **PII intake via the
+  Document Text Package + PII L12 overlap resolution.** PII consumes `DocumentTextPackageV1`
+  through the `pii_input` intake adapter (`PiiInputDocumentV1`) instead of `TextContent` internals:
+  raw stays the primary/only active detection input, canonical is contextual, structured content is
+  a hint layer, quality/noise evidence is trust context, a structurally invalid package is rejected
+  (`422`) while empty raw text stays the benign empty-result path, and a degraded package with raw
+  text still processes. Deterministic `pii_overlap` resolution merges exact/same-type/nested
+  duplicates (recording superseded ids) and flags cross-type overlaps for review without dropping
+  them. Additive optional `pii_result` fields (`PiiEntity.provenance`, `PiiContent.input_contract`,
+  `PiiContent.overlap_resolution`) carry the outcome; no raw text enters that metadata. Existing PII
+  API/frontend behavior and the active-input separation gate are unchanged.

@@ -14,9 +14,9 @@ from app.schemas import (
     PiiContent,
     PiiEngineSettings,
     PiiEntity,
+    PiiInputContractSummary,
     PiiRunRequest,
     PiiValidationSummary,
-    TextArtifact,
 )
 from app.services.artifact_service import (
     get_latest_pii_artifact,
@@ -26,6 +26,8 @@ from app.services.artifact_service import (
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.pii_adapters import DetectedEntity, PiiAnalyzer
 from app.services.pii_candidate_validation import ValidatedEntity, validate_candidates
+from app.services.pii_input import PiiInputAdapter, PiiInputDocumentV1
+from app.services.pii_overlap import resolve_pii_overlaps
 from app.services.pii_profiles import PiiProfileName, get_pii_profile
 from app.services.reading_text_projection import project_pii_entities_to_reading_text
 
@@ -84,11 +86,16 @@ def create_pii_artifact(
     if text_artifact is None:
         raise PiiConflictError
 
-    content = _analyze_text(run_settings, text_artifact, analyzer)
+    # Consume the OCR Output Contract v1 Document Text Package via the intake adapter (ADR-0027/28)
+    # rather than reaching into TextContent internals. A structurally invalid package raises a
+    # controlled 422 here; empty raw text stays the existing benign empty-result path below.
+    pii_input = PiiInputAdapter.from_text_artifact(text_artifact)
+
+    content = _analyze_text(run_settings, pii_input, analyzer)
     artifact = PiiArtifact(
         id=uuid4().hex,
         document_id=document_id,
-        input_text_artifact_id=text_artifact.id,
+        input_text_artifact_id=pii_input.package_id,
         created_at=_now_utc_iso(),
         content=content,
     )
@@ -108,21 +115,21 @@ def get_latest_pii(settings: Settings, document_id: str) -> PiiArtifact:
 
 def _analyze_text(
     run_settings: ResolvedPiiRunSettings,
-    text_artifact: TextArtifact,
+    pii_input: PiiInputDocumentV1,
     analyzer: PiiAnalyzer,
 ) -> PiiContent:
-    text = text_artifact.content.text
+    text = pii_input.primary_source.text or ""
     configured_types = run_settings.pii_entity_types
     flags: list[str] = []
     detected: list[tuple[DetectedEntity, int, int | None]] = []
 
-    if not text.strip():
+    if not pii_input.has_usable_raw_text:
         flags.append("empty_text")
     else:
         try:
-            if text_artifact.content.pages:
+            if pii_input.pages:
                 global_start = 0
-                for page in text_artifact.content.pages:
+                for page in pii_input.pages:
                     page_entities = analyzer.analyze(
                         page.text,
                         run_settings.pii_language,
@@ -148,7 +155,7 @@ def _analyze_text(
         except Exception as exc:
             raise PiiProcessingError from exc
 
-    page_texts = _page_text_map(text_artifact)
+    page_texts = _page_text_map(pii_input)
     validated_detected, validation_summary = validate_candidates(
         detected,
         page_texts,
@@ -158,10 +165,11 @@ def _analyze_text(
 
     try:
         entities = _build_entities(text, validated_detected)
+        entities, overlap_summary = resolve_pii_overlaps(entities)
         entities = project_pii_entities_to_reading_text(
             entities,
-            text_artifact.content.reading_text_map,
-            reading_text=text_artifact.content.reading_text,
+            pii_input.reading_text_map,
+            reading_text=pii_input.reading_text,
         )
     except ApiError:
         raise
@@ -171,16 +179,14 @@ def _analyze_text(
     for entity in entities:
         counts[entity.entity_type] = counts.get(entity.entity_type, 0) + 1
     return PiiContent(
-        document_id=text_artifact.document_id,
-        input_text_artifact_id=text_artifact.id,
+        document_id=pii_input.document_id,
+        input_text_artifact_id=pii_input.package_id,
         profile=run_settings.pii_profile,
         language=run_settings.pii_language,
         score_threshold=run_settings.pii_score_threshold,
         text_char_count=len(text),
         reading_text_char_count=(
-            len(text_artifact.content.reading_text)
-            if text_artifact.content.reading_text is not None
-            else None
+            len(pii_input.reading_text) if pii_input.reading_text is not None else None
         ),
         configured_entity_types=list(configured_types),
         entities=entities,
@@ -201,6 +207,23 @@ def _analyze_text(
             score_threshold=run_settings.pii_score_threshold,
             source=run_settings.source,
         ),
+        input_contract=_build_input_contract_summary(pii_input),
+        overlap_resolution=overlap_summary,
+    )
+
+
+def _build_input_contract_summary(pii_input: PiiInputDocumentV1) -> PiiInputContractSummary:
+    """Record which OCR Output Contract v1 package PII consumed (ADR-0027/0028). Metadata only."""
+    return PiiInputContractSummary(
+        contract_version=pii_input.contract_version,
+        contract_status=pii_input.contract_status,
+        package_id=pii_input.package_id,
+        canonical_available=pii_input.is_available("canonical_reading_text"),
+        layout_available=pii_input.is_available("layout_text"),
+        structured_available=pii_input.is_available("structured_content"),
+        quality_evidence_available=pii_input.is_available("quality_evidence"),
+        warnings=list(pii_input.warnings),
+        missing_optional_layers=list(pii_input.missing_capabilities),
     )
 
 
@@ -235,12 +258,12 @@ def _profile_entity_types(profile: PiiProfileName) -> tuple[str, ...]:
     return get_pii_profile(profile).entity_types
 
 
-def _page_text_map(text_artifact: TextArtifact) -> dict[int | None, str]:
+def _page_text_map(pii_input: PiiInputDocumentV1) -> dict[int | None, str]:
     """Map each page number (``None`` for a non-paged document) to its exact analyzed text, so
     candidate validation can slice a local context window without re-deriving global offsets."""
-    if text_artifact.content.pages:
-        return {page.page_number: page.text for page in text_artifact.content.pages}
-    return {None: text_artifact.content.text}
+    if pii_input.pages:
+        return {page.page_number: page.text for page in pii_input.pages}
+    return {None: pii_input.primary_source.text or ""}
 
 
 def _build_entities(

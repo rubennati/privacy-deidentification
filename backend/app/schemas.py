@@ -1230,6 +1230,97 @@ class DocumentTextPackageV1(BaseModel):
         return self
 
 
+# --- PII intake contract + entity provenance (ADR-0028) ------------------------------------------
+# PII consumes the OCR Output Contract v1 Document Text Package (ADR-0027) through the ``pii_input``
+# adapter and resolves overlapping candidates deterministically (``pii_overlap``). The additive,
+# optional models below record, on the immutable ``pii_result``, which contract PII consumed and how
+# overlaps were resolved — all structural (reason codes, counts, recognizer names, other entities'
+# ids), never a copy of raw document or entity text. Legacy artifacts omit them and stay valid.
+PiiInputSourceRole = Literal["primary", "contextual", "structured_hint", "quality_hint"]
+PiiEntityDetectionSource = Literal[
+    "raw_text",
+    "canonical_reading_text",
+    "structured_hint",
+    "projected",
+    "recognizer",
+]
+# Stable, machine-readable overlap-resolution reason codes. Deterministic engine-level precedence
+# for duplicate/nested/overlapping candidates (PII L12). A code is never removed or repurposed.
+PiiOverlapReason = Literal[
+    "exact_duplicate",
+    "same_type_overlap",
+    "nested_entity",
+    "conflicting_entity_type",
+    "projected_same_source",
+    "recognizer_duplicate",
+    "stronger_confidence_selected",
+    "longer_span_selected",
+    "ambiguous_overlap_review_required",
+    "dropped_lower_confidence_duplicate",
+    "merged_provenance",
+]
+
+
+class PiiEntityProvenance(BaseModel):
+    """Where one final PII entity came from and how deterministic overlap resolution treated it.
+
+    Structural only: a detection source/role, contributing recognizer names, a merged-candidate
+    count, overlap reason codes, and the ids of any competing candidates this entity superseded. It
+    never stores raw document or entity text — the entity's own value stays in ``PiiEntity.text``
+    and is not duplicated here.
+    """
+
+    detection_source: PiiEntityDetectionSource = "raw_text"
+    source_role: PiiInputSourceRole = "primary"
+    recognizers: list[str] = Field(default_factory=list)
+    candidate_count: int = Field(default=1, ge=1)
+    merge_reason: PiiOverlapReason | None = None
+    overlap_decision: PiiOverlapReason | None = None
+    review_required: bool = False
+    superseded_candidate_ids: list[str] = Field(default_factory=list)
+
+
+class PiiInputContractSummary(BaseModel):
+    """Records that PII consumed a ``DocumentTextPackageV1`` and which layers/status it saw.
+
+    Lets a ``pii_result`` say, from the artifact alone, that PII depended on the OCR Output Contract
+    v1 boundary rather than OCR internals: the contract version/status, the primary detection source
+    (always technical raw text today), which optional layers were present, and the contract's own
+    warning/missing-capability codes. Metadata only, no raw text.
+    """
+
+    contract_version: str
+    contract_status: DocumentTextPackageStatus
+    package_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    primary_source: Literal["technical_raw_text"] = "technical_raw_text"
+    canonical_available: bool
+    layout_available: bool
+    structured_available: bool
+    quality_evidence_available: bool
+    warnings: list[str] = Field(default_factory=list)
+    missing_optional_layers: list[str] = Field(default_factory=list)
+
+
+class PiiOverlapResolutionSummary(BaseModel):
+    """Deterministic overlap-resolution outcome. Reason codes and counts only, never entity text."""
+
+    applied: bool
+    input_candidate_count: int = Field(ge=0)
+    output_entity_count: int = Field(ge=0)
+    merged_count: int = Field(ge=0)
+    dropped_count: int = Field(ge=0)
+    review_required_count: int = Field(ge=0)
+    by_reason: dict[str, int] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_counts(self) -> PiiOverlapResolutionSummary:
+        if self.input_candidate_count != self.output_entity_count + self.merged_count + (
+            self.dropped_count
+        ):
+            raise ValueError("input candidates must equal output plus merged plus dropped")
+        return self
+
+
 class PiiEntity(BaseModel):
     """One labeled PII span referencing the source text exactly."""
 
@@ -1271,6 +1362,13 @@ class PiiEntity(BaseModel):
     reading_end_offset: int | None = Field(default=None, ge=1)
     projection_status: Literal["exact", "partial", "unmapped"] | None = None
     projection_method: Literal["offset_map", "text_match"] | None = None
+    provenance: PiiEntityProvenance | None = Field(
+        default=None,
+        description=(
+            "Detection source/role and deterministic overlap-resolution outcome for this entity "
+            "(ADR-0028). None on artifacts written before PII consumed the document text package."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_offsets(self) -> PiiEntity:
@@ -1357,6 +1455,20 @@ class PiiContent(BaseModel):
         description=(
             "Effective, non-sensitive engine settings for this PII run. None on artifacts "
             "written before dev-mode run metadata existed."
+        ),
+    )
+    input_contract: PiiInputContractSummary | None = Field(
+        default=None,
+        description=(
+            "OCR Output Contract v1 package PII consumed for this run (ADR-0027/0028). None on "
+            "artifacts written before PII consumed the document text package."
+        ),
+    )
+    overlap_resolution: PiiOverlapResolutionSummary | None = Field(
+        default=None,
+        description=(
+            "Deterministic overlap-resolution summary (PII L12). None on artifacts written before "
+            "overlap resolution existed."
         ),
     )
 

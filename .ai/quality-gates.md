@@ -86,3 +86,26 @@ job contract:
 - **No raw text across the boundary beyond existing text layers.** A packaging/contract change adds
   no new raw document or entity text to metrics-only layers; the existing text-artifact privacy
   rules still apply.
+
+## Consumer / contract-intake changes
+
+Additional gates when an engine consumes the OCR Output Contract v1 Document Text Package (today PII
+via `pii_input.py`; later Review, pseudonymization, analysis, export, local AI) — see
+[ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md):
+
+- **Consume the contract, not OCR internals.** A consumer must go through the intake adapter /
+  package (source roles + `contract_status`), not reach into `TextContent` fields or the OCR/PDF
+  tool. Concentrate any unavoidable bridge (e.g. per-page segmentation) in one adapter.
+- **Degrade, never crash, on missing optional layers.** Tests must cover a `degraded` package with
+  raw text (still processed), a structurally `invalid` package (controlled error), and an
+  empty-raw-text package (existing benign path preserved). A missing canonical/structured/evidence
+  layer must not silently suppress output.
+- **Active-input separation gate is not bypassed.** Consuming the contract does not switch PII's
+  active detection input away from technical raw text; that still requires the tested
+  `text_lineage_map`.
+- **Provenance/summary metadata is structural only.** Per-entity provenance and overlap/contract
+  summaries carry reason codes, counts, recognizer names, and ids — never a copy of raw document or
+  entity text. A test must assert a synthetic sensitive value never appears in that metadata.
+- **Deterministic resolution.** Overlap/precedence resolution must be deterministic (order-
+  independent) and provenance-preserving; competing evidence is merged/flagged, never dropped
+  silently.

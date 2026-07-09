@@ -41,7 +41,7 @@ input, or report may be committed.
 | `structured_content` | ✅ OCR L11 + L13 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags; L13 adds multiline label/value field continuation | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
 | `quality_evidence` | ✅ OCR L14 + L15 (field on `text_result`) | metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence for the run: a list of `QualityEvidenceItem`s plus a `QualityEvidenceSummary` with `QualityLineageCoverage`; explains where text came from and how well it maps back, without changing any text. L15 adds deterministic noise/token artifact *evidence* (glyph artifacts, suspicious token shapes, character-confusion candidates, spacing candidates, and a document-level `ocr_noise_summary`) into the same list | no raw text (offsets, counts, flags, page zones, coarse bounds, stable reason codes; `details` is `dict[str, int]`) | additive optional versioned field on `text_result` |
 | `document_text_package` (OCR Output Contract v1) | ✅ today, derived API package (ADR-0027) | versioned external package of the `text_result` layers (raw/canonical/layout/structured) + `reading_text_map` + `quality_evidence` + a `contract_status`; the stable boundary consumers depend on instead of OCR internals | packages existing text layers; adds no new raw text beyond them | computed on request by `GET /api/documents/{document_id}/text-package`; not persisted |
-| `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
+| `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, L9 run settings, and L12 per-entity `provenance` + `input_contract`/`overlap_resolution` summaries | yes (spans); provenance/summaries are reason-codes/counts/ids only | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
 | `review_result` | 🔜 Review L8 (formal model) | the single-artifact-per-run shape this level originally described; today's decision overlay above covers much of its practical intent | yes | immutable artifact |
@@ -218,11 +218,22 @@ computed on request by `GET /api/documents/{document_id}/text-package`, is not p
 artifact, and does not change `GET/POST .../ocr`.
 
 Consumers (PII, Review, pseudonymization, document analysis, export, local AI) can depend on the
-contract and its source roles rather than on individual fields or the underlying engine. PII is
-**not migrated yet**: it still uses technical raw text as primary input; canonical/structured/
-evidence remain secondary or future hint layers, and canonical text must not be treated as
-authoritative. Switching the active PII detection input away from raw still requires the tested
-`text_lineage_map` separation gate.
+contract and its source roles rather than on individual fields or the underlying engine. **PII is
+now the first migrated consumer** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)):
+it consumes `DocumentTextPackageV1` through the `pii_input` intake adapter (`PiiInputDocumentV1`)
+rather than reaching into `TextContent`. Technical raw text stays the **primary and only active
+detection input**; canonical is contextual, structured content a hint layer, and quality/noise
+evidence trust context — none of which is treated as authoritative or applied to silently suppress
+an entity. A structurally invalid package is rejected (`422`), empty raw text stays the benign
+empty-result path, and a degraded package with raw text still processes. Switching the active PII
+detection input away from raw still requires the tested `text_lineage_map` separation gate.
+
+The `pii_result` records what PII consumed and how overlaps resolved in additive, optional fields —
+`PiiContent.input_contract` (contract version/status/package id and which layers were present),
+`PiiContent.overlap_resolution` (deterministic PII L12 merge/drop/flag counts by reason code), and
+`PiiEntity.provenance` (detection source/role, contributing recognizers, merge/overlap reason codes,
+and superseded candidate ids). These are reason-codes/counts/ids only and never copy raw document or
+entity text; legacy `pii_result` artifacts without them stay valid.
 
 ## Dev feedback side-channel
 

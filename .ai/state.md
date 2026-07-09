@@ -21,8 +21,10 @@
   Stale-running-job reclaim (lease/heartbeat), bounded parallel concurrency (>1), retry/timeout/
   cancel controls, and the PII worker are deferred to Phase 4. The **OCR Output Contract v1 /
   Stable Document Text Package** is now implemented additively as a derived package over existing
-  `text_result` artifacts ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)); the
-  next planned *engine* step is PII L12 overlap resolution as downstream consumer work.
+  `text_result` artifacts ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)); PII is
+  now its first migrated consumer via the `pii_input` intake adapter, and **PII L12 overlap
+  resolution** is delivered ([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
+  The next planned *engine* step is the formal Review L8 `review_result` model.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -146,12 +148,18 @@
     dictionary/lexicon, second OCR engine, or local LLM is used. `details` remains
     `dict[str, int]`; no raw token text is stored. See
     [ADR-0026](../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md).
-- **PII/Sensitive-Data: L11 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
+- **PII/Sensitive-Data: L12 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
   entity grouping (L11) is delivered as a derived view (`pii_grouping.py`) over `pii_result`, paired
   with a lineage-bound review-decision overlay: every detected entity defaults to `pseudonymize`
   (no separate "pending" state), and a reviewer opts an entity out via `keep` or `false_positive` —
-  see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md).
-  Overlap resolution (L12) and the formal binding-review artifact model (L13) remain open.
+  see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md). **Overlap resolution
+  (L12)** is now delivered: PII consumes the OCR Output Contract v1 Document Text Package through the
+  `pii_input` intake adapter (`PiiInputDocumentV1`) — raw stays the primary/only active detection
+  input — and `pii_overlap` deterministically merges duplicate/nested/same-type spans and flags
+  cross-type overlaps for review, recording additive optional provenance/summary fields on
+  `pii_result` (no raw text). See
+  [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). The formal binding-review
+  artifact model (L13) remains open.
 - **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6 done; L7–L9 partial.** Grouped
   occurrences (L6) are delivered, and a file-based (JSONL, not yet a single artifact-per-run)
   decision overlay covers much of L7–L9's practical intent (decisions persist, restore on reload,
@@ -198,9 +206,11 @@ now implemented additively as the OCR/Text output boundary before further engine
 entity grouping and the review-decision overlay, L12/L13 reading and structure order, the L10.5
 canonical-reading/raw-text contract, L10 span geometry, L9 layout-aware blocks, readable text (L8),
 confidence capture (L6), `quality_report` (L7), L14 quality-evidence/lineage-coverage
-observability, and L15 noise/token artifact evidence. **PII L12 overlap resolution is the next
-engine priority** as downstream consumer work; PII is not migrated yet and still consumes technical
-raw text.
+observability, and L15 noise/token artifact evidence. **PII L12 overlap resolution is now delivered**
+as the first downstream consumer step: PII consumes the contract through the `pii_input` adapter and
+resolves overlaps deterministically ([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
+PII still detects on technical raw text only. The next engine priority is the formal **Review L8
+`review_result`** artifact model, then the **PII validation transparency report**.
 
 **Strategic direction (OCR/Text as an independent module).** The **OCR Output Contract v1 /
 Document Text Package** stabilizes OCR/Text output as a versioned package of
@@ -229,18 +239,21 @@ detection-input switch. `pii_input_text` may become the
 runs exclusively on technical raw text today, regardless of other views. The reading/readable/
 layout/PII-input layers are additive and never a standalone PII input.
 
-The checkpoint leaves OCR/Text at L15 (built on the L10.5 prerequisite), PII at L11 done/L10
+The checkpoint leaves OCR/Text at L15 (built on the L10.5 prerequisite), PII at L12 done/L10
 partial, and Redaction L0; after reconfirming the next-three cadence, the plan is:
 
-1. Advance PII **L12 — overlap resolution** (deterministic engine-level precedence for
-   duplicate/nested/overlapping candidates) as **downstream work**, once PII consumes the OCR/Text
-   contract boundary.
-2. Formalize the **Review L8 `review_result`** artifact model — today's JSONL decision overlay
+1. Formalize the **Review L8 `review_result`** artifact model — today's JSONL decision overlay
    (see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md)) covers much of
    L8/L9's practical intent but not the single-artifact-per-run shape or an explicit stale-decision
    flag (L7); keep `pii_result` immutable.
-3. Surface the **PII validation transparency report** by exposing already-stored L6 validation
+2. Surface the **PII validation transparency report** by exposing already-stored L6 validation
    counts without changing detection.
+3. Re-run the checkpoint loop for any missing OCR lineage/geometry prerequisites before advancing
+   PII beyond L12 (e.g. toward the `text_lineage_map` separation gate).
+
+PII **L12 — overlap resolution** (deterministic engine-level precedence for duplicate/nested/
+overlapping candidates) is now delivered as downstream consumer work
+([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
 
 **Previous checkpoint (OCR L10.5 intermediate):** OCR/Text retained formal L10 maturity and completed
 the canonical-reading-text/raw-text prerequisite before L11. Versioned `reading_text` is additive
@@ -483,6 +496,32 @@ and there is no runtime/worker, PII, benchmark-payload, pseudonymization, redact
 dictionary/lexicon, multi-OCR, or local-LLM change. Next: **PII L12 overlap resolution**, formal
 **Review L8 `review_result`**, and the **PII validation transparency report** downstream as
 consumers of the contract.
+
+**Latest checkpoint (PII L12 — intake adapter + overlap resolution):** PII/Sensitive-Data advances
+from **L11 done to L12 done** as the **first downstream consumer** of the OCR Output Contract v1
+Document Text Package. PII now consumes `DocumentTextPackageV1` through a dedicated intake adapter
+(`pii_input.py`, internal `PiiInputDocumentV1`) instead of reaching into `TextContent` internals:
+`pii_service._analyze_text` reads only the adapter's model. Technical raw text stays the **primary
+and only active detection input**; canonical reading text is contextual, `structured_content` a hint
+layer, and quality/noise evidence trust context — none applied to silently suppress an entity. A
+**structurally invalid** package (unsupported version, malformed source roles, unresolvable id) is
+rejected with a controlled `422`; a package invalid **only** because raw text is empty stays the
+existing benign empty-result path; a **degraded** package with raw text still processes.
+Deterministic overlap resolution (`pii_overlap.py`) runs after candidate validation and before
+reading-text projection: exact duplicates merge (recording recognizers + superseded ids), same-type
+overlaps/nesting keep the strongest span and drop the rest (recorded, never silent), and
+different-type overlaps are preserved and flagged for review (`ambiguous_overlap_review_required`) —
+a specific cross-type auto-suppression precedence table is deferred. Additive optional `pii_result`
+fields carry the outcome (`PiiEntity.provenance`, `PiiContent.input_contract`,
+`PiiContent.overlap_resolution`) as reason-codes/counts/ids only, never raw text; legacy artifacts
+stay valid. Baseline raw-text detection is byte-identical (existing PII tests unchanged apart from
+the new additive fields), the active-input `text_lineage_map` separation gate is not bypassed, and
+there is no change to detection, recognizers, the `DocumentTextPackageV1` schema, OCR extraction,
+review/feedback flows, runtime/worker behavior, benchmark payloads, pseudonymization, redaction, or
+export. Existing PII API routes and the frontend review flow are unchanged (only additive optional
+TS types were added). See
+[ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). Next: formal **Review L8
+`review_result`**, then the **PII validation transparency report**.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

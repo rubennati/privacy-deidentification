@@ -243,6 +243,24 @@ export interface TextArtifact {
   };
 }
 
+// Where one entity came from and how deterministic overlap resolution (PII L12) treated it.
+// Structural only (recognizer names, reason codes, counts, ids) — never raw entity text (ADR-0028).
+export interface PiiEntityProvenance {
+  detection_source:
+    | "raw_text"
+    | "canonical_reading_text"
+    | "structured_hint"
+    | "projected"
+    | "recognizer";
+  source_role: "primary" | "contextual" | "structured_hint" | "quality_hint";
+  recognizers: string[];
+  candidate_count: number;
+  merge_reason?: string | null;
+  overlap_decision?: string | null;
+  review_required: boolean;
+  superseded_candidate_ids: string[];
+}
+
 export interface PiiEntity {
   id: string;
   entity_type: string;
@@ -262,6 +280,33 @@ export interface PiiEntity {
   reading_end_offset?: number | null;
   projection_status?: "exact" | "partial" | "unmapped" | null;
   projection_method?: "offset_map" | "text_match" | null;
+  // Detection source/role and overlap-resolution outcome. Absent on legacy artifacts (ADR-0028).
+  provenance?: PiiEntityProvenance | null;
+}
+
+// Records that PII consumed an OCR Output Contract v1 Document Text Package (ADR-0027/0028).
+export interface PiiInputContractSummary {
+  contract_version: string;
+  contract_status: "valid" | "degraded" | "invalid";
+  package_id: string;
+  primary_source: "technical_raw_text";
+  canonical_available: boolean;
+  layout_available: boolean;
+  structured_available: boolean;
+  quality_evidence_available: boolean;
+  warnings: string[];
+  missing_optional_layers: string[];
+}
+
+// Deterministic overlap-resolution outcome counts (PII L12). Reason codes and counts only.
+export interface PiiOverlapResolutionSummary {
+  applied: boolean;
+  input_candidate_count: number;
+  output_entity_count: number;
+  merged_count: number;
+  dropped_count: number;
+  review_required_count: number;
+  by_reason: Record<string, number>;
 }
 
 export interface PiiValidationSummary {
@@ -306,6 +351,10 @@ export interface PiiArtifact {
     validation?: PiiValidationSummary | null;
     // Effective non-sensitive settings for this run. Absent on legacy artifacts.
     engine_settings?: PiiArtifactEngineSettings | null;
+    // OCR Output Contract v1 package PII consumed for this run. Absent on legacy artifacts.
+    input_contract?: PiiInputContractSummary | null;
+    // Deterministic overlap-resolution summary (PII L12). Absent on legacy artifacts.
+    overlap_resolution?: PiiOverlapResolutionSummary | null;
   };
 }
 

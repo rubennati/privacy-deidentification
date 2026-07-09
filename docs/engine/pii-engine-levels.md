@@ -27,15 +27,18 @@ protection class (P0–P5), and the fitting detection strategy — is modelled i
 [`entity-taxonomy.md`](entity-taxonomy.md). This ladder is the *maturity* axis; the taxonomy is the
 *coverage/sensitivity* axis.
 
-**Current standing:** **L11 done (L0–L9, L11); L10 partial (dev-only human feedback capture).**
+**Current standing:** **L12 done (L0–L9, L11–L12); L10 partial (dev-only human feedback capture).**
 Structured + AT/DE + insurance/legal recognizers, named profiles, benchmark, candidate validation,
 context hardening, address/contact-line coverage, and reproducible artifact `engine_settings` are
 all shipped. A **dev-only** per-entity feedback-capture side-channel exists (behind
-`ENABLE_DEV_ENGINE_SETTINGS`). Conservative entity grouping (L11) is now delivered as a derived
+`ENABLE_DEV_ENGINE_SETTINGS`). Conservative entity grouping (L11) is delivered as a derived
 view over `pii_result`, paired with a lineage-bound review-decision overlay that covers much of the
 *practical* intent of the later L13 review-confirm/reject step without yet being that formal
 artifact model (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md) for the
-precise scope). Engine-level overlap resolution (L12) remains open.
+precise scope). Engine-level **overlap resolution (L12)** is now delivered: PII consumes the OCR
+Output Contract v1 Document Text Package through the `pii_input` intake adapter and resolves
+duplicate/nested/overlapping candidates deterministically with provenance
+([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)).
 
 The pipeline this ladder describes:
 
@@ -252,19 +255,31 @@ stage that runs after detection**. This stage is a first-class part of the engin
 - **Boundary to L12:** L11 groups *same-type* mentions; L12 resolves *conflicts between overlapping*
   candidates.
 
-## Level 12 — Overlap / conflict resolution  ⛔ *open*
+## Level 12 — Overlap / conflict resolution  ✅ *done*
 
 - **Description:** resolve overlapping/duplicate/nested candidates deterministically (engine-level,
-  not just display).
-- **Engine must:** apply deterministic precedence so overlapping candidates stop competing — e.g.
-  `ADDRESS` suppresses/flags an overlapping `LOCATION`; `EMAIL_ADDRESS` suppresses URL/domain
-  fragments inside the e-mail; structured ids (`IBAN`/`UID`/`FN`/…) beat generic ids on overlap;
-  unresolved conflicts stay visible in review.
-- **Status note:** a *display-layer* overlap resolver (`piiHighlights.ts`) and the schema's
-  deterministic sort exist, but there is **no engine-level resolution** yet. Tracked as a follow-up
-  PR ("Entity Resolution / Overlap Precedence Rules").
-- **Acceptance:** overlapping candidates resolve deterministically without dropping distinct entities;
-  precedence decisions are recorded/visible.
+  not just display), as a **consumer of the OCR Output Contract v1 Document Text Package**.
+- **Delivered:** PII consumes `DocumentTextPackageV1` through the `pii_input` intake adapter
+  (`PiiInputDocumentV1`) — raw text stays the primary/only active detection input, canonical is
+  contextual, structured content a hint, quality/noise evidence trust context — and
+  `pii_overlap.resolve_pii_overlaps` runs after candidate validation:
+  - **exact duplicates** (same start/end/type) merge into one survivor (`exact_duplicate` /
+    `recognizer_duplicate`, decision `merged_provenance`);
+  - **same-type overlaps/nesting** keep the strongest span (longest → highest score → earliest →
+    recognizer → id) and drop the rest, recording their ids on the survivor (`nested_entity` /
+    `same_type_overlap`, `longer_span_selected` / `stronger_confidence_selected`);
+  - **different-type overlaps** are **never dropped** — both are preserved and flagged for review
+    (`conflicting_entity_type` + `ambiguous_overlap_review_required`).
+  Entity offsets/text/scores are never modified. Additive optional `pii_result` fields carry the
+  outcome (`PiiEntity.provenance`, `PiiContent.input_contract`, `PiiContent.overlap_resolution`),
+  all reason-codes/counts/ids only — no raw text. See
+  [ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
+- **Status note:** the display-layer resolver (`piiHighlights.ts`) still exists for rendering; this
+  adds the engine-level resolution beneath it. A specific cross-type auto-suppression precedence
+  table (structured id > generic id, `ADDRESS` > `LOCATION`, e-mail > inner URL fragment) is
+  deliberately deferred in favour of flag-for-review, pending benchmark/review evidence.
+- **Acceptance:** overlapping candidates resolve deterministically without dropping distinct
+  (cross-type) entities; merge/drop/flag decisions are recorded in provenance and the run summary.
 - **Boundary to L13:** L12 makes the machine's entity set clean; L13 makes a human's decision binding.
 
 ## Level 13 — Review confirm / reject  ⛔ *open*
@@ -375,7 +390,7 @@ must account for that boundary explicitly.
 | 9 Reproducible + dev settings | ✅ done | `content.engine_settings`, `ENABLE_DEV_ENGINE_SETTINGS` |
 | 10 Human feedback capture | ⏳ partial | dev-only per-entity feedback JSONL; not the binding overlay |
 | 11 Entity grouping | ✅ done | derived `pii_grouping.py` view + review-decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
-| 12 Overlap / conflict resolution | ⛔ open | display-only resolver exists; no engine-level rules |
+| 12 Overlap / conflict resolution | ✅ done | `pii_input` adapter + deterministic `pii_overlap` resolution ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)) |
 | 13 Review confirm / reject | ⛔ open | review UI is display + dev-feedback only |
 | 14 Manual add | ⛔ open | — |
 | 15 Feedback-derived regression | ⛔ open | benchmark inputs hand-authored today |
@@ -429,9 +444,12 @@ reports (timestamps aside).
 **What is missing next:**
 
 1. **Human feedback capture (L10)** beyond the dev-only side-channel remains partial; **entity
-   grouping (L11)** is now delivered (with a review-decision overlay, see
-   [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)). Engine-level **overlap
-   resolution (L12)** is the next documented follow-up.
+   grouping (L11)** is delivered (with a review-decision overlay, see
+   [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) and engine-level **overlap
+   resolution (L12)** is now delivered as a consumer of the OCR Output Contract v1 boundary
+   ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)). The formal **Review L8
+   `review_result`** artifact model is the next documented follow-up, then the **PII validation
+   transparency report**.
 2. The four remaining unsupported semantic labels (`BIRTH_DATE`, `BIRTH_PLACE`, `FAMILY_NAME`,
    `GIVEN_NAME`) and per-profile benchmark runs in one invocation.
 3. Formalizing the review-decision overlay into the full `review_result` artifact model (L13) with

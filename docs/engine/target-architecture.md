@@ -69,8 +69,14 @@ normalized **before** crossing the contract boundary. The implemented v1 package
 immutable text artifact with `contract_version = "1.0"` and a `contract_status`
 (`valid`/`degraded`/`invalid`). Raw text is authoritative; canonical text is derived/contextual;
 `structured_content` is semantic hints; and `quality_evidence` is trust/uncertainty metadata.
-Existing OCR endpoints remain backward-compatible, runtime/worker behavior is unchanged, and PII is
-not migrated yet.
+Existing OCR endpoints remain backward-compatible and runtime/worker behavior is unchanged. **PII is
+now the first migrated consumer** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)):
+it consumes the package through the `pii_input` intake adapter (`PiiInputDocumentV1`) instead of
+`TextContent` internals, detects on raw text as the primary/only active input, treats canonical as
+contextual and structured/quality layers as hints, and resolves duplicate/nested/overlapping
+candidates deterministically (`pii_overlap`, PII L12) with reason-code/count/id provenance on the
+`pii_result`. Switching the active PII detection input away from raw still requires the tested
+`text_lineage_map` separation gate.
 
 ## Runtime job contract
 

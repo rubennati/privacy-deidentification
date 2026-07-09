@@ -10,7 +10,7 @@ documents.
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
 | OCR / Text | **L15 (built on the required L10.5 step) + output-contract stabilization** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), L15 additive noise/token artifact evidence in the same list, and Document Text Package v1 (`contract_version = "1.0"`, `valid`/`degraded`/`invalid`) | PII L12 overlap resolution downstream; future OCR capabilities plug into the contract |
-| PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution (downstream — after the OCR Output Contract boundary is implemented/stabilized) |
+| PII / Sensitive-Data | **L12; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)) | formal Review L8 `review_result` model, then the PII validation transparency report |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
@@ -48,6 +48,10 @@ documents.
   scope), covering much of Review L8/L9's practical intent without yet being the formal
   `review_result` artifact model. See
   [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
+- PII L12: PII consumes the OCR Output Contract v1 Document Text Package via the `pii_input` intake
+  adapter and resolves duplicate/nested/overlapping candidates deterministically, with additive
+  optional provenance/summary fields on `pii_result` (no raw text). Technical raw text remains the
+  active detection input. See [ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
 - Benchmark L0–L8 plus an out-of-order L10 slice: private inputs, artifact matching, routing and PII
   metrics, privacy guarding, deterministic output, validation-stage aggregates, and safe
   lineage-matched OCR confidence/coverage columns.
@@ -267,13 +271,24 @@ derived view (`pii_grouping.group_pii_entities`) recomputed from the latest `pii
 request — `pii_result`'s schema is unchanged. See
 [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 
-### PII L12 — overlap resolution (downstream)
+### PII L12 — overlap resolution (downstream) — delivered
 
-Define and apply auditable engine-level precedence for duplicate, nested, and overlapping candidates.
-The current display-only highlight resolver is not engine-level entity resolution. This is
-**downstream work**, sequenced *after* the OCR Output Contract v1 stabilization above — PII takes it
-up as a consumer once the OCR/Text contract boundary is implemented or at least stabilized, so it is
-not the immediate next step.
+PII now consumes the OCR Output Contract v1 Document Text Package through the `pii_input` intake
+adapter (`PiiInputDocumentV1`) instead of reaching into `TextContent` internals: technical raw text
+stays the primary/only active detection input, canonical reading text is contextual, structured
+content is a hint layer, and quality/noise evidence is trust/uncertainty context. A structurally
+invalid package is rejected with a controlled `422`, empty raw text stays the benign empty-result
+path, and a degraded package with raw text still processes. `pii_overlap.resolve_pii_overlaps` then
+applies auditable engine-level precedence for duplicate, nested, and overlapping candidates: exact
+and same-type/nested spans merge or drop to a single strongest survivor (recording superseded ids),
+while different-type overlaps are preserved and flagged for review rather than dropped. The outcome
+is recorded in additive optional `pii_result` fields (`PiiEntity.provenance`,
+`PiiContent.input_contract`, `PiiContent.overlap_resolution`) — reason codes, counts, and ids only,
+no raw text. The active detection input is unchanged (still technical raw text; the `text_lineage_map`
+separation gate is not bypassed), and existing PII API/frontend behavior is unchanged. A specific
+cross-type auto-suppression precedence table (structured id > generic id, `ADDRESS` > `LOCATION`) is
+deferred in favour of flag-for-review. See
+[ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
 
 ### Review L6 — grouped occurrences — delivered
 

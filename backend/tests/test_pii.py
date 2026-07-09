@@ -208,7 +208,24 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
         "reading_end_offset": None,
         "projection_status": "unmapped",
         "projection_method": None,
+        "provenance": {
+            "detection_source": "raw_text",
+            "source_role": "primary",
+            "recognizers": ["FakeRecognizer"],
+            "candidate_count": 1,
+            "merge_reason": None,
+            "overlap_decision": None,
+            "review_required": False,
+            "superseded_candidate_ids": [],
+        },
     }
+    # PII now consumes the OCR Output Contract v1 package via the intake adapter (ADR-0028).
+    contract = artifact["content"]["input_contract"]
+    assert contract["contract_version"] == "1.0"
+    assert contract["contract_status"] in {"valid", "degraded"}
+    assert contract["package_id"] == latest.id
+    assert contract["primary_source"] == "technical_raw_text"
+    assert artifact["content"]["overlap_resolution"]["applied"] is True
     assert pii_fake.calls == ["Max Mustermann"]
     artifact_path = document_data_dir / document_id / "artifacts" / f"{artifact['id']}.json"
     assert artifact_path.is_file()
@@ -673,6 +690,122 @@ def test_logs_do_not_contain_source_or_entity_text(
 
     assert response.status_code == 201
     assert all(secret not in record.getMessage() for record in caplog.records)
+
+
+# --- PII intake contract + overlap resolution integration (ADR-0028) -----------------------------
+
+
+def test_input_contract_is_recorded_on_the_pii_result(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    latest = _save_text(settings, document_id, "Max Mustermann", reading_text="Max Mustermann")
+    pii_fake.results["Max Mustermann"] = [_entity("PERSON", 0, 14, 0.86)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    contract = response.json()["content"]["input_contract"]
+    assert contract["contract_version"] == "1.0"
+    assert contract["package_id"] == latest.id
+    assert contract["primary_source"] == "technical_raw_text"
+    assert contract["canonical_available"] is True
+
+
+def test_degraded_package_still_detects_raw_text_entities(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    # No reading_text/structured/quality layers → the package is degraded, but raw text exists.
+    _save_text(settings, document_id, "Max Mustermann")
+    pii_fake.results["Max Mustermann"] = [_entity("PERSON", 0, 14, 0.86)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["input_contract"]["contract_status"] == "degraded"
+    assert content["input_contract"]["canonical_available"] is False
+    assert [entity["text"] for entity in content["entities"]] == ["Max Mustermann"]
+
+
+def test_overlap_resolution_merges_duplicate_detections(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Max Mustermann")
+    # Two recognizers surface the exact same span — resolution merges them into one entity.
+    pii_fake.results["Max Mustermann"] = [
+        _entity("PERSON", 0, 14, 0.8),
+        _entity("PERSON", 0, 14, 0.9),
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert len(content["entities"]) == 1
+    assert content["entity_counts"] == {"PERSON": 1}
+    overlap = content["overlap_resolution"]
+    assert overlap["applied"] is True
+    assert overlap["input_candidate_count"] == 2
+    assert overlap["merged_count"] == 1
+    provenance = content["entities"][0]["provenance"]
+    assert provenance["candidate_count"] == 2
+    assert provenance["merge_reason"] == "exact_duplicate"
+
+
+def test_cross_type_overlap_is_flagged_for_review_not_dropped(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_entity_types = (
+        "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "CREDIT_CARD", "IP_ADDRESS", "URL",
+    )
+    text = "kontakt max@example.at"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, text)
+    # Two structured (validation pass-through) types claim overlapping spans of different type.
+    pii_fake.results[text] = [
+        _entity("EMAIL_ADDRESS", 8, 22, 0.9),
+        _entity("URL", 12, 22, 0.6),
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    types = {entity["entity_type"] for entity in content["entities"]}
+    assert types == {"EMAIL_ADDRESS", "URL"}  # neither dropped
+    assert content["overlap_resolution"]["review_required_count"] == 2
+    assert all(
+        entity["provenance"]["review_required"] is True for entity in content["entities"]
+    )
+
+
+def test_overlap_provenance_never_contains_raw_entity_text(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    secret = "Maximilian Geheimnisvoll"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, secret)
+    pii_fake.results[secret] = [
+        _entity("PERSON", 0, len(secret), 0.8),
+        _entity("PERSON", 0, len(secret), 0.9),
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    provenance = content["entities"][0]["provenance"]
+    assert secret not in json.dumps(provenance)
+    assert secret not in json.dumps(content["overlap_resolution"])
+    assert secret not in json.dumps(content["input_contract"])
 
 
 # --- Engine-5 candidate validation integration ---------------------------------------------------
