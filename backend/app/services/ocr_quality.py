@@ -16,6 +16,13 @@ Future evidence sources (dictionary/lexicon checks, domain vocabulary, per-token
 PDF-text-layer-versus-OCR comparison, second-engine agreement, a local model, and review feedback)
 are designed to plug in as additional :class:`QualityEvidenceItem`s. They are *evidence, not truth*:
 they may raise or lower confidence but must never silently rewrite OCR/Text or change PII decisions.
+
+OCR/Text L15 adds one such source deterministically: ``ocr_noise.build_ocr_noise_evidence`` scans
+technical raw per-page text for shape-based noise/token-artifact signals (glyph artifacts,
+suspicious token shapes, character-confusion candidates, and spacing candidates) plus a
+document-level ``ocr_noise_summary``. It is folded into the same flat ``items`` list below — no new
+artifact, no new schema version, and no dictionary/multi-OCR/local-LLM behavior. See
+[ADR-0026](../../../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md).
 """
 
 from __future__ import annotations
@@ -40,6 +47,7 @@ from app.schemas import (
     TextLineGeometry,
     TextPageResult,
 )
+from app.services.ocr_noise import build_ocr_noise_evidence
 from app.services.reading_text import ReadingTextResult
 
 # Reading-text strategy flags grouped by what they tell us. These mirror the non-sensitive flags the
@@ -112,6 +120,12 @@ def build_quality_evidence(
     items.extend(_reconstruction_items(reading_flags))
     items.extend(_fallback_items(reading, reading_flags, has_raw))
     items.append(_structured_content_item(structured_content))
+
+    items.extend(
+        build_ocr_noise_evidence(
+            text=text, pages=pages, page_zones=_page_zone_map(text_geometry)
+        )
+    )
 
     lineage = _lineage(reading, reading_text_map, text_geometry, structured_content)
     items.extend(_lineage_items(reading, reading_text_map, lineage))
@@ -301,7 +315,7 @@ def _page_zone_items(text_geometry: TextGeometry | None) -> list[QualityEvidence
     return [_page_zone_item(page) for page in text_geometry.pages]
 
 
-def _page_zone_item(page: TextGeometryPage) -> QualityEvidenceItem:
+def _zone_counts(page: TextGeometryPage) -> dict[QualityPageZone, int]:
     zone_counts: dict[QualityPageZone, int] = {
         "header": 0, "footer": 0, "left_margin": 0, "right_margin": 0, "body": 0,
     }
@@ -309,15 +323,44 @@ def _page_zone_item(page: TextGeometryPage) -> QualityEvidenceItem:
         zone = _line_zone(line, page.page_width, page.page_height)
         if zone != "unknown":
             zone_counts[zone] += 1
+    return zone_counts
+
+
+def _dominant_zone(zone_counts: dict[QualityPageZone, int]) -> QualityPageZone | None:
+    if sum(zone_counts.values()) == 0:
+        return None
+    dominant = max(_ZONE_TIE_ORDER, key=lambda zone: zone_counts[zone])
+    return dominant
+
+
+def _page_zone_map(text_geometry: TextGeometry | None) -> dict[int, QualityPageZone]:
+    """Page-number -> dominant-zone map, reused as-is from the L14 page zone classification.
+
+    L15 noise evidence tags its findings with this same conservative, already-computed zone instead
+    of inventing a second classification — a page with no safely classifiable zone (no geometry, or
+    zero classified lines) simply carries no zone tag.
+    """
+
+    if text_geometry is None:
+        return {}
+    zone_map: dict[int, QualityPageZone] = {}
+    for page in text_geometry.pages:
+        dominant = _dominant_zone(_zone_counts(page))
+        if dominant is not None:
+            zone_map[page.page_number] = dominant
+    return zone_map
+
+
+def _page_zone_item(page: TextGeometryPage) -> QualityEvidenceItem:
+    zone_counts = _zone_counts(page)
     details = {f"{zone}_lines": count for zone, count in zone_counts.items()}
-    classified = sum(zone_counts.values())
-    if classified == 0:
+    dominant = _dominant_zone(zone_counts)
+    if dominant is None:
         return _item(
             f"page-{page.page_number}-zone", "page", "page_zone", "unavailable",
             "page_zone_unavailable", page_number=page.page_number, page_zone="unknown",
             related_artifact="text_geometry", details=details,
         )
-    dominant = max(_ZONE_TIE_ORDER, key=lambda zone: zone_counts[zone])
     status: QualityEvidenceStatus = "confident" if page.status == "complete" else "partial"
     return _item(
         f"page-{page.page_number}-zone", "page", "page_zone", status, "page_zone_classified",

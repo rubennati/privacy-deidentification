@@ -46,7 +46,7 @@
 
 ## Engine maturity snapshot (0–19)
 
-- **OCR/Text: L14 done (built on the required L10.5 step).** Each successful PDF/image/DOCX OCR/Text
+- **OCR/Text: L15 done (built on the required L10.5 step).** Each successful PDF/image/DOCX OCR/Text
   run now stores additive views beside immutable technical raw `text_result.text`: canonical
   `reading_text` (L10.5), `readable_text` (L8), `layout_text_result` (L9 slice), and
   `pii_input_text` (internal L9 slice). The existing
@@ -128,6 +128,19 @@
     so no raw text is stored. Page zones are evidence only (never delete/reorder text). It changes no
     text layer, active PII input, or PII decision; benchmark loaders ignore it. See
     [ADR-0025](../docs/adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md).
+  - `quality_evidence` (L15) — the same list gains deterministic noise/token artifact *evidence*
+    from a dedicated `ocr_noise.py` builder: symbol/glyph runs, suspicious token shapes, O/0, I/l/1,
+    and rn/m character-confusion candidates (plus a general letter↔digit alternation-based
+    `mixed_alnum_confusion`), and spacing candidates (single-letter-token runs; long letters-only
+    tokens with one internal case transition), scanned from technical raw per-page text only —
+    never `reading_text` or `structured_content`. Findings reuse the existing L14 page-zone
+    classification, and a document-level `ocr_noise_summary` item is always present, even when
+    clean. Structured-identifier- and IBAN-shaped tokens are exempted, as are intentional
+    divider/bullet/leader runs, and trailing sentence punctuation is stripped before shape analysis.
+    It is evidence, not correction — nothing is ever rewritten, removed, or reordered, and no
+    dictionary/lexicon, second OCR engine, or local LLM is used. `details` remains
+    `dict[str, int]`; no raw token text is stored. See
+    [ADR-0026](../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md).
 - **PII/Sensitive-Data: L11 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
   entity grouping (L11) is delivered as a derived view (`pii_grouping.py`) over `pii_result`, paired
   with a lineage-bound review-decision overlay: every detected entity defaults to `pseudonymize`
@@ -174,11 +187,12 @@ See [`docs/engine/`](../docs/engine/README.md),
 
 The binding OCR/PII sequence, cadence, and next-PR list live in
 [`docs/engine/ocr-pii-implementation-plan.md`](../docs/engine/ocr-pii-implementation-plan.md)
-([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after OCR L14:
+([ADR-0018](../docs/adr/0018-ocr-pii-implementation-plan.md)). **Current priority after OCR L15:
 PII/Sensitive-Data L12 overlap resolution**, now that entity grouping and a review-decision overlay
 build on L12/L13 reading and structure order, the L10.5 canonical-reading/raw-text contract, L10
 span geometry, L9 layout-aware blocks, readable text (L8), confidence capture (L6),
-`quality_report` (L7), and L14 quality-evidence/lineage-coverage observability.
+`quality_report` (L7), L14 quality-evidence/lineage-coverage observability, and L15 noise/token
+artifact evidence.
 
 The OCR L8/L9 text-layer work is contract-first: the output model and invariants are fixed in
 [`docs/engine/ocr-layout-text-contract.md`](../docs/engine/ocr-layout-text-contract.md). Technical raw
@@ -195,7 +209,7 @@ detection-input switch. `pii_input_text` may become the
 runs exclusively on technical raw text today, regardless of other views. The reading/readable/
 layout/PII-input layers are additive and never a standalone PII input.
 
-The checkpoint leaves OCR/Text at L14 (built on the L10.5 prerequisite), PII at L11 done/L10
+The checkpoint leaves OCR/Text at L15 (built on the L10.5 prerequisite), PII at L11 done/L10
 partial, and Redaction L0; after reconfirming the next-three cadence, the plan is:
 
 1. Advance PII **L12 — overlap resolution** (deterministic engine-level precedence for
@@ -405,6 +419,33 @@ algorithm, PII algorithm, `reading_text`, `quality_evidence`, artifact contract,
 Celery/RQ, Kubernetes, local LLM, dictionary/multi-OCR, pseudonymization, redaction, or export
 behavior was introduced. Remaining runtime work stays Phase 4: stale-running lease/heartbeat
 reclaim, bounded concurrency beyond 1, retry/timeout/cancel controls, and the PII worker split.
+
+**Latest checkpoint (OCR L15 noise/token artifact evidence):** OCR/Text advances from L14 to **L15
+done** with additive, deterministic noise/token-artifact evidence folded into the same
+`quality_evidence` list — no new artifact, no new schema version. The older redaction-ready-geometry
+placeholder for OCR L15 is explicitly deferred; L15 now means noise/token artifact evidence (see
+[ADR-0026](../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md)), mirroring how
+ADR-0022/ADR-0024/ADR-0025 re-scoped L12/L13/L14. A dedicated `ocr_noise.py` builder scans technical
+raw per-page text only (never `reading_text` or `structured_content`) for symbol/glyph runs,
+suspicious token shapes, O/0, I/l/1, and rn/m character-confusion candidates (plus a general
+letter↔digit alternation-based `mixed_alnum_confusion`), and spacing candidates, reuses the existing
+L14 page-zone classification, and always emits a document-level `ocr_noise_summary`. It is evidence
+before correction: nothing is ever rewritten, removed, or reordered, and there is still no
+dictionary/lexicon, second OCR engine, or local LLM. A local, metrics-only private-corpus validation
+pass (never committed; `.local` outputs) found and fixed four generic, non-corpus-specific
+over-flagging patterns — superscript measurement units (`m²`/`m³`) misread as digit confusion,
+incidental characters beside intentional divider/blank-field runs disqualifying the whole run from
+its structural exemption, hyphenated compound words miscounted as letter/digit confusion, and
+abbreviations followed by sentence punctuation over-tripping the symbol-ratio check — each diagnosed
+via a privacy-safe character-*class*-only signature tool (never a raw character) and each covered by
+a synthetic regression test; every text-layer corpus document then classified
+`NOISE_EVIDENCE_USEFUL` with `NO_REGRESSION` (byte-identical `reading_text`/`structured_content`
+against the existing L14 baseline) and no raw-text leak. The PR introduces no dependency, OCR
+routing, technical raw/page text, active PII input, PII projection/decision, public API,
+review-decision, `quality_report`, benchmark-payload, pseudonymization, redaction, or export change.
+Dictionary/lexicon checks, multi-OCR, a local LLM, and correction *suggestions* (a later, explicitly
+separate level) remain deferred additive *evidence, not truth*. Next: **PII L12 overlap resolution**,
+formal **Review L8 `review_result`**, then the **PII validation transparency report**.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

@@ -275,6 +275,10 @@ Anchored to the existing 0–19 ladder in [`ocr-engine-levels.md`](ocr-engine-le
   `quality_evidence` on `text_result` recording metrics-only provenance, reconstruction, page-zone,
   and reading↔raw lineage-coverage evidence; no new artifact, raw-text, or PII-input change, and it
   never changes PII decisions.
+- **OCR L15:** noise/token artifact evidence — the same `quality_evidence` list gains deterministic,
+  additive glyph-artifact, suspicious-token-shape, character-confusion, and spacing-candidate items
+  plus a document-level `ocr_noise_summary`; no new artifact, raw-text, or PII-input change, no
+  dictionary/multi-OCR/local-LLM, and no text is ever corrected, removed, or rewritten.
 - **Higher levels:** local AI assist / redaction-ready geometry (the lineage map's long-term payoff
   for bounding boxes and redaction).
 
@@ -392,6 +396,23 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   truth*), automatic OCR correction, a PII-input switch, `text_lineage_map`,
   word-level/redaction-ready geometry, pseudonymization, placeholder mapping, document export, and
   pixel-perfect visual redaction.
+- **Delivered (L15):** noise/token artifact evidence as an additive, deterministic extension of the
+  same `quality_evidence` list. A dedicated builder (`ocr_noise.py`) scans technical raw per-page
+  text only for symbol/glyph runs, suspicious token shapes, O/0, I/l/1, and rn/m character-confusion
+  candidates, and spacing candidates (single-letter-token runs, long letters-only tokens with one
+  internal case transition), reusing the existing L14 page-zone classification for tagging and
+  always emitting a document-level `ocr_noise_summary`. Structured-identifier/IBAN-shaped tokens and
+  intentional divider/bullet/leader runs are exempted; a private-corpus validation pass found and
+  fixed four generic over-flagging patterns (superscript measurement units, incidental characters
+  beside long divider/blank-field runs, hyphenated compound words, and abbreviations followed by
+  sentence punctuation), each covered by a synthetic regression test. `details` remains
+  `dict[str, int]`; no raw token text is ever stored.
+- **Not in L15:** dictionary/lexicon checks, multi-OCR agreement, and local-LLM hints (deferred,
+  additive *evidence, not truth*, see [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md)),
+  automatic OCR correction or removal, correction *suggestions* (a later, explicitly separate level),
+  redaction-ready text/geometry mapping (the deferred earlier L15 placeholder meaning), a PII-input
+  switch, `text_lineage_map`, word-level/redaction-ready geometry, pseudonymization, placeholder
+  mapping, document export, and pixel-perfect visual redaction.
 - **Not in L13:** document-type/section/zone classification (deferred, see
   [ADR-0024](../adr/0024-ocr-l13-table-form-reconstruction-v2.md)), a fix for the pre-existing
   row-geometry-collection gap that makes some dense/complex table pages fall back to plain raw order

@@ -9,7 +9,7 @@ documents.
 
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
-| OCR / Text | **L14 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, and L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage) | PII L12 overlap resolution |
+| OCR / Text | **L15 (built on the required L10.5 step)** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), and L15 additive noise/token artifact evidence in the same list | PII L12 overlap resolution |
 | PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
 | Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
@@ -17,7 +17,7 @@ documents.
 
 ## Delivered foundation
 
-- OCR L0–L14 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
+- OCR L0–L15 (built on the required L10.5 step): upload, technical raw extraction/lineage, OCR
   runtime, quality routing/fallback, additive OCR confidence, an immutable metrics-only
   `quality_report` for every successful run, additive readable/layout views plus deterministic typed
   layout blocks for PDF and OCR content, and additive `text_geometry` line boxes mapping raw offset
@@ -28,9 +28,11 @@ documents.
   L12 safe multi-column layout reconstruction/fused table-header rendering/label-value pairing, L13
   table/form reconstruction v2 (geometry-only table detection, partially fused header recovery,
   multiline label/value continuation), conservative span-backed tables, label/value fields, and
-  sections in optional `structured_content`, and L14 additive metrics-only `quality_evidence`
-  (provenance, reconstruction, page zones, and reading↔raw lineage coverage; no raw text). PII still
-  uses raw text.
+  sections in optional `structured_content`, L14 additive metrics-only `quality_evidence`
+  (provenance, reconstruction, page zones, and reading↔raw lineage coverage; no raw text), and L15
+  additive noise/token artifact evidence (glyph artifacts, suspicious token shapes,
+  character-confusion candidates, spacing candidates) in that same list — evidence, never
+  correction. PII still uses raw text.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -193,6 +195,28 @@ them, and changes no text layer, active PII input, PII decision, the `quality_re
 benchmark payload, dependency, or public API. Dictionary/lexicon checks, multi-OCR, and a local LLM
 are deferred additive *evidence, not truth*, and local AI assist (L14's earlier placeholder meaning)
 is deferred — see [ADR-0025](../adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md).
+
+### OCR L15 — noise/token artifact evidence — delivered
+
+The same `quality_evidence` list gains deterministic, additive noise/token artifact evidence from a
+dedicated `ocr_noise.py` builder: symbol/glyph runs, suspicious token shapes, O/0, I/l/1, and rn/m
+character-confusion candidates (plus a general letter↔digit *alternation*-based
+`mixed_alnum_confusion`), and spacing candidates (single-letter-token runs; long letters-only tokens
+with one internal case transition), all scanned from technical raw per-page text only. Findings reuse
+the existing L14 page-zone classification, and a document-level `ocr_noise_summary` item is always
+present, even when clean. Structured-identifier- and IBAN-shaped tokens are exempted, as are
+intentional divider/bullet/leader character runs, and trailing sentence punctuation is stripped
+before shape analysis. It is **evidence before correction**: nothing is ever rewritten, removed, or
+reordered, and no dictionary/lexicon, second OCR engine, or local LLM is used. A local private-corpus
+validation pass found and fixed four generic (non-corpus-specific) over-flagging patterns —
+superscript measurement units, incidental characters beside intentional divider/blank-field runs,
+hyphenated compound words, and abbreviations followed by sentence punctuation — each covered by a
+synthetic regression test, diagnosed via a privacy-safe character-class-only signature tool that
+never printed or persisted real text. It carries no raw token text (`details` remains
+`dict[str, int]`), and changes no text layer, active PII input, PII decision, the `quality_report`
+artifact, benchmark payload, dependency, or public API. Redaction-ready text/geometry mapping (L15's
+earlier placeholder meaning) is deferred — see
+[ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md).
 
 ### PII L11 — entity grouping — delivered
 

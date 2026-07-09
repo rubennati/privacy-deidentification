@@ -34,3 +34,25 @@ worker execution model, `docker-compose.yml`, the `Makefile`, or `.env.example`:
   independently can split API/worker storage. `jobs.sqlite3` stays in its own `job-state` root.
 - **Never commit runtime data.** No `*.sqlite3`/`-wal`/`-shm`, `.env`, `volumes/`, `.local/`, or
   private document text; only synthetic fixtures in tests.
+
+## OCR/Text quality-evidence changes
+
+Additional gates when a change touches `quality_evidence` (`ocr_quality.py`, `ocr_noise.py`, or any
+future evidence source plugged into that list — dictionary/lexicon, multi-OCR, local-LLM hints):
+
+- **False-positive guard tests.** Cover normal prose, structured identifiers (invoice/policy
+  numbers, IBAN-like/phone-like strings), legal references, dates, prices, percentages, acronyms,
+  filenames, bullet lists, and table rows/separators — a change that adds or tunes a suspicion
+  signal must show it does not over-flag these categories.
+- **No raw token text in evidence.** Every evidence item stays offset/count/flag/reason-code-only
+  (`details: dict[str, int]`); a test must assert no synthetic sensitive sample text appears in the
+  evidence JSON.
+- **Private-corpus validation summary.** Run the change against the local private corpus
+  (`test-corpus/`, never committed; local script and output under `.local/`, never committed) and
+  report, per document, whether the new/changed evidence is useful, too noisy, missing a signal, or
+  a false-positive risk — plus an explicit stable-document regression statement (existing
+  `reading_text`/`structured_content`/lineage output compared against the prior baseline).
+- **Evidence vs. correction, explicitly.** State in the PR/ADR that the change adds *evidence*
+  (suspicion, explainable, reviewable) and does not automatically correct, remove, or rewrite OCR
+  text, `reading_text`, or `structured_content` — any future correction/suggestion capability is a
+  separate, explicitly re-scoped level.
