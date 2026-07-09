@@ -49,15 +49,12 @@ provides correlation IDs plus structured request/error logging.
 Run from the repository root via the `Makefile` (`make lint`, `make typecheck`, `make test`),
 which executes these inside the backend container.
 
-PaddleOCR and PaddlePaddle are an optional `ocr` dependency extra. Docker Compose builds without
-it by default; set `INSTALL_OCR=true` when image/scanned-page OCR is required. Text-only PDFs and
-DOCX extraction do not initialize or require PaddleOCR. Real OCR additionally requires an
-`OCR_MODEL_DIR` with local `text_detection/` and `text_recognition/` directories; missing or
-uninitializable models return `503` without an intentional download fallback. See the root README
-for the read-only model-volume layout and smoke-test command.
+The default Docker runtime image includes PaddleOCR/PaddlePaddle and Presidio/spaCy so the normal
+Compose stack is functional without build-profile toggles. OCR model files are still provisioned
+separately under `OCR_MODEL_DIR` (`make ocr-models`) and mounted read-only; missing or
+uninitializable models return `503` without a request-time download fallback. Text-only PDFs and
+DOCX extraction do not initialize PaddleOCR.
 
-Presidio Analyzer, spaCy, and the pinned German spaCy model are an optional `pii` dependency
-extra. Set `INSTALL_PII=true` to bake them into the image. Initialization is lazy and performs no
-request-time download; an unavailable runtime returns `503`. PII v1 stores labels and exact text
-offsets only—it performs no anonymization or redaction. See the root README for configuration and
-the model-backed smoke-test command.
+The default API mode enqueues OCR jobs for the isolated `ocr-worker`; `OCR_EXECUTION_MODE=sync`
+remains a development/test fallback. PII still runs synchronously in the API. PII v1 stores labels
+and exact text offsets only — it performs no anonymization or redaction.

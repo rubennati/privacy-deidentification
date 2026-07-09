@@ -2,24 +2,28 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **Runtime Architecture Phase 3 — isolated OCR worker (opt-in)**.
-- Current objective: ADR-0023 Phase 3 is now delivered on top of the Phase 1/2 job seam and SQLite
-  job state. OCR execution can be isolated out of the FastAPI process into an `ocr-worker` container
-  via `OCR_EXECUTION_MODE=worker`: the API enqueues a pending OCR job and returns `202`, and the
-  worker atomically claims the job (SQLite `UPDATE … RETURNING` under WAL — no Redis/broker), runs
-  the unchanged `create_text_artifact` station out-of-process, and records `succeeded`/`failed`. The
-  default stays `sync` (OCR in-process, `201`), so existing behavior and the frontend are unchanged.
-  Artifacts remain file-based; the DB stores metadata only. PII stays synchronous in the API. There
-  is still no Redis/Celery/RQ, no PII worker split, no OCR/PII engine change, no pseudonymization,
-  redaction, export, or frontend workflow change. Stale-running-job reclaim (lease/heartbeat),
-  bounded parallel concurrency (>1), and the PII worker are deferred to Phase 4. PII L12 overlap
-  resolution remains the next planned *engine* step.
+- Current phase: **Runtime Architecture Phase 3.6 — default worker stack + runtime simplification**.
+- Current objective: ADR-0023 Phase 3.6 is now delivered on top of Phase 3/3.5. The normal Compose
+  stack is `frontend`, `api`, and `ocr-worker`; `OCR_EXECUTION_MODE` defaults to `worker`; and the
+  frontend handles worker-mode OCR end to end by accepting `202` job metadata, polling
+  `GET /api/jobs/{job_id}`, and fetching the finished `text_result`. Sync OCR remains available only
+  as an explicit development/test fallback (`OCR_EXECUTION_MODE=sync`, `201` artifact body). The old
+  slim/pii/ocr/full Make targets and `INSTALL_OCR`/`INSTALL_PII` build toggles are removed; API and
+  OCR worker share one full backend image for now, with a slimmer API image deferred as future
+  optimization. SQLite remains file-based at `DOCUMENT_DATA_DIR/jobs.sqlite3` by default and stores
+  metadata only. PII stays synchronous in the API. There is still no Redis/Celery/RQ, no PII worker
+  split, no OCR/PII engine change, no `reading_text`/`quality_evidence` change, no pseudonymization,
+  redaction, export, local LLM, dictionary/multi-OCR, Kubernetes, or reverse-proxy expansion.
+  Stale-running-job reclaim (lease/heartbeat), bounded parallel concurrency (>1), retry/timeout/
+  cancel controls, and the PII worker are deferred to Phase 4. PII L12 overlap resolution remains
+  the next planned *engine* step.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
 ## Product snapshot
 
-- Docker Compose runs a React/Vite SPA behind nginx and a private FastAPI backend.
+- Docker Compose runs a React/Vite SPA behind nginx, a private FastAPI `api`, and a private
+  `ocr-worker`.
 - The product supports upload, document listing/deletion, Audit, OCR/Text, detection-only PII, and
   lineage-safe manual inspection. OCR/PII job state is durably tracked in SQLite and exposed through
   safe status endpoints. It does not redact, anonymize, or pseudonymize documents.
@@ -352,8 +356,8 @@ payloads, and artifact contracts are all unchanged, and PII stays synchronous. C
 to exactly 1 (higher is rejected, deferred to Phase 4). Known limitations, **deferred to Phase 4**: a
 worker crash mid-job leaves the row `running` (no lease/heartbeat reclaim yet), auto-retry (a failed
 job is terminal), parallel concurrency >1, the PII worker split, any queue broker (Redis/RQ), and a
-slimmer API-vs-worker image split (Phase 3 uses one image for stability). The frontend still uses the
-default `sync` mode, so worker-mode polling in the UI is a follow-up. Next runtime step: **Phase 4
+slimmer API-vs-worker image split (Phase 3 uses one image for stability). At that time, the frontend
+still used the default `sync` mode; Phase 3.6 below closes that worker-mode UI gap. Next runtime step: **Phase 4
 (PII worker + concurrency/timeout/retry controls, stale-lease reclaim)**; next *engine* step remains
 **PII L12 overlap resolution**.
 
@@ -371,6 +375,23 @@ pseudonymization, or export behavior was introduced. Remaining runtime work stay
 stale-running lease/heartbeat reclaim, bounded concurrency beyond 1, retry/timeout/cancel controls,
 and the PII worker split.
 
+**Latest checkpoint (Runtime Architecture Phase 3.6 — default worker stack + simplification):**
+The default runtime is now production-shaped without profiles: `frontend`, `api`, and `ocr-worker`
+start with `make up` / `docker compose up -d --build`, `OCR_EXECUTION_MODE` defaults to `worker`,
+and `OCR_EXECUTION_MODE=sync` is retained only as a dev/test fallback. The frontend worker-mode gap is
+closed: `runOcr()` accepts the API's `202` job response, polls safe job metadata, and fetches the
+finished text artifact, so the Review flow works against the worker default. The old
+slim/pii/ocr/full Make targets, `INSTALL_OCR`/`INSTALL_PII` build args, and profile-based runtime
+fragmentation were removed; the shared API/worker image includes OCR and PII dependencies by default,
+with future image splitting documented as an optimization. `.env.example` is reduced to meaningful
+runtime/deployment options, `COMPOSE_PROJECT_NAME` defaults to `privacy-deidentification`, service
+naming is `frontend`/`api`/`ocr-worker`, and SQLite job state remains file-based under the shared
+`DOCUMENT_DATA_DIR` by default. This is a runtime/infra step — **no engine level changed** and no OCR
+algorithm, PII algorithm, `reading_text`, `quality_evidence`, artifact contract, PII input, Redis/
+Celery/RQ, Kubernetes, local LLM, dictionary/multi-OCR, pseudonymization, redaction, or export
+behavior was introduced. Remaining runtime work stays Phase 4: stale-running lease/heartbeat
+reclaim, bounded concurrency beyond 1, retry/timeout/cancel controls, and the PII worker split.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
@@ -378,9 +399,9 @@ three PRs (see the plan's checkpoint loop).
 
 ## Dev maintenance
 
-- Safe Docker cleanup targets exist: `make docker-df`, `make docker-prune`,
-  `make docker-prune-project`, `make dev-rebuild`. None of them delete volumes, uploads, or
-  document data.
+- `make docker-df` remains as a read-only Docker disk-usage check. Prune/cleanup targets were
+  removed from the Makefile in Phase 3.6 to keep the default runtime surface small and avoid
+  broad Docker cleanup actions in project commands.
 
 ## Active constraints
 

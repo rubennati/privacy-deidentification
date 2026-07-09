@@ -81,7 +81,7 @@ def test_job_store_db_path_can_be_overridden_or_left_empty() -> None:
     assert defaulted.resolved_job_store_db_path == Path("/tmp/document-data/jobs.sqlite3")
 
 
-def test_ocr_execution_mode_defaults_to_sync_and_worker_settings_are_conservative(
+def test_ocr_execution_mode_defaults_to_worker_and_worker_settings_are_conservative(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for var in (
@@ -97,14 +97,13 @@ def test_ocr_execution_mode_defaults_to_sync_and_worker_settings_are_conservativ
         DOCUMENT_DATA_DIR="/tmp/document-data",
     )
 
-    # Default preserves the Phase 2 in-process behavior; the frontend/API are unchanged.
-    assert settings.ocr_execution_mode == "sync"
+    assert settings.ocr_execution_mode == "worker"
     assert settings.ocr_worker_poll_interval_seconds == 2.0
     assert settings.ocr_worker_concurrency == 1
     assert settings.ocr_worker_max_attempts == 1
 
 
-def test_ocr_execution_mode_is_normalized_and_empty_stays_sync() -> None:
+def test_ocr_execution_mode_is_normalized_and_empty_stays_worker() -> None:
     worker = Settings(
         UPLOAD_STORAGE_DIR="/tmp/originals",
         DOCUMENT_DATA_DIR="/tmp/document-data",
@@ -117,7 +116,17 @@ def test_ocr_execution_mode_is_normalized_and_empty_stays_sync() -> None:
     )
 
     assert worker.ocr_execution_mode == "worker"
-    assert empty.ocr_execution_mode == "sync"
+    assert empty.ocr_execution_mode == "worker"
+
+
+def test_ocr_execution_mode_sync_override_still_works() -> None:
+    settings = Settings(
+        UPLOAD_STORAGE_DIR="/tmp/originals",
+        DOCUMENT_DATA_DIR="/tmp/document-data",
+        OCR_EXECUTION_MODE="sync",
+    )
+
+    assert settings.ocr_execution_mode == "sync"
 
 
 def test_unknown_ocr_execution_mode_is_rejected() -> None:
@@ -174,8 +183,8 @@ def test_config_returns_effective_upload_constraints(client: TestClient) -> None
         "candidate_validation_enabled": True,
         "score_threshold": 0.5,
     }
-    # The pytest/CI backend image installs no OCR/PII extras, so both are correctly unavailable;
-    # see test_runtime_capabilities.py for the true/false branches of the underlying checks.
+    # The lightweight pytest runner does not install or provision the real OCR/PII runtimes; see
+    # test_runtime_capabilities.py for the true/false branches of the underlying checks.
     assert body["runtime"] == {
         "ocr_available": False,
         "pii_available": False,

@@ -37,17 +37,18 @@ without its `pii_result` input — see
 - stays **local** — no bytes/text/PII leave the machine,
 - never mutates upstream artifacts; changed inputs mark downstream artifacts **stale**.
 
-Current runtime shape (additive Phase 3 state): a React SPA behind nginx is the only public entry
-point and proxies `/api/*` to a FastAPI backend that is not published to the host. Optional OCR/PII
-runtimes are heavy build profiles (slim / pii / ocr / full) baked into the *same* backend image. The
-staged move to an isolated worker boundary — so an OCR/PII OOM/crash can no longer take the API down
-— is defined in [ADR-0023](../adr/0023-runtime-worker-architecture.md). **Phases 1–3 are
-implemented:** OCR/PII run *through* an in-process `SyncJobRunner`, every run writes durable,
-metadata-only job state to SQLite, and (Phase 3) OCR can be isolated into an `ocr-worker` container
-via `OCR_EXECUTION_MODE=worker` — the API then enqueues OCR jobs (`202`) that the worker claims and
-runs out-of-process. The default stays `sync` (OCR in-process, `201`), so existing behavior and the
-frontend are unchanged unless a worker profile opts in. PII still runs synchronously in the API; the
-PII worker split, concurrency/timeout/retry controls, and any queue broker remain later phases.
+Current runtime shape (additive Phase 3.6 state): a React SPA behind nginx is the only public entry
+point and proxies `/api/*` to a private FastAPI `api` service. The default Compose stack starts
+`frontend`, `api`, and `ocr-worker`; API and OCR worker share the same runtime image and the same
+file storage/job DB mounts. The staged move to an isolated worker boundary — so an OCR/PII OOM/crash
+can no longer take the API down — is defined in
+[ADR-0023](../adr/0023-runtime-worker-architecture.md). **Phases 1–3.6 are implemented:** OCR/PII
+run through the job seam, every run writes durable metadata-only job state to SQLite, and OCR is
+isolated by default via `OCR_EXECUTION_MODE=worker` — the API enqueues OCR jobs (`202`) that the
+worker claims and runs out-of-process, while the frontend polls status and then reads the finished
+artifact. `OCR_EXECUTION_MODE=sync` remains a development/test fallback (`201` artifact body). PII
+still runs synchronously in the API; the PII worker split, concurrency/timeout/retry controls, and
+any queue broker remain later phases.
 
 ## Design invariants the engine must keep
 

@@ -239,14 +239,14 @@ mapping exist. No masking, pseudonymisation, or de-identified export is implemen
 ### Runtime architecture (cross-cutting, not an engine level)
 
 [ADR-0023](../adr/0023-runtime-worker-architecture.md) stages the move from in-process OCR/PII to
-isolated worker containers. **Phases 1–3 are implemented**: OCR/PII run through an in-process
-`SyncJobRunner` seam that writes durable metadata-only job rows, and (Phase 3) OCR can be isolated
-into an `ocr-worker` container via `OCR_EXECUTION_MODE=worker` — the API enqueues OCR jobs (`202`)
-that the worker claims (atomic SQLite `UPDATE … RETURNING`, no Redis/broker) and runs out-of-process,
-so an OCR OOM/crash cannot take the API down. The default stays `sync` (in-process, unchanged), and
-PII stays synchronous. The PII worker split, concurrency/timeout/retry controls, an optional Redis/RQ
-queue, and quality/LLM workers remain proposed and must stay aligned with — not ahead of — the
-OCR/PII engine prerequisites above.
+isolated worker containers. **Phases 1–3.6 are implemented**: OCR/PII run through a job seam that
+writes durable metadata-only job rows, and OCR is isolated by default in an `ocr-worker` container
+via `OCR_EXECUTION_MODE=worker` — the API enqueues OCR jobs (`202`) that the worker claims (atomic
+SQLite `UPDATE … RETURNING`, no Redis/broker) and runs out-of-process, so an OCR OOM/crash cannot
+take the API down. The default Compose stack is `frontend`, `api`, `ocr-worker`; sync mode remains a
+dev/test fallback. PII stays synchronous. The PII worker split, concurrency/timeout/retry controls,
+an optional Redis/RQ queue, and quality/LLM workers remain proposed and must stay aligned with — not
+ahead of — the OCR/PII engine prerequisites above.
 
 ## Legacy work-package cross-reference
 

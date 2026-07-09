@@ -1655,12 +1655,12 @@ def test_ocr_worker_mode_job_is_runnable_by_the_worker(
     assert renderer.calls == []
 
 
-def test_ocr_sync_mode_is_the_default_and_returns_201(
+def test_ocr_sync_mode_override_returns_201(
     client: TestClient,
     settings: Settings,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
 ) -> None:
-    # No OCR_EXECUTION_MODE override: the endpoint stays synchronous and returns the artifact body.
+    # The shared pytest fixture uses sync so station tests keep asserting artifact-return behavior.
     assert settings.ocr_execution_mode == "sync"
     upload, _ = _upload_and_audit(
         client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"

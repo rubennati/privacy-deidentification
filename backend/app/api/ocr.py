@@ -57,15 +57,14 @@ def ocr_document(
 ) -> TextArtifact | Response:
     """Extract text according to the latest audit and persist an immutable result.
 
-    Behavior depends on ``OCR_EXECUTION_MODE`` (ADR-0023 Phase 3):
+    Behavior depends on ``OCR_EXECUTION_MODE`` (ADR-0023 Phase 3.6):
 
-    - ``sync`` (default): extraction runs inline through the in-process job runner and the immutable
-      ``text_result`` artifact is returned with ``201``. Request/response and error semantics are
-      unchanged from Phase 2, so existing clients and the frontend keep working.
-    - ``worker``: a pending OCR job is enqueued in the shared SQLite store and ``202`` is returned
-      with the job's safe status metadata; the isolated ``ocr-worker`` process claims and runs it.
-      Clients poll ``GET /api/jobs/{job_id}`` for progress and read the artifact via
+    - ``worker`` (default): a pending OCR job is enqueued in the shared SQLite store and ``202`` is
+      returned with the job's safe status metadata; the isolated ``ocr-worker`` process claims and
+      runs it. Clients poll ``GET /api/jobs/{job_id}`` for progress and read the artifact via
       ``GET /api/documents/{document_id}/ocr`` once the job succeeds.
+    - ``sync``: extraction runs inline through the in-process job runner and the immutable
+      ``text_result`` artifact is returned with ``201``. This remains a development/test fallback.
 
     Both modes set the ``X-Job-Id`` header.
     """

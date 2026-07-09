@@ -55,13 +55,12 @@ class Settings(BaseSettings):
         alias="DOCUMENT_DATA_DIR",
     )
     job_store_db_path: Path | None = Field(default=None, alias="JOB_STORE_DB_PATH")
-    # OCR execution mode (ADR-0023 Phase 3). ``sync`` keeps the current in-process behavior: the
-    # OCR endpoint runs extraction inline and returns the artifact (201). ``worker`` makes the
-    # endpoint enqueue a pending OCR job (202) that the isolated ``ocr-worker`` process claims and
-    # runs, so an OCR OOM/crash can no longer take the API down. Default stays ``sync`` so existing
-    # deployments and the frontend are unchanged unless a worker profile explicitly opts in.
+    # OCR execution mode (ADR-0023 Phase 3.6). ``worker`` is the normal runtime: the endpoint
+    # enqueues a pending OCR job (202) that the isolated ``ocr-worker`` process claims and runs, so
+    # an OCR OOM/crash can no longer take the API down. ``sync`` remains available as an explicit
+    # development/test fallback that runs extraction inline and returns the artifact (201).
     ocr_execution_mode: Literal["sync", "worker"] = Field(
-        default="sync", alias="OCR_EXECUTION_MODE"
+        default="worker", alias="OCR_EXECUTION_MODE"
     )
     # How long the OCR worker sleeps between polls when no pending job is available.
     ocr_worker_poll_interval_seconds: float = Field(
@@ -184,10 +183,10 @@ class Settings(BaseSettings):
     @field_validator("ocr_execution_mode", mode="before")
     @classmethod
     def _normalize_ocr_execution_mode(cls, value: object) -> object:
-        """Accept ``SYNC``/``Worker`` etc.; an empty Compose value keeps the safe ``sync`` mode."""
+        """Accept ``SYNC``/``Worker`` etc.; an empty Compose value keeps default worker mode."""
         if isinstance(value, str):
             normalized = value.strip().lower()
-            return "sync" if normalized == "" else normalized
+            return "worker" if normalized == "" else normalized
         return value
 
     @field_validator(

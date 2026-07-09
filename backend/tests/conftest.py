@@ -65,6 +65,7 @@ def settings(
         upload_storage_dir=upload_dir,
         document_data_dir=document_data_dir,
         pii_feedback_archive_dir=pii_feedback_archive_dir,
+        ocr_execution_mode="sync",
         log_level="WARNING",
         pii_entity_types=(
             "PERSON",
