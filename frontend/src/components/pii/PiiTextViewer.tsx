@@ -1,21 +1,17 @@
-import type { PiiEntity } from "../../api/workstations";
 import { reviewStatusLabel, type PiiReviewStatus } from "../../api/piiReview";
-import { buildHighlightSegments } from "../../lib/piiHighlights";
+import {
+  buildAnchorBoundHighlightSegments,
+  type AnchorBoundPiiHighlight,
+} from "../../lib/piiHighlights";
 
 interface PiiTextViewerProps {
   text: string;
-  entities: readonly PiiEntity[];
+  highlights: readonly AnchorBoundPiiHighlight[];
   /**
    * When false, the per-entity hover tooltip (entity type + score) is suppressed. Highlights and
    * offsets are unchanged; this only hides the technical metadata exposed on hover in user view.
    */
   showEntityMeta?: boolean;
-  /** Resolved review status per occurrence id. A rejected (false-positive) entity is never
-   *  highlighted; a kept (opted out of pseudonymization) entity renders with a distinguishable
-   *  style; the default/accepted (pseudonymize) case looks like a normal highlight. Omitted
-   *  entirely when no review data has loaded, in which case every entity renders with its default
-   *  look. */
-  reviewStatusByOccurrenceId?: Record<string, PiiReviewStatus>;
   /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
   onSelectEntity?: (entityId: string) => void;
 }
@@ -39,12 +35,11 @@ const REVIEW_STATUS_MODIFIERS: Partial<Record<PiiReviewStatus, string>> = {
 
 export function PiiTextViewer({
   text,
-  entities,
+  highlights,
   showEntityMeta = true,
-  reviewStatusByOccurrenceId,
   onSelectEntity,
 }: PiiTextViewerProps) {
-  const segments = buildHighlightSegments(text, entities, reviewStatusByOccurrenceId);
+  const segments = buildAnchorBoundHighlightSegments(text, highlights);
 
   return (
     <div className="whitespace-pre-wrap break-words text-[15px] leading-8 text-ink">
@@ -53,16 +48,29 @@ export function PiiTextViewer({
           <span key={`text-${index}`}>{segment.text}</span>
         ) : (
           <mark
-            key={`entity-${segment.entity.id}`}
-            id={`pii-mark-${segment.entity.id}`}
-            onClick={onSelectEntity ? () => onSelectEntity(segment.entity.id) : undefined}
+            key={`entity-${segment.highlight.entity_id}-${segment.highlight.source_name}-${segment.highlight.start}`}
+            id={`pii-mark-${segment.highlight.primary_source_entity_id}`}
+            data-entity-id={segment.highlight.entity_id}
+            data-source-name={segment.highlight.source_name}
+            onClick={
+              onSelectEntity
+                ? () => onSelectEntity(segment.highlight.primary_source_entity_id)
+                : undefined
+            }
             className={`scroll-mt-16 rounded px-0.5 ${onSelectEntity ? "cursor-pointer" : ""} ${
-              ENTITY_STYLES[segment.entity.entity_type] ?? "bg-gray-200 text-gray-950"
-            } ${segment.reviewStatus ? (REVIEW_STATUS_MODIFIERS[segment.reviewStatus] ?? "") : ""}`}
+              ENTITY_STYLES[segment.highlight.entity_type] ?? "bg-gray-200 text-gray-950"
+            } ${
+              segment.highlight.needs_review ? "ring-1 ring-inset ring-red-400" : ""
+            } ${
+              REVIEW_STATUS_MODIFIERS[segment.highlight.review_state] ?? ""
+            }`}
             title={
               showEntityMeta
-                ? `${segment.entity.entity_type} · ${(segment.entity.score * 100).toFixed(0)} %` +
-                  (segment.reviewStatus ? ` · ${reviewStatusLabel(segment.reviewStatus)}` : "")
+                ? `${segment.highlight.entity_type} · ${(segment.highlight.confidence * 100).toFixed(0)} %` +
+                  ` · ${reviewStatusLabel(segment.highlight.review_state)}` +
+                  (segment.highlight.reason_codes.length > 0
+                    ? ` · ${segment.highlight.reason_codes.join(", ")}`
+                    : "")
                 : undefined
             }
           >

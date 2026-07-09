@@ -1,5 +1,4 @@
-import type { PiiEntity } from "../../api/workstations";
-import type { PiiReviewStatus } from "../../api/piiReview";
+import type { AnchorBoundPiiHighlightModel } from "../../lib/piiHighlights";
 import { PiiTextViewer } from "./PiiTextViewer";
 
 export type ReviewTextMode = "reading" | "raw" | "layout";
@@ -8,14 +7,12 @@ interface ReviewTextViewerProps {
   rawText: string;
   readingText?: string | null;
   layoutText?: string | null;
-  entities: readonly PiiEntity[];
+  highlightModel: AnchorBoundPiiHighlightModel;
   mode: ReviewTextMode;
   onModeChange: (mode: ReviewTextMode) => void;
   devMode?: boolean;
   /** Forwarded to the highlighted text view: when false, hover metadata is suppressed. */
   showEntityMeta?: boolean;
-  /** Resolved review status per occurrence id, respected in both raw and reading mode. */
-  reviewStatusByOccurrenceId?: Record<string, PiiReviewStatus>;
   /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
   onSelectEntity?: (entityId: string) => void;
 }
@@ -26,12 +23,11 @@ export function ReviewTextViewer({
   rawText,
   readingText,
   layoutText,
-  entities,
+  highlightModel,
   mode,
   onModeChange,
   devMode = false,
   showEntityMeta = true,
-  reviewStatusByOccurrenceId,
   onSelectEntity,
 }: ReviewTextViewerProps) {
   const hasReadingText = readingText != null;
@@ -42,32 +38,17 @@ export function ReviewTextViewer({
       : mode === "reading" && hasReadingText
         ? "reading"
         : "raw";
-  const projectedEntities =
-    readingText == null
-      ? []
-      : entities.flatMap((entity) => {
-          const start = entity.reading_start_offset;
-          const end = entity.reading_end_offset;
-          if (
-            entity.projection_status !== "exact" ||
-            start == null ||
-            end == null ||
-            start < 0 ||
-            end <= start ||
-            end > Array.from(readingText).length
-          ) {
-            return [];
-          }
-          return [
-            {
-              ...entity,
-              text: Array.from(readingText).slice(start, end).join(""),
-              start_offset: start,
-              end_offset: end,
-            },
-          ];
-        });
-  const hasRawOnlyEntities = entities.some((entity) => entity.projection_status !== "exact");
+  const rawHighlights = highlightModel.byView.technical_raw_text;
+  const readingHighlights = highlightModel.byView.canonical_reading_text;
+  const layoutHighlights = highlightModel.byView.layout_text;
+  const hasMissingCanonicalMapping =
+    highlightModel.summary.missing_canonical_count > 0 ||
+    highlightModel.summary.partial_canonical_count > 0 ||
+    highlightModel.summary.ambiguous_canonical_count > 0;
+  const hasAnchorState =
+    highlightModel.summary.evidence_only_count > 0 ||
+    highlightModel.summary.partial_binding_count > 0 ||
+    highlightModel.summary.ambiguous_binding_count > 0;
 
   return (
     <section className="min-w-0" aria-labelledby="text-viewer-heading">
@@ -130,14 +111,23 @@ export function ReviewTextViewer({
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent-dark">
           {activeMode === "reading"
             ? devMode
-              ? "Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen verwenden sicher projizierte Lesetext-Offsets."
+              ? "Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen kommen aus dem anchor-gebundenen Entity-Vertrag."
               : "Der Lesetext ist die lesefreundliche Hauptansicht."
-            : "Der Layout-Text dient der Orientierung. PII-Markierungen verwenden derzeit den technischen Rohtext."}
+            : layoutHighlights.length > 0
+              ? "Der Layout-Text dient der Orientierung. Markierungen erscheinen nur, wenn der Entity-Vertrag Layout-Ranges liefert."
+              : "Der Layout-Text dient der Orientierung. Für diese Entities liefert der Vertrag keine Layout-Ranges."}
         </p>
       )}
-      {activeMode === "reading" && hasRawOnlyEntities && (
+      {activeMode === "reading" && hasMissingCanonicalMapping && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
-          Einige PII-Markierungen sind nur im technischen Rohtext sichtbar.
+          Einige PII-Entities haben fehlende, teilweise oder mehrdeutige Lesetext-Zuordnung und
+          werden hier nicht geraten.
+        </p>
+      )}
+      {hasAnchorState && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Einige PII-Entities sind nur teilweise an Anchors gebunden oder laufen als
+          evidence-only Fallback.
         </p>
       )}
 
@@ -149,9 +139,18 @@ export function ReviewTextViewer({
         <div className="mx-auto max-w-[210mm] rounded-sm border border-card-border bg-card px-6 py-8 shadow-[0_1px_2px_rgba(17,24,39,0.06),0_12px_32px_rgba(17,24,39,0.08)] sm:px-10 sm:py-12">
           {activeMode === "layout" ? (
             layoutText ? (
-              <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-ink">
-                {layoutText}
-              </pre>
+              layoutHighlights.length > 0 ? (
+                <PiiTextViewer
+                  text={layoutText}
+                  highlights={layoutHighlights}
+                  showEntityMeta={showEntityMeta}
+                  onSelectEntity={onSelectEntity}
+                />
+              ) : (
+                <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-ink">
+                  {layoutText}
+                </pre>
+              )
             ) : (
               <p className="text-sm text-muted">Der Layout-Text ist leer.</p>
             )
@@ -159,9 +158,8 @@ export function ReviewTextViewer({
             readingText ? (
               <PiiTextViewer
                 text={readingText}
-                entities={projectedEntities}
+                highlights={readingHighlights}
                 showEntityMeta={showEntityMeta}
-                reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
                 onSelectEntity={onSelectEntity}
               />
             ) : (
@@ -170,9 +168,8 @@ export function ReviewTextViewer({
           ) : rawText ? (
             <PiiTextViewer
               text={rawText}
-              entities={entities}
+              highlights={rawHighlights}
               showEntityMeta={showEntityMeta}
-              reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
               onSelectEntity={onSelectEntity}
             />
           ) : (
