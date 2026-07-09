@@ -426,3 +426,16 @@ Phase 3.6 turns the Phase 3 opt-in worker shape into the normal runtime:
 **Intentionally unchanged in Phase 3.6:** OCR algorithms, PII algorithms, `reading_text`,
 `quality_evidence`, artifact contracts, SQLite-as-file job state, PII synchronous execution, and
 the no-Redis/Celery/RQ/no-Kubernetes boundary.
+
+### Runtime Job UX / in-app notifications v1 (product-facing layer, implemented)
+
+[ADR-0030](0030-runtime-job-ux-notifications-v1.md) builds the product-facing presentation layer on
+top of the job model/status API this ADR delivers, without changing any of it: `JobRecord`,
+`JobStore`, the OCR worker, and `OCR_EXECUTION_MODE` semantics are all unchanged. The only backend
+change is one additive `JobStatusResponse.is_terminal` field. On the frontend, a `jobActivityStore`
+records job status, persists active job ids to `localStorage` so a page reload can recover and
+resume polling, and serializes polling per job id through a single-owner try-lock so a live submit
+and a reload-recovery resume can never double-poll the same job. This is v1: polling +
+`localStorage`, no Redis/RQ/Celery, no WebSocket/SSE/push notifications — matching this ADR's
+existing "frontend consumes job status, not worker internals" boundary
+([`target-architecture.md`](../engine/target-architecture.md#runtime-job-contract)).

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { jobActivityStore } from "../lib/jobActivity";
 import { runOcr, runPii, WorkstationApiError } from "./workstations";
 
 const GENERIC_ERROR_DETAIL = "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut.";
@@ -137,6 +138,10 @@ describe("runOcr", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/documents/doc-1/ocr", {
       method: "GET",
     });
+    // The 202 job is tracked immediately, and the shared store reflects its terminal status once
+    // the (single, de-duplicated) poll loop observes it — this is what lets a status banner and a
+    // reload recovery both read the same up-to-date state.
+    expect(jobActivityStore.getJob(JOB_ID)?.status).toBe("succeeded");
   });
 
   it("turns failed worker job metadata into a workstation error", async () => {

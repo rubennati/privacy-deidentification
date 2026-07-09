@@ -558,6 +558,32 @@ binding `review_result` (still open). See
 [ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md). Next: formal **Review L8
 `review_result`**, then the **PII validation transparency report**.
 
+**Latest checkpoint (Runtime Job UX / in-app notifications v1):** Cross-cutting runtime/UX step, not
+an engine level change. On top of ADR-0023's job model/status API, the product-facing presentation
+layer is delivered: `JobStatusResponse` gains one additive `is_terminal: bool` field
+(`backend/app/schemas.py`/`backend/app/api/jobs.py`); no other backend change — the existing
+`GET /api/jobs/{job_id}` and `GET /api/documents/{document_id}/jobs` (already newest-first,
+document-scoped, bounded) already carried enough safe metadata for this UX. The frontend gains a
+small, framework-agnostic `jobActivityStore` (`frontend/src/lib/jobActivity.ts`): it records job
+status, persists active (non-terminal) jobs to `localStorage` for reload recovery, and serializes
+polling per job id through a single-owner try-lock (`beginPolling`/`endPolling` +
+`pollJobUntilTerminal`) so a live `runOcr()` call and a reload-recovery resume can never double-poll
+the same job. `runOcr()` now records into and polls through this shared store instead of its own
+private loop, with its external artifact-or-throw contract and existing fetch-call-count tests
+unchanged. `resumeActiveJobs()` rehydrates a document's tracked jobs from `localStorage` and
+falls back to `GET /api/documents/{id}/jobs` if the id was not available locally (cleared storage,
+different browser/tab). A small `JobStatusBanner` (`frontend/src/components/JobStatusBanner.tsx`,
+text in `frontend/src/lib/jobDisplay.ts`) shows accepted/running/succeeded/failed/canceled for a
+recovered job on the document detail page, only while nothing on the page is already showing its
+own live-run progress UI. A recovered `succeeded` job refreshes the OCR artifact (showing a
+controlled message if that refetch itself fails); a recovered `failed`/`canceled` job shows the
+backend's sanitized `error_message`, never raw text. This is explicitly **polling + `localStorage`,
+v1** — no Redis/RQ/Celery, no WebSocket/SSE, no browser/OS/email push; a future push transport can
+replace *how* the store learns about updates without changing the job contract, `JobStatus` shape,
+or any component reading from the store. No OCR/PII detection, artifact contract, `OCR_EXECUTION_MODE`
+semantics, Docker/Compose, or Makefile change. See
+[ADR-0030](../docs/adr/0030-runtime-job-ux-notifications-v1.md).
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next

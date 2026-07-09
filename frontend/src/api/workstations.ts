@@ -1,5 +1,7 @@
 // Typed client for the Audit, OCR/Text, PII, and safe job-status endpoints.
 
+import { jobActivityStore, pollJobUntilTerminal } from "../lib/jobActivity";
+
 export interface AuditPageResult {
   page_number: number;
   text_char_count: number;
@@ -378,6 +380,9 @@ export interface JobStatus {
   result_artifact_id: string | null;
   result_artifact_type: string | null;
   metadata: Record<string, string>;
+  // Additive (Runtime Job UX v1). Older cached/mocked responses may omit it; treat as unknown
+  // rather than assuming terminal — callers should tolerate `undefined`.
+  is_terminal?: boolean;
 }
 
 interface ApiError {
@@ -417,6 +422,8 @@ export async function runOcr(documentId: string): Promise<TextArtifact> {
   const response = await requestStation(documentId, "ocr", "POST");
   if (response.status === 202) {
     const queuedJob = (await response.json()) as JobStatus;
+    // Recorded immediately so any subscribed UI shows "accepted" before the first poll tick.
+    jobActivityStore.record(queuedJob);
     await waitForOcrJob(queuedJob.job_id);
     return fetchOcr(documentId);
   }
@@ -428,6 +435,23 @@ export async function runOcr(documentId: string): Promise<TextArtifact> {
 
 export function fetchPii(documentId: string): Promise<PiiArtifact> {
   return requestArtifact<PiiArtifact>(documentId, "pii", "GET");
+}
+
+/** Newest-first job metadata for one document (`GET /api/documents/{id}/jobs`). Used for reload
+ * recovery when a job id was not (or could no longer be) tracked in `localStorage`. */
+export async function fetchDocumentJobs(documentId: string): Promise<JobStatus[]> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/documents/${encodeURIComponent(documentId)}/jobs`, {
+      method: "GET",
+    });
+  } catch {
+    throw new WorkstationApiError("Keine Verbindung zum Server.", 0);
+  }
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+  return (await response.json()) as JobStatus[];
 }
 
 export function runPii(documentId: string, request?: PiiRunRequest): Promise<PiiArtifact> {
@@ -470,7 +494,7 @@ async function requestStation(
   return response;
 }
 
-async function fetchJobStatus(jobId: string): Promise<JobStatus> {
+export async function fetchJobStatus(jobId: string): Promise<JobStatus> {
   let response: Response;
   try {
     response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "GET" });
@@ -483,24 +507,25 @@ async function fetchJobStatus(jobId: string): Promise<JobStatus> {
   return (await response.json()) as JobStatus;
 }
 
+// Polling itself is owned by jobActivity's shared, de-duplicated poll loop (see
+// `pollJobUntilTerminal`) so a reload-recovery resume can never race a live `runOcr` call into
+// double-polling the same job id.
 async function waitForOcrJob(jobId: string): Promise<JobStatus> {
-  const deadline = Date.now() + OCR_JOB_TIMEOUT_MS;
-  while (true) {
-    const job = await fetchJobStatus(jobId);
-    if (job.status === "succeeded") {
-      return job;
-    }
-    if (job.status === "failed" || job.status === "canceled") {
-      throw jobStatusError(job);
-    }
-    if (Date.now() >= deadline) {
-      throw new WorkstationApiError(
-        "Die OCR-Verarbeitung dauert zu lange. Bitte versuchen Sie es später erneut.",
-        504,
-      );
-    }
-    await sleep(OCR_JOB_POLL_INTERVAL_MS);
+  const job = await pollJobUntilTerminal(jobActivityStore, jobId, fetchJobStatus, {
+    intervalMs: OCR_JOB_POLL_INTERVAL_MS,
+    deadlineAt: Date.now() + OCR_JOB_TIMEOUT_MS,
+  });
+  if (job.status === "succeeded") {
+    return job;
   }
+  if (job.status === "failed" || job.status === "canceled") {
+    throw jobStatusError(job);
+  }
+  // Still pending/running when the deadline was reached.
+  throw new WorkstationApiError(
+    "Die OCR-Verarbeitung dauert zu lange. Bitte versuchen Sie es später erneut.",
+    504,
+  );
 }
 
 function jobStatusError(job: JobStatus): WorkstationApiError {
@@ -518,12 +543,6 @@ function statusFromJobErrorCode(errorCode: string | null): number | null {
     return null;
   }
   return Number(match[1]);
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
 }
 
 async function throwApiError(response: Response): Promise<never> {

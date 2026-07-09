@@ -344,6 +344,13 @@ dev/test fallback. PII stays synchronous. The PII worker split, concurrency/time
 an optional Redis/RQ queue, and quality/LLM workers remain proposed and must stay aligned with — not
 ahead of — the OCR/PII engine prerequisites above.
 
+**Runtime Job UX / in-app notifications v1** ([ADR-0030](../adr/0030-runtime-job-ux-notifications-v1.md))
+is the product-facing presentation layer on top of the job contract above: a frontend
+`jobActivityStore` tracks job status, persists active job ids to `localStorage` for reload recovery,
+and polls through a single-owner try-lock; one additive backend `is_terminal` field is the only
+schema change. Polling + `localStorage` is v1 — no Redis/RQ/Celery, no WebSocket/SSE/push
+notifications yet.
+
 ## Legacy work-package cross-reference
 
 Older documents and ADRs may refer to `Engine-0` through `Engine-9`. Those names are historical

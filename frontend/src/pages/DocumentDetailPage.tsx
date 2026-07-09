@@ -1,21 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { fetchAppConfig, type AppConfig } from "../api/config";
 import { DocumentsApiError, fetchDocument, type DocumentSummary } from "../api/documents";
 import {
   fetchAudit,
+  fetchDocumentJobs,
+  fetchJobStatus,
   fetchOcr,
   fetchPii,
   runAudit,
   runOcr,
   runPii,
   type AuditArtifact,
+  type JobStatus,
   type PiiArtifact,
   type PiiRunRequest,
   type TextArtifact,
   WorkstationApiError,
 } from "../api/workstations";
+import { jobActivityStore, resumeActiveJobs } from "../lib/jobActivity";
+import { JobStatusBanner } from "../components/JobStatusBanner";
 import {
   buildFeedbackStatusMap,
   fetchPiiFeedbackSummary,
@@ -88,6 +93,13 @@ export default function DocumentDetailPage() {
     ocr: false,
     pii: false,
   });
+  // Runtime Job UX v1: the newest tracked OCR job for this document, sourced from the shared
+  // job-activity store (localStorage + backend fallback), independent of any locally in-flight
+  // call. This is what lets a reloaded page show "still running"/"finished while you were away"
+  // instead of silently looking idle.
+  const [trackedOcrJob, setTrackedOcrJob] = useState<JobStatus | null>(null);
+  const [ocrResultLoadError, setOcrResultLoadError] = useState(false);
+  const handledOcrJobIds = useRef(new Set<string>());
 
   useEffect(() => {
     let active = true;
@@ -173,6 +185,61 @@ export default function DocumentDetailPage() {
     };
   }, [documentId, piiArtifactId]);
 
+  // Reload recovery: rehydrate any tracked OCR job for this document and resume polling it (a
+  // no-op if a live `runOcr` call already owns polling — see jobActivity's try-lock), then keep the
+  // banner in sync with every subsequent update the shared store observes.
+  useEffect(() => {
+    if (!documentId) {
+      setTrackedOcrJob(null);
+      return;
+    }
+    const syncFromStore = () => {
+      const [latestOcrJob] = jobActivityStore
+        .list(documentId)
+        .filter((job) => job.kind === "ocr_text");
+      setTrackedOcrJob(latestOcrJob ?? null);
+    };
+    syncFromStore();
+    const unsubscribe = jobActivityStore.subscribe(syncFromStore);
+    resumeActiveJobs(jobActivityStore, documentId, fetchJobStatus, fetchDocumentJobs);
+    return unsubscribe;
+  }, [documentId]);
+
+  // Only act on the tracked job when nothing on this page is already driving its own progress UI
+  // for it (a live click-triggered run already applies its own result via onText/onPii and would
+  // otherwise be double-fetched here). Each terminal job id is only ever handled once.
+  const noLocalOcrRunInFlight = !pending.ocr && !isAnalysisRunning(analysisStep);
+  useEffect(() => {
+    if (!documentId || !trackedOcrJob || !noLocalOcrRunInFlight) {
+      return;
+    }
+    if (handledOcrJobIds.current.has(trackedOcrJob.job_id)) {
+      return;
+    }
+    if (trackedOcrJob.status === "succeeded") {
+      handledOcrJobIds.current.add(trackedOcrJob.job_id);
+      setOcrResultLoadError(false);
+      void fetchOcr(documentId)
+        .then((result) => {
+          setText(result);
+          setReviewTextMode("reading");
+        })
+        .catch(() => setOcrResultLoadError(true));
+    } else if (trackedOcrJob.status === "failed" || trackedOcrJob.status === "canceled") {
+      handledOcrJobIds.current.add(trackedOcrJob.job_id);
+      setStationErrors((current) => ({
+        ...current,
+        ocr: {
+          message:
+            trackedOcrJob.error_message && trackedOcrJob.error_message !== ""
+              ? trackedOcrJob.error_message
+              : "Die OCR-Verarbeitung ist fehlgeschlagen.",
+          correlationId: null,
+        },
+      }));
+    }
+  }, [documentId, trackedOcrJob, noLocalOcrRunInFlight]);
+
   if (loading) {
     return (
       <main className="min-h-screen bg-page px-4 py-12">
@@ -215,6 +282,14 @@ export default function DocumentDetailPage() {
       : "stale";
   const currentPiiEntities = piiStatus === "current" ? (pii?.content.entities ?? []) : [];
   const reviewStatusByOccurrenceId = buildReviewStatusMap(reviewResult);
+  // Hide the recovered-job banner once a succeeded job's result has been applied (the loaded
+  // content below speaks for itself); keep showing a failed/canceled job so the user always has a
+  // controlled explanation, since that is the only user-view surface for a recovered failure.
+  const trackedJobHandled = trackedOcrJob ? handledOcrJobIds.current.has(trackedOcrJob.job_id) : false;
+  const showTrackedJobBanner =
+    noLocalOcrRunInFlight &&
+    trackedOcrJob !== null &&
+    !(trackedOcrJob.status === "succeeded" && trackedJobHandled);
   // A full, current analysis exists once both OCR and PII match the latest upstream inputs.
   const hasCurrentAnalysis = ocrStatus === "current" && piiStatus === "current";
   // Proactive hint when a station's runtime is not installed on this server (see
@@ -404,6 +479,15 @@ export default function DocumentDetailPage() {
               Extrahierter Text und erkannte PII-Entities. Es werden keine Inhalte verändert.
             </p>
           </div>
+          {/* Reload-recovery status: reflects a background-tracked OCR job (e.g. after a page
+              reload) while nothing on this page is already showing its own live progress UI. */}
+          {showTrackedJobBanner && <JobStatusBanner job={trackedOcrJob} />}
+          {noLocalOcrRunInFlight && ocrResultLoadError && (
+            <StatusNotice
+              status="error"
+              message="Die Texterkennung wurde abgeschlossen, das Ergebnis konnte aber nicht geladen werden. Bitte laden Sie die Seite neu."
+            />
+          )}
           {/* User view gets a single product-facing analysis action; dev view keeps its separate
               per-station controls above and never renders this panel. */}
           {!isDevView && (

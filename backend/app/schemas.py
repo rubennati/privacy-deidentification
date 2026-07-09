@@ -1574,6 +1574,9 @@ class JobStatusResponse(BaseModel):
     result_artifact_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     result_artifact_type: str | None = Field(default=None, max_length=80)
     metadata: dict[str, str] = Field(default_factory=dict)
+    # Additive (Runtime Job UX v1): true once a job reached a terminal state
+    # (succeeded/failed/canceled), so a client can stop polling without hardcoding the status set.
+    is_terminal: bool = False
 
 
 class PiiEntityGroupProjectionSummary(BaseModel):

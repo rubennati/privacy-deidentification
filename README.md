@@ -139,6 +139,19 @@ The default backend image now includes the required OCR and PII dependencies; AP
 that same image for Phase 3.6. Splitting a slimmer API image from the worker image is documented as
 a future optimization, not current complexity.
 
+#### Runtime job status in the UI
+
+The document page shows the OCR job's lifecycle (accepted/queued, running, succeeded, failed) as it
+happens, and recovers it after a page reload: the frontend tracks the job id returned by a `202`
+response in `localStorage`, polls `GET /api/jobs/{job_id}` (falling back to
+`GET /api/documents/{id}/jobs` if the id was not available locally), and refreshes the OCR/Text view
+once the job succeeds. A failed job shows the backend's sanitized `error_message`, never a raw
+exception or document text. Today this is **polling plus `localStorage`, no push transport** — no
+Redis/RQ/Celery, no WebSocket/SSE/browser notifications. The frontend consumes job status only
+(never worker internals), so a future push-based notification transport can replace polling without
+changing what a job status response looks like. See
+[ADR-0030](docs/adr/0030-runtime-job-ux-notifications-v1.md).
+
 ## API
 
 | Method | Path                   | Description                                                |
@@ -158,6 +171,8 @@ a future optimization, not current complexity.
 | GET    | `/api/documents/{id}/pii`    | Get the newest PII result                              |
 | POST   | `/api/documents/{id}/pii/feedback` | Append gated dev-only entity feedback          |
 | GET    | `/api/documents/{id}/pii/feedback`  | Restore gated dev-only feedback by artifact    |
+| GET    | `/api/jobs/{job_id}`   | Safe status metadata for one OCR/PII job                    |
+| GET    | `/api/documents/{id}/jobs` | Newest-first safe job metadata for one document (default limit 20, max 100) |
 
 `POST /api/uploads` returns `201` with:
 

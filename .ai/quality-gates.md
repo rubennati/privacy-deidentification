@@ -19,7 +19,9 @@ worker execution model, `docker-compose.yml`, the `Makefile`, or `.env.example`:
   consumes it, a matching frontend contract test.
 - **Job-flow coverage.** Changes to async job handling must keep frontend tests for the
   pending, running, succeeded, and failed job flows (plus the synchronous fallback and
-  missing/legacy-field guards) green.
+  missing/legacy-field guards) green. This includes the job-activity layer (ADR-0030): reload
+  recovery from `localStorage`, the document-jobs fallback, and the single-owner polling try-lock
+  (no duplicate poll loops for one job id) all need their own tests, not just the happy-path flow.
 - **Compose build/start smoke.** When `docker-compose.yml` or the `Makefile` changes, run
   `python scripts/check-runtime-surface.py` (via `make test`), `docker compose config`, and
   `docker compose config --services`; do a `make build` / `make up` smoke when feasible.

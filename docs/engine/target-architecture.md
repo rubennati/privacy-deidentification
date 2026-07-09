@@ -97,6 +97,16 @@ polls; future notification transports (SSE, WebSocket, an event bus) may be adde
 current durable job state for the single-node local/runtime model (ADR-0023). A future notification
 system changes *how* progress is delivered, never *what* text OCR produces.
 
+**Runtime Job UX v1** ([ADR-0030](../adr/0030-runtime-job-ux-notifications-v1.md)) implements the
+product-facing half of this contract additively: a frontend `jobActivityStore` records job status,
+persists active job ids to `localStorage` so a page reload can recover and resume polling, and
+serializes polling per job id through a single-owner try-lock so a live submit and a reload-recovery
+resume never double-poll the same job. The only backend addition is one additive
+`JobStatusResponse.is_terminal` field; the job model, `JobStore`, and worker are unchanged. This is
+explicitly v1 — polling + `localStorage`, no push transport yet — consistent with the paragraph
+above: a future SSE/WebSocket/event-bus transport would change how the store learns about updates,
+not the job contract or any component that reads from the store.
+
 ## Design invariants the engine must keep
 
 1. **Canonical vs readable text stay separate.** PII/review always run on `best_text_result`;

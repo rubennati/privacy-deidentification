@@ -100,3 +100,14 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   the formal binding `review_result`; it mutates nothing, adds no detection, keeps raw text the
   primary/only active input, and existing `GET …/pii`/`…/pii/review` responses are unchanged. Only
   additive frontend TS types + a fetch helper were added.
+- [ADR-0030](../docs/adr/0030-runtime-job-ux-notifications-v1.md) — **Runtime Job UX / in-app
+  notifications v1.** The product-facing presentation layer on top of ADR-0023's job model/status
+  API: one additive `JobStatusResponse.is_terminal` field on the backend, plus a frontend
+  `jobActivityStore` (`frontend/src/lib/jobActivity.ts`) that records job status, persists active
+  jobs to `localStorage` for reload recovery, and polls through a single-owner try-lock so a live
+  `runOcr()` call and a recovery resume never double-poll the same job. A small `JobStatusBanner`
+  shows accepted/running/succeeded/failed for a recovered job; a succeeded recovery refreshes the
+  OCR artifact, a failed one shows the sanitized `error_message`. Polling + `localStorage` is
+  explicitly v1 — no Redis/RQ/Celery, no WebSocket/SSE/push; a future transport can replace *how*
+  the store learns about updates without changing the job contract. No OCR/PII/runtime/artifact
+  contract change.

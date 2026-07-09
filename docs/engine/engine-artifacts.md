@@ -59,7 +59,13 @@ when `OCR_EXECUTION_MODE=worker`, which is now the default OCR runtime mode. `sy
 explicit fallback; PII execution is still synchronous in the API. It carries only non-sensitive
 lifecycle metadata and references the immutable artifacts a job produces; raw document text,
 canonical reading text, layout text, structured-content payloads, PII values, artifact JSON, stack
-traces, and raw exception text never enter it.
+traces, and raw exception text never enter it. The public `GET /api/jobs/{job_id}` /
+`GET /api/documents/{id}/jobs` status views additionally carry one derived `is_terminal: bool` field
+(Runtime Job UX v1, [ADR-0030](../adr/0030-runtime-job-ux-notifications-v1.md)) so a client does not
+have to hardcode which statuses are terminal; it is computed from `status` and stores nothing new.
+That same ADR adds a frontend-only `jobActivityStore` that mirrors this status metadata into
+`localStorage` for reload recovery — it is a local UI cache of the same safe fields, not a new
+artifact or a second source of truth.
 
 ## Raw, canonical reading, and layout text
 

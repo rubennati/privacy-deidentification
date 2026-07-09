@@ -7,10 +7,12 @@ from fastapi import APIRouter, Depends, Query
 from app.config import Settings, get_settings
 from app.schemas import ErrorResponse, JobStatusResponse
 from app.services.document_service import DocumentNotFoundError, get_document_record
-from app.services.job_models import JobRecord
+from app.services.job_models import JobRecord, JobStatus
 from app.services.job_store import JobNotFoundError, JobStore, get_job_store
 
 router = APIRouter(tags=["jobs"])
+
+_TERMINAL_STATUSES = frozenset({JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELED})
 
 
 def provide_job_store(settings: Settings = Depends(get_settings)) -> JobStore:
@@ -70,4 +72,5 @@ def to_job_status_response(record: JobRecord) -> JobStatusResponse:
         result_artifact_id=record.artifact_id,
         result_artifact_type=record.artifact_type,
         metadata=dict(record.metadata),
+        is_terminal=record.status in _TERMINAL_STATUSES,
     )
