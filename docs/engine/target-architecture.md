@@ -106,8 +106,8 @@ spike** (Engine-8 in [`roadmap.md`](roadmap.md)), not a pipeline integration.
 ## Database considerations
 
 Partially implemented for runtime job metadata only. ADR-0023 Phase 2 adds a small stdlib-SQLite
-job store (`DOCUMENT_DATA_DIR/jobs.sqlite3` by default, overrideable with `JOB_STORE_DB_PATH`) plus a
-safe status API. It stores only ids, lifecycle timestamps/status, sanitized errors, and produced
+job store (`DATA_JOB_STATE_DIR/jobs.sqlite3` by default — a dedicated job-state root separate from
+per-document artifacts, overrideable with `JOB_STORE_DB_PATH`) plus a safe status API. It stores only ids, lifecycle timestamps/status, sanitized errors, and produced
 artifact references. Artifact payloads, raw OCR/reading/layout text, structured-content contents,
 PII values, and uploaded bytes remain file-based and never enter SQLite. There is still no ORM,
 Alembic, or external queue/broker; Phase 3's OCR worker uses the same SQLite file as a local

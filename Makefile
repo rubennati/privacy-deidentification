@@ -2,6 +2,9 @@
 
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
+# Single host data root, mirrored from docker-compose.yml's DATA_ROOT default. Override to relocate
+# all bind-mounted storage (uploads, document-store, job-state, feedback archive, OCR models).
+DATA_ROOT ?= volumes
 
 # One-off tool runners. Dependency caches live in named volumes so repeated runs are fast and the
 # host working tree stays clean.
@@ -20,7 +23,8 @@ help: ## Show this help
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 runtime-dirs: ## Create local bind-mount roots used by Compose
-	mkdir -p volumes/uploads volumes/document-data volumes/pii-feedback-archive volumes/ocr-models
+	mkdir -p $(DATA_ROOT)/uploads $(DATA_ROOT)/document-store $(DATA_ROOT)/job-state \
+		$(DATA_ROOT)/pii-feedback-archive $(DATA_ROOT)/ocr-models
 
 up: runtime-dirs ## Build and start frontend + api + ocr-worker (http://localhost:8080)
 	$(COMPOSE) up -d --build
@@ -75,19 +79,19 @@ lock: ## (Re)generate dependency lockfiles (backend uv.lock + frontend package-l
 
 benchmark-private: ## Private local OCR/PII benchmark report (reads existing artifacts only)
 	$(BENCHMARK_RUN) "python scripts/benchmark/private_benchmark.py \
-		--uploads-dir volumes/uploads \
-		--document-data-dir volumes/document-data \
-		--metadata volumes/benchmark/ocr_pii_benchmark_metadata.json \
-		--groundtruth volumes/benchmark/ocr_pii_benchmark_pii_groundtruth.json \
-		--output-dir volumes/benchmark/reports"
+		--uploads-dir $(DATA_ROOT)/uploads \
+		--document-data-dir $(DATA_ROOT)/document-store \
+		--metadata $(DATA_ROOT)/benchmark/ocr_pii_benchmark_metadata.json \
+		--groundtruth $(DATA_ROOT)/benchmark/ocr_pii_benchmark_pii_groundtruth.json \
+		--output-dir $(DATA_ROOT)/benchmark/reports"
 
 benchmark-private-json: ## Same as benchmark-private, JSON report only
 	$(BENCHMARK_RUN) "python scripts/benchmark/private_benchmark.py \
-		--uploads-dir volumes/uploads \
-		--document-data-dir volumes/document-data \
-		--metadata volumes/benchmark/ocr_pii_benchmark_metadata.json \
-		--groundtruth volumes/benchmark/ocr_pii_benchmark_pii_groundtruth.json \
-		--output-dir volumes/benchmark/reports \
+		--uploads-dir $(DATA_ROOT)/uploads \
+		--document-data-dir $(DATA_ROOT)/document-store \
+		--metadata $(DATA_ROOT)/benchmark/ocr_pii_benchmark_metadata.json \
+		--groundtruth $(DATA_ROOT)/benchmark/ocr_pii_benchmark_pii_groundtruth.json \
+		--output-dir $(DATA_ROOT)/benchmark/reports \
 		--json-only"
 
 benchmark-test: ## Run the private benchmark runner's synthetic unit tests (no OCR/PII deps)

@@ -51,8 +51,15 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("UPLOAD_STORAGE_DIR", "UPLOAD_DIR"),
     )
     document_data_dir: Path = Field(
-        default=Path("/data/document-data"),
+        default=Path("/data/document-store"),
         alias="DOCUMENT_DATA_DIR",
+    )
+    # Dedicated persistent root for durable job state (jobs.sqlite3). It is deliberately separate
+    # from document_data_dir so the SQLite DB never sits next to per-document artifact folders and
+    # so API and OCR worker always meet at the same file. See ADR-0023.
+    job_state_dir: Path = Field(
+        default=Path("/data/job-state"),
+        alias="DATA_JOB_STATE_DIR",
     )
     job_store_db_path: Path | None = Field(default=None, alias="JOB_STORE_DB_PATH")
     # OCR execution mode (ADR-0023 Phase 3.6). ``worker`` is the normal runtime: the endpoint
@@ -222,6 +229,7 @@ class Settings(BaseSettings):
         roots = {
             "UPLOAD_STORAGE_DIR": self.upload_storage_dir.resolve(),
             "DOCUMENT_DATA_DIR": self.document_data_dir.resolve(),
+            "DATA_JOB_STATE_DIR": self.job_state_dir.resolve(),
             "PII_FEEDBACK_ARCHIVE_DIR": self.pii_feedback_archive_dir.resolve(),
         }
         names = list(roots)
@@ -245,8 +253,10 @@ class Settings(BaseSettings):
 
     @property
     def resolved_job_store_db_path(self) -> Path:
-        """SQLite job metadata DB path. Defaults beside document-data, not inside artifacts."""
-        return self.job_store_db_path or (self.document_data_dir / "jobs.sqlite3")
+        """SQLite job metadata DB path. Defaults inside the dedicated job-state root, never beside
+        per-document artifacts. ``JOB_STORE_DB_PATH`` is an advanced override that must still point
+        at a location mounted into both the API and the OCR worker."""
+        return self.job_store_db_path or (self.job_state_dir / "jobs.sqlite3")
 
 
 @lru_cache(maxsize=1)

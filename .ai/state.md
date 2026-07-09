@@ -10,8 +10,12 @@
   as an explicit development/test fallback (`OCR_EXECUTION_MODE=sync`, `201` artifact body). The old
   slim/pii/ocr/full Make targets and `INSTALL_OCR`/`INSTALL_PII` build toggles are removed; API and
   OCR worker share one full backend image for now, with a slimmer API image deferred as future
-  optimization. SQLite remains file-based at `DOCUMENT_DATA_DIR/jobs.sqlite3` by default and stores
-  metadata only. PII stays synchronous in the API. There is still no Redis/Celery/RQ, no PII worker
+  optimization. All host storage now lives under a single `DATA_ROOT` (default `./volumes`);
+  Compose maps `uploads`, `document-store` (renamed from `document-data`), `job-state`,
+  `pii-feedback-archive`, and `ocr-models` onto stable internal container paths, which are advanced
+  overrides only (not in `.env.example`). SQLite job state remains file-based but now lives in its
+  own dedicated `job-state` root (`DATA_JOB_STATE_DIR/jobs.sqlite3` by default), no longer beside
+  per-document artifacts, and stores metadata only. PII stays synchronous in the API. There is still no Redis/Celery/RQ, no PII worker
   split, no OCR/PII engine change, no `reading_text`/`quality_evidence` change, no pseudonymization,
   redaction, export, local LLM, dictionary/multi-OCR, Kubernetes, or reverse-proxy expansion.
   Stale-running-job reclaim (lease/heartbeat), bounded parallel concurrency (>1), retry/timeout/
@@ -148,13 +152,13 @@ See [`docs/engine/`](../docs/engine/README.md),
 ## Dev feedback boundary
 
 - When `ENABLE_DEV_ENGINE_SETTINGS=true`, per-entity feedback is appended locally to
-  `volumes/document-data/<document_id>/feedback/pii_feedback.jsonl`.
+  `volumes/document-store/<document_id>/feedback/pii_feedback.jsonl`.
 - New writes must match an entity in the referenced `pii_result` by type, offsets, and recognizer;
   summaries ignore historical lines that do not match that artifact.
 - This is a gated analysis side-channel, not a learning system and not the binding review artifact.
 - The structured fingerprint excludes raw document/entity text and optional `text_hash` is limited
   to a SHA-256 digest. Comments are short reviewer notes and must not contain copied document text,
-  OCR text, or raw PII; the file still belongs inside the protected document-data boundary.
+  OCR text, or raw PII; the file still belongs inside the protected document-store boundary.
 
 ## Governance checkpoint
 
@@ -242,7 +246,7 @@ whitespace/case IBAN, digit/`+`-only phone, whitespace-stripped ID-like types, e
 whitespace-normalized text otherwise — never fuzzy, never cross-type) as a pure derived view; it
 changes nothing about detection or the `pii_result` schema. A paired, lineage-bound
 review-decision overlay (`GET/POST …/pii/review[/decisions]`, JSONL under
-`document-data/<id>/review/`) assumes every detected entity is `pseudonymize`-bound by default (no
+`document-store/<id>/review/`) assumes every detected entity is `pseudonymize`-bound by default (no
 separate "pending" state); a reviewer opts an entity out via `keep` or `false_positive` at group or
 occurrence scope (occurrence overrides win), resolving to a coarse `accepted/kept/rejected` status
 — `rejected` suppresses the Review UI highlight in both raw and reading-text modes, `kept` stays
@@ -384,9 +388,19 @@ finished text artifact, so the Review flow works against the worker default. The
 slim/pii/ocr/full Make targets, `INSTALL_OCR`/`INSTALL_PII` build args, and profile-based runtime
 fragmentation were removed; the shared API/worker image includes OCR and PII dependencies by default,
 with future image splitting documented as an optimization. `.env.example` is reduced to meaningful
-runtime/deployment options, `COMPOSE_PROJECT_NAME` defaults to `privacy-deidentification`, service
-naming is `frontend`/`api`/`ocr-worker`, and SQLite job state remains file-based under the shared
-`DOCUMENT_DATA_DIR` by default. This is a runtime/infra step — **no engine level changed** and no OCR
+runtime/deployment options with a single host `DATA_ROOT` (default `./volumes`): Compose maps its
+`uploads`/`document-store`/`job-state`/`pii-feedback-archive`/`ocr-models` subdirectories onto stable
+internal container paths, and those internal paths (`UPLOAD_STORAGE_DIR`, `DOCUMENT_DATA_DIR`,
+`DATA_JOB_STATE_DIR`, `PII_FEEDBACK_ARCHIVE_DIR`, `OCR_MODEL_DIR`, `JOB_STORE_DB_PATH`) are advanced
+overrides only so a deployment cannot silently split API/worker storage. The former `document-data`
+root was renamed to `document-store`, and `jobs.sqlite3` moved out of it into a dedicated `job-state`
+root (`DATA_JOB_STATE_DIR/jobs.sqlite3` by default) so durable job state never sits beside
+per-document artifacts (no automatic migration; see the README migration note). `COMPOSE_PROJECT_NAME`
+defaults to `privacy-deidentification` and service naming is `frontend`/`api`/`ocr-worker`. The `.ai`
+quality gates now require API/frontend contract tests for new response shapes, job-flow coverage,
+Compose build/start smoke on runtime-file changes, no duplicate shared-image builds, and an explicit
+acceptance gate before flipping a runtime default. This is a runtime/infra step — **no engine level
+changed** and no OCR
 algorithm, PII algorithm, `reading_text`, `quality_evidence`, artifact contract, PII input, Redis/
 Celery/RQ, Kubernetes, local LLM, dictionary/multi-OCR, pseudonymization, redaction, or export
 behavior was introduced. Remaining runtime work stays Phase 4: stale-running lease/heartbeat

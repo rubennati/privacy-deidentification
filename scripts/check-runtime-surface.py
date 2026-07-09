@@ -28,6 +28,11 @@ def _service_block(compose: str, service: str) -> str:
     return match.group(1)
 
 
+def _has_active_setting(env_example: str, key: str) -> bool:
+    """True if ``key=`` appears as an active (uncommented) .env.example line."""
+    return re.search(rf"(?m)^{re.escape(key)}=", env_example) is not None
+
+
 def main() -> None:
     compose = _read("docker-compose.yml")
     makefile = _read("Makefile")
@@ -52,6 +57,19 @@ def main() -> None:
     _require(
         "INSTALL_OCR" not in compose and "INSTALL_PII" not in compose,
         "Compose must not expose OCR/PII install build toggles",
+    )
+    # DATA_ROOT is the single user-facing storage knob; internal paths are mapped from it, and the
+    # SQLite job DB lives in its own job-state root (never beside per-document artifacts).
+    _require("${DATA_ROOT:-./volumes}" in compose, "Compose must map host storage from DATA_ROOT")
+    _require(
+        "DATA_JOB_STATE_DIR: ${DATA_JOB_STATE_DIR:-/data/job-state}" in compose,
+        "Compose must define the dedicated job-state directory",
+    )
+    _require("/document-store:" in compose, "Compose must mount the document-store volume")
+    _require("/job-state:" in compose, "Compose must mount the dedicated job-state volume")
+    _require(
+        "/data/document-data" not in compose,
+        "Compose must not reference the retired document-data path",
     )
     _require("proxy_pass http://api:8000;" in nginx, "nginx must proxy to the api service")
 
@@ -84,6 +102,29 @@ def main() -> None:
     _require(
         "INSTALL_OCR" not in env_example and "INSTALL_PII" not in env_example,
         ".env.example must not expose install toggles",
+    )
+    # Environment simplification: users configure a single DATA_ROOT; container-internal storage
+    # paths must not be presented as normal, active deployment settings (they can silently split
+    # API/worker storage). They may still appear commented as advanced overrides.
+    _require(
+        _has_active_setting(env_example, "DATA_ROOT"),
+        ".env.example must expose DATA_ROOT as the single storage knob",
+    )
+    for internal_path_key in (
+        "UPLOAD_STORAGE_DIR",
+        "DOCUMENT_DATA_DIR",
+        "DATA_JOB_STATE_DIR",
+        "JOB_STORE_DB_PATH",
+        "PII_FEEDBACK_ARCHIVE_DIR",
+        "OCR_MODEL_DIR",
+    ):
+        _require(
+            not _has_active_setting(env_example, internal_path_key),
+            f".env.example must not expose internal path {internal_path_key} as an active setting",
+        )
+    _require(
+        "document-data" not in env_example,
+        ".env.example must not reference the retired document-data path",
     )
 
     for pattern in ("*.sqlite3", "*.sqlite3-shm", "*.sqlite3-wal", "/volumes/*"):

@@ -7,10 +7,11 @@ scale**.
 ## Storage
 
 ```text
-volumes/
+volumes/                                            # host DATA_ROOT (default ./volumes)
 ├── uploads/<document_id>.<ext>                     # byte-identical original
-└── document-data/
-    ├── jobs.sqlite3                                # default SQLite job metadata DB (ids/status only)
+├── job-state/
+│   └── jobs.sqlite3                                # default SQLite job metadata DB (ids/status only)
+└── document-store/
     └── <document_id>/
         ├── document.json                           # metadata + original artifact
         ├── artifacts/<artifact_id>.json            # audit/text/quality/PII artifacts
@@ -44,7 +45,7 @@ input, or report may be committed.
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
 | `review_result` | 🔜 Review L8 (formal model) | the single-artifact-per-run shape this level originally described; today's decision overlay above covers much of its practical intent | yes | immutable artifact |
 | `benchmark_result` | ✅ today as private reports | routing and PII quality metrics | guarded report metadata and metrics | local report files |
-| `job_record` (ADR-0023 Phase 2) | ✅ today (durable metadata) | OCR/PII job lifecycle (id, document id, kind, status, execution mode, timestamps, attempt count, safe error code/message, produced artifact id/type); *references* immutable artifacts, never stores their bytes | no (ids, timestamps, sanitized error only) | SQLite metadata DB (`DOCUMENT_DATA_DIR/jobs.sqlite3` by default), deleted with document boundary |
+| `job_record` (ADR-0023 Phase 2) | ✅ today (durable metadata) | OCR/PII job lifecycle (id, document id, kind, status, execution mode, timestamps, attempt count, safe error code/message, produced artifact id/type); *references* immutable artifacts, never stores their bytes | no (ids, timestamps, sanitized error only) | SQLite metadata DB (`DATA_JOB_STATE_DIR/jobs.sqlite3` by default, in its own job-state root), deleted with document boundary |
 
 `◻ conceptual` means the concept is currently embedded in another artifact and may be separated
 only when a later station requires it.
@@ -176,7 +177,7 @@ artifacts without it remain valid.
 
 ## Dev feedback side-channel
 
-`volumes/document-data/<document_id>/feedback/pii_feedback.jsonl` is an append-only, dev-only log,
+`volumes/document-store/<document_id>/feedback/pii_feedback.jsonl` is an append-only, dev-only log,
 not an engine artifact and not a binding review result. It is available only behind
 `ENABLE_DEV_ENGINE_SETTINGS` and records identifiers, offsets, type, recognizer, score, verdict,
 issue type, optional comment, and copied engine settings. Feedback is accepted only when its type,
@@ -202,7 +203,7 @@ short:
 - **The review-decision overlay** (unlike the dev-only feedback side-channel above) is **not**
   gated behind `ENABLE_DEV_ENGINE_SETTINGS` — it is the binding handoff layer a future
   pseudonymization engine will consume, so it must be available whenever a PII result exists.
-  `volumes/document-data/<document_id>/review/pii_review_decisions.jsonl` is an append-only log of
+  `volumes/document-store/<document_id>/review/pii_review_decisions.jsonl` is an append-only log of
   one decision per line (`target_type`, `target_id`, `decision`, optional `note`, the exact
   `pii_result.id` it was recorded against); reading collapses it to the **latest line per target**.
   A decision never mutates `pii_result` or any raw/projected offset, and a re-run producing a new
@@ -222,7 +223,7 @@ short:
   coverage, and confidence; they contain no page text or raw entity values.
 - **Text artifacts** contain extracted text and therefore may contain PII. `reading_text` is subject
   to the same boundary as technical raw, readable, layout, block, and PII-input text. They remain
-  under the local document-data root and are never logged or committed. Additive `text_geometry`
+  under the local document-store root and are never logged or committed. Additive `text_geometry`
   stores only offsets and page-local bounds (no raw line text); `structured_content` stores offsets
   plus short labels/headings but no duplicated field values or table contents. Both follow the same
   sensitive-artifact handling — geometry offsets/bounds and structured labels must never be logged —

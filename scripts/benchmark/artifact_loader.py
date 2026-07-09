@@ -1,6 +1,6 @@
 """Read-only loader for local document metadata and audit/OCR-quality/PII artifacts.
 
-Reads only what already exists under ``volumes/document-data`` and ``volumes/uploads``. Never
+Reads only what already exists under ``volumes/document-store`` and ``volumes/uploads``. Never
 writes, deletes, or triggers any processing. Deliberately narrow: every dataclass here keeps
 only counts, types, statuses, and offsets — raw extracted text (``TextContent.text``,
 ``TextContent.readable_text``, ``TextContent.reading_text``, ``TextPageResult.text``,

@@ -215,7 +215,7 @@ count, reading-text projection coverage, current decision) with an expandable pe
 ### Review L8–L9 — binding review — partially delivered
 
 A lineage-bound, file-based decision overlay now exists (`GET/POST …/pii/review[/decisions]`,
-append-only JSONL under `document-data/<id>/review/`, scoped to the exact current `pii_result.id` so
+append-only JSONL under `document-store/<id>/review/`, scoped to the exact current `pii_result.id` so
 a re-run never silently reapplies a stale decision). Every detected entity defaults to
 `pseudonymize` (no separate "pending" state, unlike a plain confirm/reject); a reviewer opts one out
 via `keep` or `false_positive`, at group or occurrence scope with occurrence-level override. This is

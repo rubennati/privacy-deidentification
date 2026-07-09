@@ -55,30 +55,62 @@ def test_pii_feedback_archive_dir_defaults_to_a_third_separate_root() -> None:
     assert settings.pii_feedback_archive_dir == Path("/data/pii-feedback-archive")
 
 
-def test_job_store_db_path_defaults_under_document_data() -> None:
+def test_storage_defaults_use_document_store_and_dedicated_job_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for var in (
+        "UPLOAD_STORAGE_DIR",
+        "UPLOAD_DIR",
+        "DOCUMENT_DATA_DIR",
+        "DATA_JOB_STATE_DIR",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    settings = Settings()
+
+    assert settings.upload_storage_dir == Path("/data/uploads")
+    assert settings.document_data_dir == Path("/data/document-store")
+    assert settings.job_state_dir == Path("/data/job-state")
+
+
+def test_job_store_db_path_defaults_under_dedicated_job_state_dir() -> None:
     settings = Settings(
         UPLOAD_STORAGE_DIR="/tmp/originals",
-        DOCUMENT_DATA_DIR="/tmp/document-data",
+        DOCUMENT_DATA_DIR="/tmp/document-store",
+        DATA_JOB_STATE_DIR="/tmp/job-state",
     )
 
     assert settings.job_store_db_path is None
-    assert settings.resolved_job_store_db_path == Path("/tmp/document-data/jobs.sqlite3")
+    # The SQLite DB lives in its own root, never beside per-document artifact folders.
+    assert settings.resolved_job_store_db_path == Path("/tmp/job-state/jobs.sqlite3")
+    assert not settings.resolved_job_store_db_path.is_relative_to(settings.document_data_dir)
 
 
 def test_job_store_db_path_can_be_overridden_or_left_empty() -> None:
     overridden = Settings(
         UPLOAD_STORAGE_DIR="/tmp/originals",
-        DOCUMENT_DATA_DIR="/tmp/document-data",
+        DOCUMENT_DATA_DIR="/tmp/document-store",
+        DATA_JOB_STATE_DIR="/tmp/job-state",
         JOB_STORE_DB_PATH="/tmp/jobs/custom.sqlite3",
     )
     defaulted = Settings(
         UPLOAD_STORAGE_DIR="/tmp/originals",
-        DOCUMENT_DATA_DIR="/tmp/document-data",
+        DOCUMENT_DATA_DIR="/tmp/document-store",
+        DATA_JOB_STATE_DIR="/tmp/job-state",
         JOB_STORE_DB_PATH="",
     )
 
     assert overridden.resolved_job_store_db_path == Path("/tmp/jobs/custom.sqlite3")
-    assert defaulted.resolved_job_store_db_path == Path("/tmp/document-data/jobs.sqlite3")
+    assert defaulted.resolved_job_store_db_path == Path("/tmp/job-state/jobs.sqlite3")
+
+
+def test_job_state_dir_must_be_separate_from_document_data() -> None:
+    with pytest.raises(ValueError, match="must be separate"):
+        Settings(
+            UPLOAD_STORAGE_DIR="/tmp/originals",
+            DOCUMENT_DATA_DIR="/tmp/document-store",
+            DATA_JOB_STATE_DIR="/tmp/document-store/job-state",
+        )
 
 
 def test_ocr_execution_mode_defaults_to_worker_and_worker_settings_are_conservative(

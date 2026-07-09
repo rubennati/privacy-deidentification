@@ -1,4 +1,4 @@
-"""Shared pytest fixtures with isolated upload and document-data directories."""
+"""Shared pytest fixtures with isolated upload, document-store, and job-state directories."""
 
 from __future__ import annotations
 
@@ -36,7 +36,15 @@ def upload_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def document_data_dir(tmp_path: Path) -> Path:
     """A writable, empty application-data directory for a single test."""
-    directory = tmp_path / "document-data"
+    directory = tmp_path / "document-store"
+    directory.mkdir()
+    return directory
+
+
+@pytest.fixture
+def job_state_dir(tmp_path: Path) -> Path:
+    """A writable, empty job-state directory (holds jobs.sqlite3) for a single test."""
+    directory = tmp_path / "job-state"
     directory.mkdir()
     return directory
 
@@ -51,7 +59,10 @@ def pii_feedback_archive_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def settings(
-    upload_dir: Path, document_data_dir: Path, pii_feedback_archive_dir: Path
+    upload_dir: Path,
+    document_data_dir: Path,
+    job_state_dir: Path,
+    pii_feedback_archive_dir: Path,
 ) -> Settings:
     """Test settings with a small size limit so the 'too large' path is cheap to trigger.
 
@@ -64,6 +75,7 @@ def settings(
         allowed_extensions="pdf,docx,png,jpg,jpeg",
         upload_storage_dir=upload_dir,
         document_data_dir=document_data_dir,
+        job_state_dir=job_state_dir,
         pii_feedback_archive_dir=pii_feedback_archive_dir,
         ocr_execution_mode="sync",
         log_level="WARNING",

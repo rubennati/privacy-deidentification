@@ -6,8 +6,12 @@ name: ${COMPOSE_PROJECT_NAME:-privacy-deidentification}
 x-app-environment: &app-environment
   MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
   ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-pdf,docx,png,jpg,jpeg}
+  # Container-internal storage paths. Deployments configure the host location via DATA_ROOT below;
+  # these stable internal defaults keep API and worker on the same paths and are advanced overrides
+  # only (not part of .env.example). JOB_STORE_DB_PATH is derived from DATA_JOB_STATE_DIR by default.
   UPLOAD_STORAGE_DIR: ${UPLOAD_STORAGE_DIR:-/data/uploads}
-  DOCUMENT_DATA_DIR: ${DOCUMENT_DATA_DIR:-/data/document-data}
+  DOCUMENT_DATA_DIR: ${DOCUMENT_DATA_DIR:-/data/document-store}
+  DATA_JOB_STATE_DIR: ${DATA_JOB_STATE_DIR:-/data/job-state}
   JOB_STORE_DB_PATH: ${JOB_STORE_DB_PATH:-}
   OCR_EXECUTION_MODE: ${OCR_EXECUTION_MODE:-worker}
   OCR_WORKER_POLL_INTERVAL_SECONDS: ${OCR_WORKER_POLL_INTERVAL_SECONDS:-2.0}
@@ -27,11 +31,15 @@ x-app-environment: &app-environment
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   TZ: ${TZ:-Europe/Vienna}
 
+# Host storage. Deployments set a single DATA_ROOT; Compose maps its subdirectories onto the stable
+# internal container paths above. The API and OCR worker share these exact mounts (YAML anchor), so
+# job state and artifacts can never split between the two services.
 x-app-volumes: &app-volumes
-  - ./volumes/uploads:${UPLOAD_STORAGE_DIR:-/data/uploads}
-  - ./volumes/document-data:${DOCUMENT_DATA_DIR:-/data/document-data}
-  - ./volumes/pii-feedback-archive:${PII_FEEDBACK_ARCHIVE_DIR:-/data/pii-feedback-archive}
-  - ./volumes/ocr-models:${OCR_MODEL_DIR:-/models/ocr}:ro
+  - ${DATA_ROOT:-./volumes}/uploads:${UPLOAD_STORAGE_DIR:-/data/uploads}
+  - ${DATA_ROOT:-./volumes}/document-store:${DOCUMENT_DATA_DIR:-/data/document-store}
+  - ${DATA_ROOT:-./volumes}/job-state:${DATA_JOB_STATE_DIR:-/data/job-state}
+  - ${DATA_ROOT:-./volumes}/pii-feedback-archive:${PII_FEEDBACK_ARCHIVE_DIR:-/data/pii-feedback-archive}
+  - ${DATA_ROOT:-./volumes}/ocr-models:${OCR_MODEL_DIR:-/models/ocr}:ro
 
 services:
   api:

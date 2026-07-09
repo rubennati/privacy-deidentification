@@ -43,14 +43,15 @@ The current runtime, precisely:
   worker produces the immutable `text_result`; `OCR_EXECUTION_MODE=sync` remains an explicit
   fallback that returns `201` with the artifact body. PII remains synchronous in the API.
 - **Artifact persistence:** immutable, append-only, lineage-linked JSON files under
-  `volumes/document-data/<id>/artifacts/`, originals under `volumes/uploads/`, review-decision and
+  `volumes/document-store/<id>/artifacts/`, originals under `volumes/uploads/`, review-decision and
   feedback JSONL side-channels under the document root and a separate feedback-archive root. See
   [`engine-artifacts.md`](../engine/engine-artifacts.md).
 - **Config/capability model:** 12-factor env via `Settings`; read-only capability probes
   (`runtime_capabilities.py`) tell `/api/config` whether the OCR/PII runtimes are installed, so a
   missing runtime is a clean `503` rather than a crash.
 - **State:** immutable artifacts remain files; Phase 2 adds one SQLite DB for durable job metadata
-  only (`jobs.sqlite3` by default under `DOCUMENT_DATA_DIR`). It stores ids, status, timestamps,
+  only (`jobs.sqlite3`, by default in its own `DATA_JOB_STATE_DIR` root, separate from per-document
+  artifacts). It stores ids, status, timestamps,
   sanitized errors, and artifact references — never artifact payloads, raw OCR/reading text, or PII
   values.
 
@@ -136,7 +137,7 @@ jumping to microservices, a message broker, or Kubernetes. Concretely:
                              └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
                                     │ read/write immutable artifacts (files)     │
                                     ▼                                            ▼
-                             volumes/uploads, volumes/document-data/<id>/artifacts/…
+                             volumes/uploads, volumes/document-store/<id>/artifacts/… ; volumes/job-state/jobs.sqlite3
 ```
 
 Components (each an independently rebuildable/restartable Compose service):
@@ -325,8 +326,9 @@ synchronous station behavior:
 - `backend/app/services/job_store.py` — a stdlib `sqlite3` repository with idempotent schema
   creation, WAL mode, short transactions, one connection per operation, and methods for
   create/running/succeeded/failed/get/list/delete. The DB path is configurable with
-  `JOB_STORE_DB_PATH`; the default is `DOCUMENT_DATA_DIR/jobs.sqlite3`, which stays inside the
-  existing persistent application-data volume.
+  `JOB_STORE_DB_PATH`; the default is `DATA_JOB_STATE_DIR/jobs.sqlite3` (a dedicated persistent
+  job-state volume, kept separate from per-document artifact folders). Phase 3.6 moved the default
+  out of `DOCUMENT_DATA_DIR` into this dedicated root.
 - `backend/app/services/job_runner.py` — the FastAPI runner provider now attaches the configured
   store, so OCR/PII job rows are created before inline execution and updated on success/failure.
   Direct unit-test runners can still be created without persistence.
@@ -346,7 +348,7 @@ created/started/finished/updated timestamps, attempt count, sanitized `error_cod
 optional produced artifact id/type, and a small string metadata map. It never stores uploaded bytes,
 raw OCR text, canonical reading text, layout text, structured content payloads, PII values, artifact
 JSON payloads, stack traces, or raw exception messages. Job rows are deleted with their document's
-document-data boundary; artifacts remain file-based and immutable.
+document-store boundary; artifacts remain file-based and immutable.
 
 ### Phase 3 — isolate the OCR worker (implemented)
 
@@ -375,8 +377,8 @@ synchronous in the API.
 - **Concurrency.** `OCR_WORKER_CONCURRENCY` is validated to be exactly `1` (one memory-heavy OCR job
   at a time); higher concurrency is deferred to Phase 4 and rejected loudly rather than ignored.
 - **Docker/Compose.** The default Compose stack includes `ocr-worker` with command override
-  `python -m app.ocr_worker`. It shares the same backend image and the document-data / uploads /
-  ocr-models / job-DB volumes with the API. It has its own memory ceiling
+  `python -m app.ocr_worker`. It shares the same backend image and the document-store / uploads /
+  ocr-models / job-state volumes with the API (all mapped from a single host `DATA_ROOT`). It has its own memory ceiling
   (`OCR_WORKER_MEMORY_LIMIT`, default `2g`) and `restart: unless-stopped`, so it restarts
   independently and its ceiling never touches the API's. Splitting a slimmer API image from the
   worker image is a deliberate future optimization — Phase 3.6 uses one image for
@@ -407,8 +409,17 @@ Phase 3.6 turns the Phase 3 opt-in worker shape into the normal runtime:
 - The old slim/pii/ocr/full Make targets and `INSTALL_OCR`/`INSTALL_PII` build args are removed.
   The shared API/worker image includes OCR and PII dependencies by default. OCR model files remain
   separate local data under `./volumes/ocr-models` and are still never downloaded during a request.
-- `.env.example` now lists only meaningful deployment knobs: project name, port, storage roots,
-  worker mode/resources, OCR model names, PII profile/settings, dev gate, and advanced overrides.
+- `.env.example` now lists only meaningful deployment knobs: project name, port, a single
+  `DATA_ROOT`, worker mode/resources, OCR model names, PII profile/settings, dev gate, and advanced
+  overrides. Container-internal storage paths (`UPLOAD_STORAGE_DIR`, `DOCUMENT_DATA_DIR`,
+  `DATA_JOB_STATE_DIR`, `PII_FEEDBACK_ARCHIVE_DIR`, `OCR_MODEL_DIR`, `JOB_STORE_DB_PATH`) are no
+  longer presented as normal deployment settings — they have stable internal defaults and remain
+  advanced overrides only, so a deployment cannot silently split API/worker storage by editing one.
+- Storage consolidates under a single host `DATA_ROOT` (default `./volumes`). Compose maps
+  `${DATA_ROOT}/{uploads,document-store,job-state,pii-feedback-archive,ocr-models}` onto the stable
+  internal paths. The former `document-data` root was renamed to `document-store`, and `jobs.sqlite3`
+  moved out of it into a dedicated `job-state` root so durable job state never sits beside
+  per-document artifact folders. There is no automatic migration (see the README migration note).
 - Service naming is `frontend`, `api`, `ocr-worker`. No `container_name` is set; Compose project
   scoping provides unique names, with default `COMPOSE_PROJECT_NAME=privacy-deidentification`.
 

@@ -30,7 +30,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --no-create-home app \
-    && mkdir -p /data/uploads /data/document-data /data/pii-feedback-archive \
+    && mkdir -p /data/uploads /data/document-store /data/job-state /data/pii-feedback-archive \
     && chown -R app:app /data
 
 WORKDIR /app

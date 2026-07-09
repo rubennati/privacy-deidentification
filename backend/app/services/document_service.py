@@ -1,7 +1,8 @@
 """Document metadata persistence and lookup.
 
-Each document has an isolated directory under the document-data root. Its metadata is stored
-as ``document.json`` and derived results live below ``artifacts/``. Original bytes remain in
+Each document has an isolated directory under the document-store root (``DOCUMENT_DATA_DIR``).
+Its metadata is stored as ``document.json`` and derived results live below ``artifacts/``.
+Original bytes remain in
 the separate upload-storage root. Document ids are generated server-side (``uuid4().hex``)
 and validated before they are ever used to build a filesystem path.
 """
@@ -38,7 +39,7 @@ class DocumentNotFoundError(ApiError):
 
 
 class DocumentRecord(BaseModel):
-    """Metadata persisted in one document-data directory (internal format)."""
+    """Metadata persisted in one document-store directory (internal format)."""
 
     id: str = Field(pattern=_ID_PATTERN.pattern)
     filename: str
@@ -119,7 +120,7 @@ def create_document_record(
 
 
 def save_metadata(settings: Settings, record: DocumentRecord) -> None:
-    """Create a document-data directory and atomically persist its metadata."""
+    """Create a document-store directory and atomically persist its metadata."""
     document_directory = _document_directory(settings, record.id)
     document_directory.mkdir(parents=True, exist_ok=True)
     (document_directory / _ARTIFACTS_DIRECTORY).mkdir(exist_ok=True)
@@ -138,7 +139,7 @@ def save_metadata(settings: Settings, record: DocumentRecord) -> None:
 
 
 def delete_document_data(settings: Settings, document_id: str) -> None:
-    """Remove exactly one validated document-data directory, if it exists."""
+    """Remove exactly one validated document-store directory, if it exists."""
     directory = _document_directory(settings, document_id)
     if directory.is_symlink():
         directory.unlink()

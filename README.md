@@ -30,7 +30,8 @@ A Docker-first application foundation for privacy-focused document preparation a
 
 Users can upload documents through a web interface. The backend validates each upload, stores
 only the original bytes under `./volumes/uploads`, and keeps metadata and processing artifacts
-separately under `./volumes/document-data`.
+separately under `./volumes/document-store`. All host storage lives under a single `DATA_ROOT`
+(default `./volumes`).
 
 > **Step 5:** This version provides upload/document management, structural Audit v1, the
 > synchronous OCR/Text and detection-only PII workstations, plus a manual document review UI.
@@ -68,17 +69,18 @@ Browser ──http://localhost:8080──▶ frontend (nginx)
                                                                     │ claim OCR jobs
                                                                ocr-worker
 
-Shared local storage:
-  ./volumes/uploads        byte-identical originals
-  ./volumes/document-data  metadata, artifacts, review sidecars, jobs.sqlite3
-  ./volumes/ocr-models     local PaddleOCR models, mounted read-only
+Shared local storage (under DATA_ROOT, default ./volumes):
+  ./volumes/uploads         byte-identical originals
+  ./volumes/document-store  metadata, artifacts, review/feedback sidecars
+  ./volumes/job-state       jobs.sqlite3 (durable job metadata)
+  ./volumes/ocr-models      local PaddleOCR models, mounted read-only
 ```
 
 * **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. The frontend is the only public entry point and proxies API calls to the API.
 * **api** — Python 3.12 + FastAPI. Validates uploads, stores originals, enqueues OCR jobs, exposes safe job status, runs PII synchronously, and manages immutable result artifacts.
 * **ocr-worker** — the isolated OCR process. It claims pending OCR jobs from SQLite and writes the same immutable `text_result` artifacts the API used to create in-process.
 * **networking** — the API and OCR worker are not published to the host. They are reachable only inside the Docker Compose network.
-* **runtime data** — `/data/uploads` is bind-mounted from `./volumes/uploads` for originals only; `/data/document-data` is bind-mounted from `./volumes/document-data` for metadata, artifacts, review sidecars, and the default SQLite job DB (`jobs.sqlite3`). Neither host directory is committed (see `.gitignore`).
+* **runtime data** — a single host `DATA_ROOT` (default `./volumes`) is mapped onto stable internal container paths: `${DATA_ROOT}/uploads` → `/data/uploads` (originals only), `${DATA_ROOT}/document-store` → `/data/document-store` (metadata, artifacts, review/feedback sidecars), and `${DATA_ROOT}/job-state` → `/data/job-state` (the SQLite job DB `jobs.sqlite3`). The API and OCR worker share these exact mounts, so job state and artifacts never split. Nothing under `DATA_ROOT` is committed (see `.gitignore`).
 
 See [`docs/adr/0001-stack-and-architecture.md`](docs/adr/0001-stack-and-architecture.md) for the stack decision and rationale.
 
@@ -190,14 +192,15 @@ Stack traces are not exposed to clients.
 
 ### Storage layout
 
-New documents use three deliberately separate roots:
+All host storage lives under a single `DATA_ROOT` (default `./volumes`); deployments set only
+`DATA_ROOT`, and Compose maps its subdirectories onto stable internal container paths. New
+documents use deliberately separate roots:
 
 ```text
-volumes/
+${DATA_ROOT}/            # default ./volumes
 ├── uploads/
 │   └── <document_id>.<validated_extension>
-├── document-data/
-│   ├── jobs.sqlite3
+├── document-store/
 │   └── <document_id>/
 │       ├── document.json
 │       ├── artifacts/
@@ -206,16 +209,20 @@ volumes/
 │       │   └── pii_feedback.jsonl
 │       └── review/
 │           └── pii_review_decisions.jsonl
+├── job-state/
+│   └── jobs.sqlite3
 └── pii-feedback-archive/
     └── pii_feedback.jsonl
 ```
 
-`UPLOAD_STORAGE_DIR` contains byte-identical originals only. Storage filenames are generated
-from a server-side UUID; the user-visible Unicode filename is retained only in `document.json`
-and never used as a path. `DOCUMENT_DATA_DIR` contains one validated UUID-named directory per
-document. Audit, OCR/Text, and PII results are all immutable JSON files in that document's
-`artifacts/` directory. Deleting a document removes its UUID-named original and exactly its own
-document-data directory — including `feedback/pii_feedback.jsonl`.
+The internal paths (`UPLOAD_STORAGE_DIR` → `/data/uploads`, `DOCUMENT_DATA_DIR` →
+`/data/document-store`, `DATA_JOB_STATE_DIR` → `/data/job-state`) are advanced overrides only and
+are not part of `.env.example`. The upload root contains byte-identical originals only: storage
+filenames are generated from a server-side UUID; the user-visible Unicode filename is retained only
+in `document.json` and never used as a path. The document-store root contains one validated
+UUID-named directory per document; Audit, OCR/Text, and PII results are all immutable JSON files in
+that document's `artifacts/` directory. Deleting a document removes its UUID-named original and
+exactly its own document-store directory — including `feedback/pii_feedback.jsonl`.
 
 `PII_FEEDBACK_ARCHIVE_DIR` is a third, separate root: one shared, cross-document JSONL log that
 every recorded feedback entry is *also* appended to, unchanged (`document_id` retained). Unlike
@@ -228,22 +235,25 @@ or a binding review result. Their structured fingerprint excludes raw document/e
 optional comments can still contain sensitive input; treat both as protected data and never commit
 them.
 
-ADR-0023 also keeps durable job metadata in SQLite. By default `JOB_STORE_DB_PATH` is empty and the
-API resolves it to `${DOCUMENT_DATA_DIR}/jobs.sqlite3`; in Docker/Compose that is
-`/data/document-data/jobs.sqlite3`, bind-mounted from `./volumes/document-data/jobs.sqlite3`. The
-API and `ocr-worker` use the same environment and volume mounts, so API-created pending jobs,
-worker status updates, worker-produced artifact references, and status reads all meet at the same
-file. If `JOB_STORE_DB_PATH` is overridden, it must still point at a path mounted into both services.
-For backup/restore, treat `./volumes/uploads` and `./volumes/document-data` as one unit and stop the
-stack before copying SQLite files, including any `jobs.sqlite3-wal` and `jobs.sqlite3-shm` sidecars.
+ADR-0023 also keeps durable job metadata in SQLite, in its own dedicated `job-state` root so the DB
+never sits next to per-document artifact folders. By default `JOB_STORE_DB_PATH` is empty and the
+API resolves it to `${DATA_JOB_STATE_DIR}/jobs.sqlite3`; in Docker/Compose that is
+`/data/job-state/jobs.sqlite3`, bind-mounted from `${DATA_ROOT}/job-state/jobs.sqlite3`. The API and
+`ocr-worker` use the same environment and volume mounts, so API-created pending jobs, worker status
+updates, worker-produced artifact references, and status reads all meet at the same file. If
+`JOB_STORE_DB_PATH` is overridden, it must still point at a path mounted into both services. For
+backup/restore, treat everything under `DATA_ROOT` as one unit and stop the stack before copying
+SQLite files, including any `jobs.sqlite3-wal` and `jobs.sqlite3-shm` sidecars.
 
 #### Existing local development data
 
-There is no automatic migration and startup never moves or deletes existing files. Data created
-by older versions (`<id>.meta.json` and `artifacts/<id>/` below `volumes/uploads`) is intentionally
-not discovered by the new layout. For local development, re-upload those documents if they are
-still needed, or copy them manually only after backing up `volumes/` and reshaping them to the
-layout above. Old files remain untouched until a developer removes them explicitly.
+There is no automatic migration and startup never moves or deletes existing files. If you have data
+from a previous layout under `./volumes/document-data` (including a `jobs.sqlite3` there), move
+`./volumes/document-data` to `./volumes/document-store` and relocate `jobs.sqlite3` (with any
+`-wal`/`-shm` sidecars) into `./volumes/job-state/` while the stack is stopped; back up `volumes/`
+first. Data created by much older versions (`<id>.meta.json` and `artifacts/<id>/` below
+`volumes/uploads`) is intentionally not discovered by the current layout — re-upload those documents
+if they are still needed. Old files remain untouched until a developer removes them explicitly.
 
 ### Text-layer quality gate and page-level OCR fallback
 
@@ -460,7 +470,7 @@ make benchmark-private-json     # JSON only
 ```
 
 It only **reads** existing `document.json`/`audit_result`/`text_result`/`pii_result` artifacts
-under `volumes/document-data/` — it never triggers audit/OCR/PII processing, calls the API, or
+under `volumes/document-store/` — it never triggers audit/OCR/PII processing, calls the API, or
 modifies/deletes a document. Missing artifacts are reported as `missing`, not generated. The
 private benchmark inputs (`volumes/benchmark/ocr_pii_benchmark_*.json`) and every generated
 report live under `volumes/`, which is entirely git-ignored (`/volumes/*`) — real documents,
@@ -477,7 +487,8 @@ See [`.env.example`](.env.example) for the intentionally small runtime surface:
 
 * `COMPOSE_PROJECT_NAME`, `TZ`, and `WEB_PORT`
 * upload size and allowed extensions
-* original-upload, document-data, feedback-archive, OCR-model paths
+* `DATA_ROOT` — the single host storage root (uploads, document-store, job-state, feedback archive,
+  OCR models are subdirectories); container-internal paths are advanced overrides only
 * `OCR_EXECUTION_MODE` (`worker` by default, `sync` fallback)
 * API and OCR worker memory/polling limits
 * OCR model names
