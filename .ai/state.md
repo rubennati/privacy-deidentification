@@ -30,6 +30,15 @@
   status, overlap provenance, resolved review state, and a text-free display model — a
   stabilization milestone, not a level bump and not the formal binding `review_result`.
   The next planned *engine* step is the formal Review L8 `review_result` model.
+  A design ADR now frames the deeper foundation these steps build toward:
+  [ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design
+  only**) defines a stable **text anchor** identity layer (anchor graph / `text_lineage_map`, owned
+  by OCR/Text) so raw/canonical/layout are treated as *views* of one document, PII binds entities to
+  anchors, and pseudonymization/reconstruction render from decisions — with a hybrid JSON+SQLite
+  persistence path (SQLite only when Review persistence needs it). It introduces no code.
+  ADR-0031 also now states the privacy guardrail explicitly: entity/anchor/review/replacement/audit
+  metadata must not duplicate private text, and the access-gated reconstruction map is the only new
+  store that may hold original values.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 

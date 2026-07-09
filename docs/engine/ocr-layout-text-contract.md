@@ -116,6 +116,12 @@ never shift a canonical PII offset, and no layer becomes an island.
   page geometry), aligning with OCR L10+ per-block lineage and redaction-ready geometry.
 - **Must:** be deterministic and round-trippable (raw ↔ pii_input without loss) wherever
   `pii_input_text` diverges from canonical.
+- **Target design:** the full married model is specified as a stable **text anchor** identity layer
+  (an anchor graph with per-view ranges and explicit `missing`/`ambiguous` states) in
+  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only**).
+  There, `text_lineage_map` is realized as anchors that PII binds entities to, and that
+  pseudonymization/reconstruction render from — owned by OCR/Text, not PII. The anchor graph is a
+  *prerequisite* for the separation gate below, never a bypass of it.
 
 ### L9 structured layout blocks
 

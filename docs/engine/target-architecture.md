@@ -176,6 +176,13 @@ When the product needs **query, history, and cross-document state** that the fla
 awkward — concretely, once **review decisions and rules** (Review L2+) must be listed, searched,
 versioned, and reapplied across runs. Detection alone (audit/OCR/PII artifacts) does *not* need a
 DB; the file layout serves it well.
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only**)
+makes this concrete with a **hybrid (Option E)** model: immutable OCR/Text/anchor artifacts stay
+JSON, while the mutable, queryable de-identification state (review decisions, replacement plans,
+reconstruction map, audit events) moves to SQLite when Review persistence needs it. It also fixes the
+raw/canonical/layout highlight inconsistency at the model level via an OCR/Text-owned **text anchor**
+identity layer (the concrete `text_lineage_map`) that PII, pseudonymization, and reconstruction all
+reference.
 
 ### What stays in the filesystem
 

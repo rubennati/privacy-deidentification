@@ -327,6 +327,17 @@ Add per-profile PII metrics in one invocation at L9. The L10 OCR confidence/cove
 already delivered out of order using L7 `quality_report` with a legacy artifact fallback; cumulative
 benchmark maturity remains L8 until L9 lands.
 
+### Text identity / anchor lineage — design direction (cross-cutting, Proposed)
+
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed; design only**)
+frames the stable **text anchor** identity layer that later engine steps build toward: raw/canonical/
+layout/structured are *views* of one document, married by an OCR/Text-owned anchor graph
+(`text_lineage_map` made concrete); PII binds entities to anchors; pseudonymization renders from
+decisions; reconstruction reverse-maps placeholders. Persistence is hybrid (immutable OCR/anchor JSON
++ SQLite for review/replacement/reconstruction/audit state when Review persistence needs it). Staged
+Phases A–I; underpins **PII L17** (stable entity model with lineage) and unblocks pseudonymization/
+reconstruction ahead of Redaction. No code is introduced by the ADR.
+
 ### Redaction remains blocked
 
 Redaction stays at L0 until reviewed decisions, stable/resolved PII spans, and OCR text-to-geometry

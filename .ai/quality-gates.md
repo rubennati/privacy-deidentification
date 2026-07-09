@@ -89,6 +89,38 @@ job contract:
   no new raw document or entity text to metrics-only layers; the existing text-artifact privacy
   rules still apply.
 
+## Text identity / anchor lineage changes (design gates — apply when the work lands)
+
+Forward-looking gates for any future PR that implements the **text anchor** identity layer or binds
+to it ([ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md) — Proposed; no code
+yet, so these do not apply to current work):
+
+- **Anchors are owned by OCR/Text, derived from the Document Text Package** — a consumer (PII, Review,
+  pseudonymization, reconstruction) binds to anchors, it does not create them.
+- **Missing/ambiguous mapping is an explicit, tested state** — never a silently dropped highlight and
+  never a guessed match; string equality alone never merges two occurrences into one identity.
+- **Technical raw text stays the offset authority and is never mutated**, and the active-PII-input
+  `text_lineage_map` separation gate is not bypassed by anchor work.
+- **Pseudonymization renders from decisions; reconstruction maps placeholders** — no blind string
+  replacement, no fuzzy matching of private values; the reconstruction map (the only store of
+  originals) is access-gated, audited, and deletable with the document.
+- **No DB before the model is proven** — persistence follows the phased hybrid (Option E) path; the
+  reconstruction map and review/replacement state must be expressible as SQLite tables without fusing
+  immutable text artifacts into the DB.
+
+Golden-Path sequencing gates (do not skip a stage — see ADR-0031 §13):
+
+- **No PII highlight implementation without a shared identity source** — a highlight is rendered from
+  the server's anchor-bound entity set, never re-derived per view from that view's offsets alone.
+- **No frontend independent entity derivation** — the UI renders anchor-bound entities and mapping
+  states; it never invents its own per-view PII entity set.
+- **No pseudonymization before entity↔anchor binding exists** — a render consumes accepted entities
+  bound to anchors, not raw string spans.
+- **No reconstruction before a replacement plan/map exists** — placeholders resolve through the
+  replacement group → entity → anchor → original chain, never by matching private text.
+- **No SQLite migration without clear artifact-vs-table ownership** — each state moved to a table has
+  a named owner (per ADR-0031 §6/§9) and immutable text artifacts stay JSON.
+
 ## Consumer / contract-intake changes
 
 Additional gates when an engine consumes the OCR Output Contract v1 Document Text Package (today PII
