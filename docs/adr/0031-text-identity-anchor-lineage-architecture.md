@@ -26,6 +26,27 @@ design substrate for **PII L17 — "Stable entity model with lineage"**
 ([`pii-engine-levels.md`](../engine/pii-engine-levels.md)) and for any future Redaction/
 Pseudonymization/Reconstruction engine.
 
+## Product North Star and Golden Path
+
+**North Star.** This system is **not** "OCR plus PII detection." It is a **local-first
+de-identification pipeline** whose purpose is to make document information **stable, reviewable,
+replaceable, and reconstructable** — so a document can be pseudonymized locally, sent to an external
+AI, and have the AI's output **re-identified locally when policy allows**. Originals never leave the
+machine; only pseudonymized renders do. The text-anchor identity layer this ADR defines is the spine
+that makes that round-trip consistent and reversible.
+
+**Golden Path.** Every capability below serves one end-to-end flow:
+
+> Source document → **OCR/Text Package** ([ADR-0027](0027-ocr-output-contract-v1-strategy.md)) →
+> **Text Anchor Identity Layer** → **PII Detection + Entity Binding** → **Review Decision** →
+> **Replacement Plan** → **Pseudonymized Render** → **External AI usage** *(only pseudonymized
+> surrogates cross this boundary)* → **Reconstruction Map / re-identification, if allowed**.
+
+The **External-AI boundary** is the privacy line: pseudonymized surrogates (`PERSON_001`, …) cross
+it; originals and the reconstruction map never do. Anchor identity is what keeps every stage before
+and after that boundary referring to the *same* information unit, so the round-trip is deterministic
+rather than a fuzzy re-match.
+
 ## 1. Context
 
 OCR/Text produces several text layers for one document: **Technical Raw Text** (`text_result.text`,
