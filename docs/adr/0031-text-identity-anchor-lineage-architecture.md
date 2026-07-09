@@ -191,6 +191,10 @@ These hold for any implementation of this model:
 12. **No raw text crosses a metrics/lineage boundary it does not already cross.** Anchor ranges are
     offsets/ids/states; the anchor graph carries no new copied text beyond the text layers that
     already legitimately hold it.
+13. **Private text is not duplicated into metadata.** Entity/anchor/review/replacement/audit metadata
+    stores ids, offsets, fingerprints, states, and reason codes; free-form notes must not copy
+    document text. The reconstruction map is the only new store that may hold original values, and it
+    is isolated, access-gated, audited, and deletable.
 
 ## 6. Ownership matrix
 
@@ -305,7 +309,7 @@ Design only. "Artifact" = immutable JSON today; "Table" = SQLite when persistenc
 | `pii_candidates` | pre-resolution detector hits | PII | transient | transient | in-memory | spans | PII only |
 | `pii_entities` | resolved detections | PII | `pii_result.id`, entity ids, raw span, provenance | immutable per run | Artifact (`pii_result`) | spans (sensitive) | Review, pseudo. |
 | `entity_anchors` | entity ↔ anchor set binding | PII | `entity_id`, `anchor_id`, `source_role` | derived → Table | derived now | ids only | Review, pseudo. |
-| `review_decisions` | reviewer intent per entity/group | Review | `entity_id`/`group_id`, decision, scope, actor, `pii_result.id` | **mutable** | JSONL overlay → **Table** | offsets/ids + optional free note | pseudo. |
+| `review_decisions` | reviewer intent per entity/group | Review | `entity_id`/`group_id`, decision, scope, actor, `pii_result.id` | **mutable** | JSONL overlay → **Table** | offsets/ids + optional no-copy free note | pseudo. |
 | `replacement_groups` | entities sharing one placeholder | Pseudo. | `replacement_group_id`, entity_type, member `entity_id`s | mutable | Table (later) | ids | pseudo., reconstruction |
 | `replacement_tokens` | the surrogate string | Pseudo. | `replacement_group_id`, `token` (`PERSON_001`), policy | mutable | Table (later) | token is non-sensitive | render, reconstruction |
 | `rendered_outputs` | generated pseudonymized documents/views | Pseudo. | `render_id`, `pii_result.id`, plan id | immutable per render | Artifact/file | contains surrogates, not originals | export, UI |

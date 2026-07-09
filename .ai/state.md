@@ -36,6 +36,9 @@
   by OCR/Text) so raw/canonical/layout are treated as *views* of one document, PII binds entities to
   anchors, and pseudonymization/reconstruction render from decisions — with a hybrid JSON+SQLite
   persistence path (SQLite only when Review persistence needs it). It introduces no code.
+  ADR-0031 also now states the privacy guardrail explicitly: entity/anchor/review/replacement/audit
+  metadata must not duplicate private text, and the access-gated reconstruction map is the only new
+  store that may hold original values.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
