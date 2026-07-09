@@ -228,7 +228,7 @@ def _append_line(destination: Path, record: PiiFeedbackRecord) -> None:
 
 def _feedback_directory(settings: Settings, document_id: str) -> Path:
     # Reuse the artifact id-shape guard indirectly: document_id shape is validated by
-    # get_document_record's lookup, but keep feedback co-located under document-data.
+    # get_document_record's lookup, but keep feedback co-located under document-store.
     return settings.document_data_dir / document_id / _FEEDBACK_DIRECTORY
 
 

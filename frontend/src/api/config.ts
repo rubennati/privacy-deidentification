@@ -20,8 +20,7 @@ export interface PiiRuntimeConfig {
 export interface RuntimeCapabilities {
   ocrAvailable: boolean;
   piiAvailable: boolean;
-  /** OCR is installed but the container memory limit looks too low to run it without an
-   * OOM-kill mid-request (see docker-compose.yml's BACKEND_MEMORY_LIMIT). */
+  /** OCR is installed but the API memory limit looks too low for explicit sync fallback mode. */
   ocrMemoryLimitLow: boolean;
 }
 

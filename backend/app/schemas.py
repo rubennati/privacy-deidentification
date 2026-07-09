@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -518,6 +518,204 @@ class ReadingTextMapSegment(BaseModel):
         return self
 
 
+# OCR/Text L14 quality evidence and lineage coverage. This is additive, metrics-only evidence about
+# how the OCR/Text chain produced its artifact — where the text came from, how it was reconstructed,
+# and how well the derived reading text maps back to technical raw text. It never carries raw
+# document text: every locator is an offset range, page zone, coarse bound, count, flag, or stable
+# reason code. It does not change PII input, PII decisions, or any existing text layer.
+# OCR/Text L15 extends the same additive model with noise/token artifact *evidence* (see
+# ocr_noise.py): glyph artifacts, suspicious token shapes, character-confusion candidates, and
+# spacing candidates. It is suspicion, not truth — it never corrects, removes, or rewrites text.
+QualityEvidenceLevel = Literal[
+    "document",
+    "page",
+    "block",
+    "row",
+    "span",
+    "table",
+    "form",
+    "reading_text",
+    "structured_content",
+    "projection_lineage",
+]
+QualityEvidenceType = Literal[
+    "source_text",
+    "pdf_text_layer",
+    "ocr_engine",
+    "positioned_rows",
+    "page_geometry",
+    "page_zone",
+    "reading_order",
+    "reading_text_map",
+    "multi_column_reconstruction",
+    "table_reconstruction",
+    "form_reconstruction",
+    "structured_content",
+    "fallback",
+    "skipped_reconstruction",
+    "low_confidence",
+    "lineage_coverage",
+    "projection_lineage",
+    # OCR/Text L15 noise/token artifact evidence types (see ocr_noise.py). These are additive,
+    # deterministic shape-based *suspicion* signals — never a correction, never raw token text.
+    "glyph_artifact",
+    "suspicious_token_shape",
+    "suspicious_spacing",
+    "character_confusion",
+    "low_information_symbol_run",
+    "joined_word_candidate",
+    "split_word_candidate",
+    "non_text_artifact",
+    "ocr_noise_summary",
+]
+QualityEvidenceStatus = Literal[
+    "confident",
+    "partial",
+    "low_confidence",
+    "skipped",
+    "fallback",
+    "unavailable",
+    "not_applicable",
+]
+QualityPageZone = Literal[
+    "header",
+    "footer",
+    "left_margin",
+    "right_margin",
+    "body",
+    "unknown",
+]
+_QUALITY_STATUS_VALUES = frozenset(get_args(QualityEvidenceStatus))
+_QUALITY_TYPE_VALUES = frozenset(get_args(QualityEvidenceType))
+
+
+class QualityOffsetRange(BaseModel):
+    """A half-open offset range used only to *locate* evidence; it never carries the text itself."""
+
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> QualityOffsetRange:
+        if self.end < self.start:
+            raise ValueError("quality evidence range end must be at least its start")
+        return self
+
+
+class QualityEvidenceBounds(BaseModel):
+    """Coarse page-local bounds for a geometry/zone evidence item. Geometry only, no text."""
+
+    x0: float = Field(ge=0.0)
+    y0: float = Field(ge=0.0)
+    x1: float = Field(ge=0.0)
+    y1: float = Field(ge=0.0)
+    coordinate_unit: Literal["pdf_points", "image_pixels", "normalized"]
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> QualityEvidenceBounds:
+        if self.x1 < self.x0 or self.y1 < self.y0:
+            raise ValueError("quality evidence bounds must have x1>=x0 and y1>=y0")
+        return self
+
+
+class QualityEvidenceItem(BaseModel):
+    """One additive quality-evidence signal about the OCR/Text chain.
+
+    Every locator is structural: offsets, a page number, a page zone, coarse bounds, counts, flags,
+    and a stable machine-readable ``reason_code``. ``details`` is intentionally ``dict[str, int]``
+    so no raw document text, snippet, or PII value can ever be stored here by construction.
+    """
+
+    evidence_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
+    level: QualityEvidenceLevel
+    type: QualityEvidenceType
+    status: QualityEvidenceStatus
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    reason_code: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    page_number: int | None = Field(default=None, ge=1)
+    source_range: QualityOffsetRange | None = None
+    raw_text_range: QualityOffsetRange | None = None
+    reading_text_range: QualityOffsetRange | None = None
+    bbox: QualityEvidenceBounds | None = None
+    page_zone: QualityPageZone | None = None
+    related_artifact: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    flags: list[str] = Field(default_factory=list)
+    details: dict[str, int] = Field(default_factory=dict)
+
+
+class QualityLineageCoverage(BaseModel):
+    """How well canonical reading text maps back to technical raw text and source geometry."""
+
+    reading_text_length: int = Field(ge=0)
+    mapped_reading_text_chars: int = Field(ge=0)
+    unmapped_reading_text_chars: int = Field(ge=0)
+    mapping_coverage_ratio: float = Field(ge=0.0, le=1.0)
+    exact_span_count: int = Field(ge=0)
+    partial_span_count: int = Field(ge=0)
+    unmapped_span_count: int = Field(ge=0)
+    source_geometry_coverage_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    structured_content_reference_count: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_coverage(self) -> QualityLineageCoverage:
+        if (
+            self.mapped_reading_text_chars + self.unmapped_reading_text_chars
+            != self.reading_text_length
+        ):
+            raise ValueError("mapped and unmapped reading chars must sum to reading text length")
+        return self
+
+
+class QualityEvidenceSummary(BaseModel):
+    """Document-level roll-up of the evidence items plus lineage coverage.
+
+    ``overall_score`` is an advisory 0.0-1.0 confidence blend, never a gate. ``counts_by_status``
+    and ``counts_by_type`` are derived from the items and validated for consistency by
+    :class:`QualityEvidence`.
+    """
+
+    overall_status: QualityEvidenceStatus
+    overall_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    counts_by_status: dict[str, int] = Field(default_factory=dict)
+    counts_by_type: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    reconstruction_summary: dict[str, int] = Field(default_factory=dict)
+    fallback_summary: dict[str, int] = Field(default_factory=dict)
+    lineage_summary: QualityLineageCoverage
+
+    @model_validator(mode="after")
+    def _validate_count_keys(self) -> QualityEvidenceSummary:
+        if any(status not in _QUALITY_STATUS_VALUES for status in self.counts_by_status):
+            raise ValueError("counts_by_status has an unknown status key")
+        if any(type_ not in _QUALITY_TYPE_VALUES for type_ in self.counts_by_type):
+            raise ValueError("counts_by_type has an unknown type key")
+        return self
+
+
+class QualityEvidence(BaseModel):
+    """Additive OCR/Text L14 quality evidence and lineage coverage beside canonical text."""
+
+    items: list[QualityEvidenceItem] = Field(default_factory=list)
+    summary: QualityEvidenceSummary
+
+    @model_validator(mode="after")
+    def _validate_items(self) -> QualityEvidence:
+        ids = [item.evidence_id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("quality evidence items must have unique ids")
+        status_counts: dict[str, int] = {}
+        type_counts: dict[str, int] = {}
+        for item in self.items:
+            status_counts[item.status] = status_counts.get(item.status, 0) + 1
+            type_counts[item.type] = type_counts.get(item.type, 0) + 1
+        if self.summary.counts_by_status != dict(sorted(status_counts.items())):
+            raise ValueError("quality evidence status counts do not match items")
+        if self.summary.counts_by_type != dict(sorted(type_counts.items())):
+            raise ValueError("quality evidence type counts do not match items")
+        return self
+
+
 class TextContent(BaseModel):
     """Versioned text output produced by the OCR workstation."""
 
@@ -575,6 +773,34 @@ class TextContent(BaseModel):
     # pseudonymization layer, placeholder map, redaction model, or export format.
     structured_content_version: Literal["1"] | None = None
     structured_content: StructuredContent | None = None
+    # OCR L14 additive quality evidence and lineage coverage. Metrics-only: it records where the
+    # text came from, how it was reconstructed, and how well the derived reading text maps back to
+    # technical raw text — using offsets, counts, flags, page zones, and stable reason codes, never
+    # raw text. It is not a PII input, does not change PII decisions, and reorders/deletes nothing.
+    # Both fields are optional/defaulted so artifacts written before L14 remain valid.
+    quality_evidence_version: Literal["1"] | None = None
+    quality_evidence: QualityEvidence | None = None
+
+    @model_validator(mode="after")
+    def _validate_quality_evidence(self) -> TextContent:
+        if (self.quality_evidence is not None) != (self.quality_evidence_version == "1"):
+            raise ValueError("quality evidence and version must be present together")
+        if self.quality_evidence is None:
+            return self
+        reading_length = len(self.reading_text or "")
+        lineage = self.quality_evidence.summary.lineage_summary
+        if lineage.reading_text_length != reading_length:
+            raise ValueError("quality evidence reading length does not match reading text")
+        raw_length = len(self.text)
+        for item in self.quality_evidence.items:
+            if item.raw_text_range is not None and item.raw_text_range.end > raw_length:
+                raise ValueError("quality evidence raw range exceeds technical raw text length")
+            if (
+                item.reading_text_range is not None
+                and item.reading_text_range.end > reading_length
+            ):
+                raise ValueError("quality evidence reading range exceeds reading text length")
+        return self
 
     @model_validator(mode="after")
     def _validate_structured_content(self) -> TextContent:
@@ -834,6 +1060,176 @@ class QualityReportArtifact(BaseModel):
         return self
 
 
+# OCR Output Contract v1 / Document Text Package (ADR-0027). An additive, versioned,
+# consumer-facing packaging of one OCR/Text artifact's already-produced layers (technical raw text,
+# canonical reading text, layout text, structured content, and quality evidence) under explicit
+# source roles and a trust status. It is a derived, read-only view built on demand from an existing
+# immutable ``TextArtifact`` (see ``document_text_package.py``) — never persisted as its own
+# artifact, never mutates its source, and adds no new raw document text beyond what ``TextArtifact``
+# already carries. This is the stable boundary PII, Review, pseudonymization, document analysis,
+# export, and future local AI are meant to depend on instead of ``TextContent`` internals or the
+# OCR/PDF tools that produced them. PII does not consume this contract yet. See
+# docs/adr/0027-ocr-output-contract-v1-strategy.md and docs/engine/ocr-layout-text-contract.md.
+DocumentTextPackageStatus = Literal["valid", "degraded", "invalid"]
+DocumentTextSourceName = Literal[
+    "technical_raw_text",
+    "canonical_reading_text",
+    "layout_text",
+    "structured_content",
+    "quality_evidence",
+]
+DocumentTextSourceRole = Literal[
+    "authoritative_source_text",
+    "human_readable_derived_text",
+    "visual_debug_text",
+    "semantic_structure_hints",
+    "trust_uncertainty_hints",
+]
+# Stable, machine-readable codes used in ``warnings``/``blockers``. New codes may be added over time
+# as additive OCR evidence sources plug into the contract (dictionary/lexicon, multi-OCR, local-LLM
+# hints); a code is never removed or repurposed once shipped.
+DocumentTextPackageWarning = Literal[
+    "missing_required_raw_text",
+    "missing_document_id",
+    "invalid_text_source",
+    "unsupported_contract_version",
+    "missing_canonical_reading_text",
+    "missing_layout_text",
+    "missing_structured_content",
+    "missing_quality_evidence",
+    "missing_noise_evidence",
+    "partial_lineage",
+    "missing_mapping",
+    "legacy_artifact",
+]
+
+
+class DocumentTextPackageProcessingMetadata(BaseModel):
+    """Metrics-only extraction summary copied from the source ``TextContent``. No raw text."""
+
+    text_source: Literal["pdf_mixed", "pdf_text_layer", "docx_text", "paddleocr"]
+    page_count: int = Field(ge=0)
+    ocr_used: bool
+    text_layer_used: bool
+    tool_versions: dict[str, str] = Field(default_factory=dict)
+
+
+class DocumentTextSourceV1(BaseModel):
+    """One packaged layer with an explicit, consumer-facing role.
+
+    Source role semantics (see ADR-0027): raw text is authoritative; canonical reading text is a
+    derived, non-authoritative convenience view; layout text is visual/debug/review-oriented;
+    structured content is semantic hints, not primary truth; quality evidence is trust/uncertainty
+    metadata, never a correction. Consumers must not assume an optional layer exists, and must not
+    treat canonical reading text as the sole authoritative source.
+
+    ``text`` carries the actual layer content only for the three text-bearing roles
+    (raw/canonical/layout) — allowed because the package *is* the text artifact for those roles.
+    ``structured_content`` and ``quality_evidence`` are exposed as their own typed fields on
+    :class:`DocumentTextPackageV1` instead of being duplicated here, so those two entries only index
+    availability/role/flags.
+    """
+
+    name: DocumentTextSourceName
+    role: DocumentTextSourceRole
+    required: bool
+    available: bool
+    text: str | None = None
+    text_char_count: int | None = Field(default=None, ge=0)
+    status: str | None = None
+    flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_text_char_count(self) -> DocumentTextSourceV1:
+        if self.text is not None and self.text_char_count != len(self.text):
+            raise ValueError("text source char count does not match its text")
+        if self.text is None and self.text_char_count is not None:
+            raise ValueError("text source char count requires text")
+        return self
+
+
+class DocumentTextPackageValidationSummary(BaseModel):
+    """Compact, machine-checkable rollup of the contract validation outcome."""
+
+    contract_status: DocumentTextPackageStatus
+    warning_count: int = Field(ge=0)
+    blocker_count: int = Field(ge=0)
+    missing_capability_count: int = Field(ge=0)
+    required_sources_satisfied: bool
+    available_source_count: int = Field(ge=0)
+    total_source_count: int = Field(ge=0)
+
+
+class DocumentTextPackageV1(BaseModel):
+    """OCR Output Contract v1 — the stable, versioned, consumer-facing package for one OCR/Text
+    artifact (ADR-0027).
+
+    A derived, read-only view over an existing immutable :class:`TextArtifact`: it packages
+    already-produced layers under one contract with explicit source roles and a trust status, so
+    consumers depend on this contract rather than on ``TextContent`` internals or the OCR/PDF tools
+    that produced them. ``package_id``/``text_artifact_id``/``created_at`` mirror the source
+    ``TextArtifact`` — the package is a deterministic 1:1 view over exactly one text artifact in v1
+    — so building the same input twice yields an identical package. Building this package changes no
+    OCR/Text behavior and mutates no source artifact; PII is not migrated onto it yet.
+    """
+
+    contract_version: Literal["1.0"] = "1.0"
+    package_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    created_at: str
+    contract_status: DocumentTextPackageStatus
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    missing_capabilities: list[str] = Field(default_factory=list)
+    processing_metadata: DocumentTextPackageProcessingMetadata
+    text_sources: list[DocumentTextSourceV1]
+    structured_content: StructuredContent | None = None
+    quality_evidence: QualityEvidence | None = None
+    reading_text_map: list[ReadingTextMapSegment] = Field(default_factory=list)
+    contract_validation_summary: DocumentTextPackageValidationSummary
+
+    @model_validator(mode="after")
+    def _validate_status_consistency(self) -> DocumentTextPackageV1:
+        if self.contract_status == "invalid" and not self.blockers:
+            raise ValueError("invalid contract status requires at least one blocker")
+        if self.contract_status != "invalid" and self.blockers:
+            raise ValueError("blockers are only present when contract status is invalid")
+        if self.contract_status == "degraded" and not self.warnings:
+            raise ValueError("degraded contract status requires at least one warning")
+        if self.contract_status == "valid" and self.warnings:
+            raise ValueError("valid contract status must not carry warnings")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_sources_and_summary(self) -> DocumentTextPackageV1:
+        names = [source.name for source in self.text_sources]
+        if len(names) != len(set(names)):
+            raise ValueError("text sources must have unique names")
+        required_available = all(
+            source.available for source in self.text_sources if source.required
+        )
+        available_count = sum(1 for source in self.text_sources if source.available)
+        summary = self.contract_validation_summary
+        if summary.contract_status != self.contract_status:
+            raise ValueError("validation summary status does not match contract status")
+        if summary.warning_count != len(self.warnings):
+            raise ValueError("validation summary warning count does not match warnings")
+        if summary.blocker_count != len(self.blockers):
+            raise ValueError("validation summary blocker count does not match blockers")
+        if summary.missing_capability_count != len(self.missing_capabilities):
+            raise ValueError(
+                "validation summary missing-capability count does not match missing capabilities"
+            )
+        if summary.required_sources_satisfied != required_available:
+            raise ValueError("validation summary required-sources flag is inconsistent")
+        if summary.total_source_count != len(self.text_sources):
+            raise ValueError("validation summary total source count does not match text sources")
+        if summary.available_source_count != available_count:
+            raise ValueError("validation summary available source count is inconsistent")
+        return self
+
+
 class PiiEntity(BaseModel):
     """One labeled PII span referencing the source text exactly."""
 
@@ -1038,6 +1434,36 @@ class PiiArtifact(BaseModel):
         return self
 
 
+JobKindValue = Literal["ocr_text", "pii_detection"]
+JobStatusValue = Literal["pending", "running", "succeeded", "failed", "canceled"]
+JobExecutionModeValue = Literal["synchronous_inline", "future_worker"]
+
+
+class JobStatusResponse(BaseModel):
+    """Safe public status view for one OCR/PII job.
+
+    The SQLite record stores metadata only: ids, lifecycle timestamps, sanitized error metadata, and
+    a reference to the produced immutable artifact. It never returns raw document text, PII values,
+    artifact payloads, or stack traces.
+    """
+
+    job_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    kind: JobKindValue
+    status: JobStatusValue
+    execution_mode: JobExecutionModeValue
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    updated_at: str
+    attempt_count: int = Field(ge=0)
+    error_code: str | None = Field(default=None, max_length=120)
+    error_message: str | None = Field(default=None, max_length=1000)
+    result_artifact_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    result_artifact_type: str | None = Field(default=None, max_length=80)
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
 class PiiEntityGroupProjectionSummary(BaseModel):
     """Aggregate reading-text projection coverage across one entity group's occurrences."""
 
@@ -1231,8 +1657,8 @@ class RuntimeCapabilitiesResponse(BaseModel):
     ocr_memory_limit_low: bool = Field(
         description=(
             "OCR is installed but the container memory limit looks too low for PaddleOCR to run "
-            "without being OOM-killed mid-request. Restart with BACKEND_MEMORY_LIMIT=2g "
-            "(`make up-ocr`/`make up-full`)."
+            "without being OOM-killed mid-request in sync fallback mode. Use default worker mode "
+            "or set API_MEMORY_LIMIT=2g when OCR_EXECUTION_MODE=sync."
         )
     )
 

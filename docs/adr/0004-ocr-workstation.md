@@ -32,8 +32,8 @@ engine, or a direct dependency from routing code to a heavyweight OCR implementa
 
 - Mixed PDFs preserve page order while using OCR only where the audit requires it.
 - Tests replace both OCR and rendering boundaries and need neither models, Poppler, nor network.
-- The default backend image supports direct PDF/DOCX extraction but requires
-  `INSTALL_OCR=true` plus a configured local model directory for image or scanned-page OCR.
-  PaddlePaddle wheel availability and runtime memory remain platform constraints.
+- The default runtime image includes OCR dependencies, but image or scanned-page OCR still requires
+  a configured local model directory. PaddlePaddle wheel availability and worker memory remain
+  platform constraints.
 - Processing stays request-bound in v1; very large documents may eventually motivate a separate,
   explicitly approved asynchronous execution step.

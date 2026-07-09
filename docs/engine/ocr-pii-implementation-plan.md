@@ -41,17 +41,17 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 
 | Engine | Current level | Next |
 | --- | --- | --- |
-| OCR / Text | **L11 done (built on the L10.5 contract step)** | PII L12 overlap resolution |
+| OCR / Text | **L12 done (built on the L10.5 contract step)** | PII L12 overlap resolution |
 | PII / Sensitive-Data | **L11 done; L10 partial** (dev-only feedback capture) | L12 overlap resolution |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | formal `review_result` artifact |
 | Benchmark / Regression | **L8 done; L10 slice out of order** | L9 per-profile metrics |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 
-OCR/Text (L11, built on the L10.5 contract step) is currently ahead of the *binding* PII/review
+OCR/Text (L12, built on the L10.5 contract step) is currently ahead of the *binding* PII/review
 frontier (PII L10 partial,
 Review L2 prod, with L11 grouping and a partial L6–L9 decision overlay layered on top — see
-[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)). The 2–3-levels-ahead rule is
-comfortably satisfied today; the risk is PII deep work
+[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)). OCR is again ahead of PII
+after the interleaved PII L11 step; the risk is PII deep work
 (grouping/overlap/review) outrunning the OCR text-quality/geometry it will eventually need.
 
 ## OCR / Text roadmap
@@ -90,11 +90,17 @@ labelled goals in the request.
    `structured_content` adds span-backed rows/cells, label/value fields, and sections across PDF,
    OCR/image, and DOCX paths. Conservative deterministic heuristics flag uncertainty and reuse L10
    line bounds/L9 headings when available. Technical raw text and active PII input remain unchanged.
-8. **OCR L13 — document understanding.** Document-type / section / zone semantics to inform PII,
+8. **OCR L12 — multi-column layout reconstruction — delivered.** Canonical `reading_text` now
+   detects confident prose columns from x-position clusters and overlapping vertical ranges, renders
+   page-local columns in reading order, reconstructs fused table headers only with safe row
+   positions, and pairs adjacent form labels/values only when geometry is unambiguous. Technical raw
+   text, active PII input, `structured_content` schema, dependencies, and public APIs remain
+   unchanged.
+9. **OCR L13 — document understanding.** Document-type / section / zone semantics to inform PII,
    review, and later redaction.
-9. **OCR L15+ — redaction-ready text/geometry mapping.** The stable canonical-offset ↔ page-pixel
-   mapping that a future Redaction engine requires (with L12 multi-engine selection and L14 local-AI
-   assist as optional branches).
+10. **OCR L15+ — redaction-ready text/geometry mapping.** The stable canonical-offset ↔ page-pixel
+   mapping that a future Redaction engine requires (with multi-engine selection deferred to a later
+   OCR-quality/benchmark spike and L14 local-AI assist optional).
 
 Points to describe explicitly as these levels are built:
 
@@ -167,7 +173,7 @@ Points to describe explicitly as these levels are built:
 - **Redaction PRs are blocked** until the prerequisites are explicitly satisfied (reviewed decisions,
   stable/resolved PII spans, OCR text-to-geometry mapping). No redaction PR is scheduled here.
 
-The concrete [next-12-PR list](#next-12-prs) front-loads three OCR foundation PRs (confidence,
+The concrete [next-PR list](#next-prs) front-loads three OCR foundation PRs (confidence,
 `quality_report`, `best_text_result`) before interleaving PII grouping, because the deeper PII/review
 chain (overlap → review → redaction) structurally depends on OCR text quality and geometry that must
 exist first. This is the cadence applied, not an exception to it.
@@ -191,7 +197,7 @@ exist first. This is the cadence applied, not an exception to it.
 - Check whether benchmark metrics actually support the next planned step (e.g. do not add OCR
   benchmark columns before OCR L6/L7 provide the source metrics).
 
-## Next 12 PRs
+## Next PRs
 
 `Level advanced` cites the authoritative OCR/PII levels; a "v1"/"foundation"/"report" PR may deliver
 a slice of a level rather than fully completing it. PR 1 is this document. This list is consistent
@@ -212,7 +218,8 @@ hardening + OCR L6/L7 here).
 | 9a | OCR canonical reading text (delivered prerequisite) | OCR/Text | **L10.5 intermediate** | versioned block-aware `reading_text`; relabel legacy `text` as technical raw; exact synthetic quote fixture | PII input switch, lineage map, structured content, pseudonymization/export | User View defaults to useful reading text; raw/page text and PII behavior remain unchanged |
 | 10 | Review result artifact (partially delivered as a JSONL decision overlay) | Review / PII | **Review L8 (→ PII L13)** | immutable, lineage-bound `review_result` overlay | confirm/reject UI actions (next), rules, DB migration | a `review_result` persists bound to `pii_result`+`text_result` and re-renders; `pii_result` immutable; re-extraction marks it stale — delivered: bound to `pii_result.id` (not yet `text_result.id`), persists/re-renders, `pii_result` immutable; not yet delivered: an explicit stale flag and the formal single-artifact model (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
 | 11 | OCR table/form reconstruction (delivered) | OCR/Text | **OCR L11** | additive span-backed tables, fields, and sections with conservative confidence/flags | PII-input switch, pseudonymization/placeholder mapping/export, UI | representative PDF/OCR/DOCX structures resolve to raw/reading spans; raw text and PII input remain unchanged |
-| 12 | Feedback-to-regression workflow | PII / Review | **PII L15 / Review L14** | promote reviewed corrections into private benchmark ground truth | exporting PII outside `volumes/`, benchmark scoring changes | corrections become private benchmark data without leaving `volumes/`; ground truth improves |
+| 12 | OCR multi-column layout reconstruction (delivered) | OCR/Text | **OCR L12** | safe multi-column reading order, fused table headers, label/value pairing | PII-input switch, new dependency, pseudonymization/export, API/UI | complex dense layouts render more readably; raw text and PII input remain unchanged |
+| 13 | Feedback-to-regression workflow | PII / Review | **PII L15 / Review L14** | promote reviewed corrections into private benchmark ground truth | exporting PII outside `volumes/`, benchmark scoring changes | corrections become private benchmark data without leaving `volumes/`; ground truth improves |
 
 Sequencing notes: PR 4 (`best_text_result` split) precedes PR 6 (`layout_text_result`); PR 6
 precedes PR 9 (span geometry), and PR 9a (`reading_text`) is required before PR 11 (structured
@@ -240,7 +247,7 @@ it does not re-run detection on reading text and persists only offsets plus a me
 advances from L9 done/L10 partial to **L11 done**. Conservative, derived entity grouping
 (`pii_grouping.py`) presents repeated same-type occurrences as one group without changing detection
 or the `pii_result` schema; a paired, lineage-bound review-decision overlay
-(`GET/POST …/pii/review[/decisions]`, JSONL under `document-data/<id>/review/`) assumes every
+(`GET/POST …/pii/review[/decisions]`, JSONL under `document-store/<id>/review/`) assumes every
 detected entity is `pseudonymize`-bound by default (no separate "pending" state); a reviewer opts
 one out via `keep` or `false_positive`, at group or occurrence scope, satisfying much of Review
 L6/L8/L9's practical intent (grouped occurrences; decisions persist, restore on reload, and are
@@ -248,12 +255,23 @@ never silently reapplied across a re-run) without yet being the formal single-ar
 `review_result` model or an explicit stale-decision flag — see
 [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md) for the exact scope. This PR
 introduces no new dependency, recognizer, detection change, routing change, or benchmark-payload
-change; the benchmark loader is unaffected since it never reads review/grouping data. OCR/Text (L11)
-remains sufficiently ahead of PII (now L11)/Redaction (L0) — the two engines are level-equal today,
-which is acceptable since PII L11 is explicitly one of the interleaving-eligible steps that does not
-depend on missing OCR maturity. The next three steps are **PII L12 overlap resolution**, the formal
+change; the benchmark loader is unaffected since it never reads review/grouping data. At that time,
+OCR/Text (L11) remained sufficiently ahead of PII (now L11)/Redaction (L0) — the two engines were
+level-equal, which was acceptable since PII L11 is explicitly one of the interleaving-eligible
+steps that does not depend on missing OCR maturity. The next three steps are **PII L12 overlap
+resolution**, the formal
 **Review L8 `review_result` artifact model** (formalizing today's JSONL overlay, ideally with a
 stale-decision flag), and **PII validation transparency report**.
+
+**Latest checkpoint (OCR L12 multi-column layout reconstruction):** OCR/Text advances from L11 to
+**L12 done** with no dependency, OCR routing, raw/page text, active PII input, API, review-decision,
+`quality_report`, benchmark payload, pseudonymization, redaction, or export change. The work is an
+additive `reading_text` quality layer over existing geometry/row signals; `structured_content`
+remains the L11 span-backed structure layer and stays compatible. OCR/Text is ahead of PII L11 and
+Redaction L0 again; before advancing PII beyond L12, re-run the checkpoint loop to ensure no OCR
+lineage or geometry prerequisite is missing. The next documented engine steps remain **PII L12
+overlap resolution**, formal **Review L8 `review_result`**, and **PII validation transparency
+report**, unless benchmark/private-corpus evidence reprioritizes OCR L13 document understanding.
 
 ## References
 

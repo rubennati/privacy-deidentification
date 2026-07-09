@@ -40,6 +40,7 @@ from app.services.layout_text import (
     build_pdf_layout_blocks,
 )
 from app.services.ocr_adapters import OcrAdapter, OcrExtractionResult, extract_ocr_result
+from app.services.ocr_quality import build_quality_evidence
 from app.services.original_artifact_service import get_verified_original
 from app.services.pdf_renderer import PdfRenderer
 from app.services.pii_input_text import build_page_pii_input_text
@@ -471,6 +472,15 @@ def _text_content(
     reading_map = (
         build_reading_text_map(text, reading.text, pages) if reading is not None else []
     )
+    quality_evidence = build_quality_evidence(
+        source=source,
+        text=text,
+        pages=pages,
+        reading=reading,
+        reading_text_map=reading_map,
+        text_geometry=text_geometry,
+        structured_content=structured_content,
+    )
     return TextContent(
         document_id=document_id,
         input_artifact_id=original.id,
@@ -496,6 +506,8 @@ def _text_content(
         text_geometry=text_geometry,
         structured_content_version="1" if structured_content is not None else None,
         structured_content=structured_content,
+        quality_evidence_version="1",
+        quality_evidence=quality_evidence,
     )
 
 

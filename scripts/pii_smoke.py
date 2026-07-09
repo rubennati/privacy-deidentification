@@ -47,7 +47,7 @@ def main() -> int:
     except PiiUnavailableError:
         print(
             "FAIL: PII runtime unavailable — Presidio/spaCy or the model is missing. "
-            "Build with INSTALL_PII=true."
+            "Rebuild the default runtime image with `make build`."
         )
         return 1
 

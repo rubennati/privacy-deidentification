@@ -265,8 +265,22 @@ Anchored to the existing 0–19 ladder in [`ocr-engine-levels.md`](ocr-engine-le
 - **OCR L10.5:** `reading_text` establishes the canonical reading-text / technical-raw contract and
   the product-facing main text before structured content.
 - **OCR L11:** span-backed table / form reconstruction in additive `structured_content`.
-- **Higher levels:** document understanding / redaction-ready geometry (the lineage map's long-term
-  payoff for bounding boxes and redaction).
+- **OCR L12:** deterministic multi-column layout reconstruction in canonical `reading_text`; no new
+  schema, artifact, raw-text, or PII-input change.
+- **OCR L13:** table/form reconstruction v2 — geometry-only table detection (no header keyword
+  required), partially fused header recovery, and multiline label/value continuation, in both
+  canonical `reading_text` and `structured_content`; no new schema, artifact, raw-text, or PII-input
+  change.
+- **OCR L14:** quality evidence and lineage coverage — additive, optional, versioned
+  `quality_evidence` on `text_result` recording metrics-only provenance, reconstruction, page-zone,
+  and reading↔raw lineage-coverage evidence; no new artifact, raw-text, or PII-input change, and it
+  never changes PII decisions.
+- **OCR L15:** noise/token artifact evidence — the same `quality_evidence` list gains deterministic,
+  additive glyph-artifact, suspicious-token-shape, character-confusion, and spacing-candidate items
+  plus a document-level `ocr_noise_summary`; no new artifact, raw-text, or PII-input change, no
+  dictionary/multi-OCR/local-LLM, and no text is ever corrected, removed, or rewritten.
+- **Higher levels:** local AI assist / redaction-ready geometry (the lineage map's long-term payoff
+  for bounding boxes and redaction).
 
 `layout_text_result` v1, `pii_input_text` v1, and the structured layout blocks complete OCR L9 —
 visible layout, internal experimental reading order, and review-oriented typed regions. A full
@@ -274,6 +288,37 @@ visible layout, internal experimental reading order, and review-oriented typed r
 build on the
 block/geometry structure from OCR L10 and gate on the separation rule above. See the sequence in
 [`ocr-pii-implementation-plan.md`](ocr-pii-implementation-plan.md).
+
+## OCR Output Contract v1 (Document Text Package) — implemented
+
+This document fixes the *internal* multi-layer text model. The **OCR Output Contract v1 / Document
+Text Package** ([ADR-0027](../adr/0027-ocr-output-contract-v1-strategy.md)) is the implemented
+*external* boundary built on top of it: a single, versioned package that exposes the layers already
+defined here — with explicit source roles and a trust status — so that PII, Review,
+pseudonymization, document analysis, export, and future local AI can consume **one stable contract**
+instead of reaching into `text_result` fields or the external OCR/PDF tool.
+
+- **Packaged layers (roles):** `technical_raw_text` (**raw** — authoritative offset source),
+  `canonical_reading_text` (**canonical** — human-readable, not authoritative), `layout_text`
+  (**layout** — visual/debug), `structured_content` (**structured** — semantic hints),
+  `reading_text_map`/lineage, and `quality_evidence` incl. L15 noise evidence (**evidence** —
+  trust/uncertainty, never correction).
+- **Versioning + status:** `contract_version = "1.0"` plus a `contract_status`
+  (`valid`/`degraded`/`invalid`) with `warnings`/`blockers`/`missing_capabilities`. `invalid`
+  covers blockers such as missing required raw text or malformed source roles; `degraded` covers
+  missing optional layers or incomplete lineage/evidence signals; `valid` has no warnings/blockers.
+- **Normalization:** external OCR/PDF tool output (pypdf, PaddleOCR, python-docx, any future
+  engine) is normalized **before** crossing the contract boundary.
+- **Consumer rules:** PII may use raw (primary), canonical/structured (secondary/hint), and
+  evidence (confidence/review flags); it must not treat canonical as authoritative and must not
+  break when optional layers are absent. Making `pii_input_text` (or canonical) the *active* PII
+  detection input still requires the tested `text_lineage_map` [separation gate](#invariants) — the
+  contract packages the layers, it does not bypass that gate.
+
+The contract is a **cross-cutting stabilization milestone, not a new OCR level** — the 0–19 ladder
+([`ocr-engine-levels.md`](ocr-engine-levels.md)) is unchanged. It is implemented additively via
+`GET /api/documents/{document_id}/text-package`; existing OCR endpoints remain backward-compatible,
+runtime/worker behavior is unchanged, and PII is not migrated yet.
 
 ## Implementation status (v1)
 
@@ -333,10 +378,78 @@ block/geometry structure from OCR L10 and gate on the separation rule above. See
   conservative tables/cells, label/value fields, and sections across PDF text-layer, OCR/image, and
   DOCX paths. Values and cells remain canonical/page spans, partial structures are flagged, and
   benchmark loaders ignore the payload. Technical raw text and active PII input are unchanged.
-- **Not in L11:** `text_lineage_map`, word-level/redaction-ready geometry, a PII-input switch, a
+- **Delivered (L12):** the canonical `reading_text` builder now applies a bounded layout
+  reconstruction pass for confident multi-column prose: x-position clusters must have distinct
+  starts, overlapping vertical ranges, and prose-like density before columns render left-to-right,
+  top-to-bottom. Table-owned and party-heading-owned regions stay on their existing paths, fused
+  table headers reconstruct only when following rows provide safe column positions, and adjacent
+  label/value pairs join only when geometry is close enough to be unambiguous. New non-sensitive
+  flags include `multi_column_reconstruction`, `dense_table_reconstruction`, and
+  `label_value_pairing`. Low-confidence layouts keep the existing row order. L12 deliberately
+  favors stable, measurable quality gains over aggressive correction: future dictionary, domain,
+  OCR-comparison, second-engine, confidence, document-type, review-feedback, and benchmark signals
+  should be added as optional confidence evidence, not as destructive rewrites or downstream PII
+  dependencies.
+- **Not in L12:** `text_lineage_map`, word-level/redaction-ready geometry, a PII-input switch, a
   structured `pii_input_blocks` schema, semantic role labelling (contractor vs.
   customer) for `pii_input_text` blocks, active PII use of `pii_input_text`, pseudonymization,
   placeholder mapping, document export, and pixel-perfect visual redaction.
+- **Delivered (L13):** table/form reconstruction v2 builds on L12's row-alignment primitives rather
+  than replacing them. A shared row-extension helper now backs both the keyword-header table
+  renderer and a new geometry-only detector: a maximal run of 3+ consecutive rows sharing 3+ aligned
+  columns renders row-wise even with no recognized header vocabulary, gated by the same
+  party-heading/label-value-form ownership checks L12 already used to keep prose and forms out of
+  table detection. A 1- or 2-cell fused table header is recovered by concatenating cell text and
+  reusing the existing marker-based header split, generalizing what previously only worked for a
+  single fused cell. Adjacent-row label/value pairing (a label alone on its row, paired with a value
+  on the next row) now extends across further following rows that stay in the same column, at normal
+  line spacing, and do not themselves look like a new label, heading, bullet, data row, filename row,
+  or another inline "label: value" fact — the last check closes a gap a private-corpus validation
+  pass found where an unrelated fact was being absorbed as a continuation. `structured_content` field
+  detection gained the equivalent multiline continuation for both the inline (`Label: value`) and
+  next-line (`Label` then `value` below it) shapes, bounded by the same kind of stop conditions. New
+  non-sensitive flags: `generic_table_reconstruction` and `multiline_value_pairing` on `reading_text`;
+  `multiline_value` on `StructuredField.flags`. All are additive; legacy artifacts without them
+  remain valid.
+- **Delivered (L14):** quality evidence and lineage coverage as an additive, optional, versioned
+  `quality_evidence` field on `text_result`. A deterministic builder (`ocr_quality.py`) derives, from
+  already-computed inputs, metrics-only evidence items (source_text, pdf_text_layer, ocr_engine,
+  positioned_rows, page_geometry, page_zone, reading_order, the reconstruction/fallback strategies,
+  structured_content, reading_text_map, lineage_coverage, projection_lineage) plus a summary with
+  `QualityLineageCoverage`. Page zones are classified conservatively from existing geometry and are
+  evidence only (they never delete, reorder, or reclassify text). `details` is `dict[str, int]` so no
+  raw text can be stored; the schema validates that evidence offsets stay inside the actual
+  raw/reading text. Technical raw text, active PII input, PII projection/decisions, the
+  `quality_report` artifact, benchmark payloads, dependencies, and public APIs are unchanged.
+- **Not in L14:** local AI assist for hard pages (the deferred earlier placeholder meaning; see
+  [ADR-0025](../adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md)), dictionary/lexicon
+  checks, multi-OCR, and local-LLM structure/quality hints (all deferred, additive *evidence, not
+  truth*), automatic OCR correction, a PII-input switch, `text_lineage_map`,
+  word-level/redaction-ready geometry, pseudonymization, placeholder mapping, document export, and
+  pixel-perfect visual redaction.
+- **Delivered (L15):** noise/token artifact evidence as an additive, deterministic extension of the
+  same `quality_evidence` list. A dedicated builder (`ocr_noise.py`) scans technical raw per-page
+  text only for symbol/glyph runs, suspicious token shapes, O/0, I/l/1, and rn/m character-confusion
+  candidates, and spacing candidates (single-letter-token runs, long letters-only tokens with one
+  internal case transition), reusing the existing L14 page-zone classification for tagging and
+  always emitting a document-level `ocr_noise_summary`. Structured-identifier/IBAN-shaped tokens and
+  intentional divider/bullet/leader runs are exempted; a private-corpus validation pass found and
+  fixed four generic over-flagging patterns (superscript measurement units, incidental characters
+  beside long divider/blank-field runs, hyphenated compound words, and abbreviations followed by
+  sentence punctuation), each covered by a synthetic regression test. `details` remains
+  `dict[str, int]`; no raw token text is ever stored.
+- **Not in L15:** dictionary/lexicon checks, multi-OCR agreement, and local-LLM hints (deferred,
+  additive *evidence, not truth*, see [ADR-0026](../adr/0026-ocr-l15-noise-token-artifact-evidence.md)),
+  automatic OCR correction or removal, correction *suggestions* (a later, explicitly separate level),
+  redaction-ready text/geometry mapping (the deferred earlier L15 placeholder meaning), a PII-input
+  switch, `text_lineage_map`, word-level/redaction-ready geometry, pseudonymization, placeholder
+  mapping, document export, and pixel-perfect visual redaction.
+- **Not in L13:** document-type/section/zone classification (deferred, see
+  [ADR-0024](../adr/0024-ocr-l13-table-form-reconstruction-v2.md)), a fix for the pre-existing
+  row-geometry-collection gap that makes some dense/complex table pages fall back to plain raw order
+  before any table detector runs, `text_lineage_map`, word-level/redaction-ready geometry, a
+  PII-input switch, pseudonymization, placeholder mapping, document export, and pixel-perfect visual
+  redaction.
 
 ## Future implementation direction
 

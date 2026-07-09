@@ -46,7 +46,7 @@ def main() -> int:
         print(
             "FAIL: OCR runtime unavailable — models missing under "
             f"{settings.ocr_model_dir} or the OCR packages are not installed. "
-            "Run `make ocr-models` and build with INSTALL_OCR=true."
+            "Run `make ocr-models` and rebuild the default runtime image."
         )
         return 1
 

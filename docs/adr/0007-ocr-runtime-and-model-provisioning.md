@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted — 2026-07-01
+Accepted — 2026-07-01. Build-profile parts superseded by ADR-0023 Phase 3.6; model
+provisioning, model choice, local-only runtime downloads, and OCR adapter hardening remain current.
 
 ## Context
 
@@ -32,9 +33,10 @@ PaddleOCR behind an adapter, but the runtime was never made usable end to end:
   CPU path. Install `libgl1`, `libglib2.0-0`, `libgomp1` in the runtime image only for OCR builds.
 - **Compose/env:** mount `./volumes/ocr-models:/models/ocr:ro`, default `OCR_MODEL_DIR=/models/ocr`
   (harmless in slim mode), and make the backend memory limit configurable so OCR/PII get headroom.
-- **Profiles:** make targets `up`/`up-pii`/`up-ocr`/`up-full` (and matching `build-*`) select the
-  extras via build args, so `make up` is always slim regardless of `.env`. `ocr-smoke`/`pii-smoke`
-  exercise the real runtimes outside `make test`.
+- **Historical profiles:** this originally introduced `up`/`up-pii`/`up-ocr`/`up-full` build
+  profiles. ADR-0023 Phase 3.6 later removed those profiles: the default image now includes the
+  required OCR and PII runtimes, while `ocr-smoke`/`pii-smoke` still exercise the real runtimes
+  outside normal unit tests.
 - **Proxy timeout:** raise nginx `/api/` `proxy_read_timeout` to 600 s, since synchronous CPU OCR
   of multi-page scans legitimately runs for minutes.
 
@@ -42,5 +44,6 @@ PaddleOCR behind an adapter, but the runtime was never made usable end to end:
 
 - The OCR runtime works end to end on `linux/amd64`: a 2-page scan was recognized in ~196 s at a
   peak of ~0.7 GB RAM. Apple Silicon/ARM support depends on PaddlePaddle wheels and is unverified.
-- OCR remains fully optional and lazy; slim images and quality gates stay model-free.
+- OCR model initialization remains lazy and quality gates stay model-free. The runtime dependencies
+  are now part of the default Docker image; missing model files still fail cleanly with `503`.
 - Refines [ADR-0004](0004-ocr-workstation.md); no change to anonymization/redaction scope.

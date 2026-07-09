@@ -1,7 +1,8 @@
 """Document metadata persistence and lookup.
 
-Each document has an isolated directory under the document-data root. Its metadata is stored
-as ``document.json`` and derived results live below ``artifacts/``. Original bytes remain in
+Each document has an isolated directory under the document-store root (``DOCUMENT_DATA_DIR``).
+Its metadata is stored as ``document.json`` and derived results live below ``artifacts/``.
+Original bytes remain in
 the separate upload-storage root. Document ids are generated server-side (``uuid4().hex``)
 and validated before they are ever used to build a filesystem path.
 """
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from app.config import Settings
 from app.errors import ApiError
 from app.schemas import DocumentSummary, OriginalArtifact
+from app.services.job_store import delete_jobs_for_document
 
 _ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _EXTENSION_PATTERN = r"^[a-z0-9]{1,10}$"
@@ -37,7 +39,7 @@ class DocumentNotFoundError(ApiError):
 
 
 class DocumentRecord(BaseModel):
-    """Metadata persisted in one document-data directory (internal format)."""
+    """Metadata persisted in one document-store directory (internal format)."""
 
     id: str = Field(pattern=_ID_PATTERN.pattern)
     filename: str
@@ -118,7 +120,7 @@ def create_document_record(
 
 
 def save_metadata(settings: Settings, record: DocumentRecord) -> None:
-    """Create a document-data directory and atomically persist its metadata."""
+    """Create a document-store directory and atomically persist its metadata."""
     document_directory = _document_directory(settings, record.id)
     document_directory.mkdir(parents=True, exist_ok=True)
     (document_directory / _ARTIFACTS_DIRECTORY).mkdir(exist_ok=True)
@@ -137,7 +139,7 @@ def save_metadata(settings: Settings, record: DocumentRecord) -> None:
 
 
 def delete_document_data(settings: Settings, document_id: str) -> None:
-    """Remove exactly one validated document-data directory, if it exists."""
+    """Remove exactly one validated document-store directory, if it exists."""
     directory = _document_directory(settings, document_id)
     if directory.is_symlink():
         directory.unlink()
@@ -188,6 +190,7 @@ def delete_document(settings: Settings, document_id: str) -> None:
     )
     stored_file = settings.upload_storage_dir / storage_filename
     stored_file.unlink(missing_ok=True)
+    delete_jobs_for_document(settings, document_id)
     delete_document_data(settings, document_id)
 
 

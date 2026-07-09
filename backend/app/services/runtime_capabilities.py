@@ -21,9 +21,9 @@ from app.config import Settings
 _CGROUP_V1_UNLIMITED_THRESHOLD = 1 << 62
 _CGROUP_V2_MEMORY_MAX_PATH = Path("/sys/fs/cgroup/memory.max")
 _CGROUP_V1_MEMORY_LIMIT_PATH = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
-# The OCR/PII runtimes need real headroom for PaddlePaddle/spaCy; `make up-ocr`/`up-full` set the
-# container memory limit to 2g for exactly this reason (see docker-compose.yml). Below this, the
-# slim-profile 512M default reliably OOM-kills the backend mid-request instead of erroring cleanly.
+# Sync OCR fallback needs real headroom for PaddlePaddle. The default stack runs OCR in the
+# ocr-worker with its own memory ceiling, but an explicitly synchronous API should still warn when
+# it is too small to survive OCR in-process.
 _OCR_RECOMMENDED_MINIMUM_MEMORY_BYTES = 1024 * 1024 * 1024
 
 
@@ -105,6 +105,7 @@ def warn_if_ocr_memory_limit_is_low(settings: Settings, log: logging.Logger) -> 
         log.warning(
             "OCR runtime is installed but the container memory limit looks too low for "
             "PaddleOCR to run without being OOM-killed mid-request. Restart with "
-            "BACKEND_MEMORY_LIMIT=2g (e.g. `make up-ocr` / `make up-full`)."
+            "API_MEMORY_LIMIT=2g when using OCR_EXECUTION_MODE=sync, or use the default "
+            "worker mode."
         )
     return is_low

@@ -19,6 +19,7 @@ from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
 from app.main import app
 from app.services.artifact_service import get_latest_quality_report_artifact
+from app.services.job_store import get_job_store
 from app.services.layout_text import build_pdf_layout_blocks
 from app.services.ocr_adapters import (
     OcrExtractionResult,
@@ -26,6 +27,7 @@ from app.services.ocr_adapters import (
     OcrLineMetric,
     OcrUnavailableError,
 )
+from app.services.ocr_worker import OcrJobWorker
 from app.services.pdf_renderer import get_pdf_renderer
 
 
@@ -222,6 +224,7 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     response = client.post(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 201
+    job_id = response.headers["x-job-id"]
     artifact = response.json()
     content = artifact["content"]
     assert artifact["artifact_type"] == "text_result"
@@ -251,6 +254,18 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     assert adapter.calls == []
     assert renderer.calls == []
     assert _artifact_path(document_data_dir, upload["id"], artifact["id"]).is_file()
+    job_response = client.get(f"/api/jobs/{job_id}")
+    assert job_response.status_code == 200
+    job = job_response.json()
+    assert job["kind"] == "ocr_text"
+    assert job["status"] == "succeeded"
+    assert job["execution_mode"] == "synchronous_inline"
+    assert job["document_id"] == upload["id"]
+    assert job["result_artifact_id"] == artifact["id"]
+    assert job["result_artifact_type"] == "text_result"
+    document_jobs = client.get(f"/api/documents/{upload['id']}/jobs")
+    assert document_jobs.status_code == 200
+    assert [item["job_id"] for item in document_jobs.json()] == [job_id]
     quality_report = get_latest_quality_report_artifact(settings, str(upload["id"]))
     assert quality_report is not None
     assert quality_report.artifact_type == "quality_report"
@@ -1086,6 +1101,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     payload["content"].pop("layout_blocks", None)
     payload["content"].pop("structured_content_version", None)
     payload["content"].pop("structured_content", None)
+    payload["content"].pop("quality_evidence_version", None)
+    payload["content"].pop("quality_evidence", None)
     for page in payload["content"]["pages"]:
         page.pop("ocr_confidence", None)
         page.pop("ocr_line_confidences", None)
@@ -1094,6 +1111,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     response = client.get(f"/api/documents/{upload['id']}/ocr")
 
     assert response.status_code == 200
+    assert response.json()["content"]["quality_evidence_version"] is None
+    assert response.json()["content"]["quality_evidence"] is None
     assert response.json()["content"]["readable_text"] is None
     assert response.json()["content"]["reading_text_version"] is None
     assert response.json()["content"]["reading_text"] is None
@@ -1124,6 +1143,54 @@ def test_readable_text_absent_for_empty_text_result(
     assert content["text"] == ""
     assert content["readable_text"] is None
     assert content["reading_text"] is None
+
+
+def test_pdf_text_layer_emits_quality_evidence(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    evidence = content["quality_evidence"]
+    assert content["quality_evidence_version"] == "1"
+    assert evidence is not None
+    assert evidence["summary"]["overall_status"] == "confident"
+    types = {item["type"]: item for item in evidence["items"]}
+    assert types["source_text"]["status"] == "confident"
+    assert types["reading_order"]["status"] == "confident"
+    lineage = evidence["summary"]["lineage_summary"]
+    assert lineage["reading_text_length"] == len(content["reading_text"])
+    # Metrics-only: the extracted words must never appear in the additive evidence metadata.
+    assert "Digital" not in json.dumps(evidence)
+
+
+def test_legacy_text_artifact_without_quality_evidence_remains_valid(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    created = client.post(f"/api/documents/{upload['id']}/ocr").json()
+    path = _artifact_path(document_data_dir, upload["id"], created["id"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    # Simulate an artifact written before OCR/Text L14 existed.
+    payload["content"].pop("quality_evidence_version", None)
+    payload["content"].pop("quality_evidence", None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = client.get(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 200
+    assert response.json()["content"]["quality_evidence_version"] is None
+    assert response.json()["content"]["quality_evidence"] is None
 
 
 def _pdf_contact_blocks_and_table_bytes() -> bytes:
@@ -1506,3 +1573,101 @@ def test_delete_removes_audit_text_and_quality_artifacts(
 
     assert response.status_code == 204
     assert not artifact_directory.exists()
+
+
+# --- Worker-mode OCR endpoint (ADR-0023 Phase 3) -----------------------------------------------
+
+
+def test_ocr_worker_mode_enqueues_job_and_returns_202(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    settings.ocr_execution_mode = "worker"
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 202
+    body = response.json()
+    job_id = response.headers["x-job-id"]
+    assert body["job_id"] == job_id
+    assert body["kind"] == "ocr_text"
+    assert body["status"] == "pending"
+    assert body["execution_mode"] == "future_worker"
+    assert body["document_id"] == upload["id"]
+    assert body["result_artifact_id"] is None
+    # The API stayed thin: it enqueued but ran no OCR and produced no text_result yet.
+    assert adapter.calls == []
+    assert renderer.calls == []
+    artifact_types = {
+        json.loads(path.read_text(encoding="utf-8")).get("artifact_type")
+        for path in (document_data_dir / str(upload["id"]) / "artifacts").glob("*.json")
+    }
+    assert "text_result" not in artifact_types
+    # The job is visible and pending through the existing status APIs.
+    assert client.get(f"/api/jobs/{job_id}").json()["status"] == "pending"
+    document_jobs = client.get(f"/api/documents/{upload['id']}/jobs").json()
+    assert [item["job_id"] for item in document_jobs] == [job_id]
+
+
+def test_ocr_worker_mode_unknown_document_returns_404(
+    client: TestClient,
+    settings: Settings,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    settings.ocr_execution_mode = "worker"
+
+    response = client.post("/api/documents/" + "a" * 32 + "/ocr")
+
+    assert response.status_code == 404
+
+
+def test_ocr_worker_mode_job_is_runnable_by_the_worker(
+    client: TestClient,
+    settings: Settings,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    settings.ocr_execution_mode = "worker"
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+    job_id = client.post(f"/api/documents/{upload['id']}/ocr").headers["x-job-id"]
+
+    # Drive the worker as the isolated process would; a text-layer PDF never touches the OCR fakes.
+    store = get_job_store(settings)
+    worker = OcrJobWorker(settings, store, adapter, renderer, max_attempts=1)
+    assert worker.process_next() is True
+
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["status"] == "succeeded"
+    assert job["result_artifact_type"] == "text_result"
+    ocr = client.get(f"/api/documents/{upload['id']}/ocr")
+    assert ocr.status_code == 200
+    assert ocr.json()["id"] == job["result_artifact_id"]
+    assert ocr.json()["content"]["text"] == "Digital text"
+    assert adapter.calls == []
+    assert renderer.calls == []
+
+
+def test_ocr_sync_mode_override_returns_201(
+    client: TestClient,
+    settings: Settings,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    # The shared pytest fixture uses sync so station tests keep asserting artifact-return behavior.
+    assert settings.ocr_execution_mode == "sync"
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    assert response.json()["artifact_type"] == "text_result"
+    assert response.headers["x-job-id"]

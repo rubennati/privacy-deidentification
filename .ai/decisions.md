@@ -47,3 +47,33 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   derived (non-persisted) PII entity grouping plus a lineage-bound, JSONL-based review-decision
   overlay (default `pseudonymize`; opt out via `keep`/`false_positive`) that never mutates
   `pii_result`.
+- [ADR-0022](../docs/adr/0022-ocr-l12-multi-column-layout-reconstruction.md) — OCR/Text L12 is
+  deterministic multi-column layout reconstruction inside canonical `reading_text`; the older
+  multi-engine-selection placeholder is deferred and technical raw text/active PII input remain
+  unchanged.
+- [ADR-0023](../docs/adr/0023-runtime-worker-architecture.md) — *Proposed for the overall worker
+  architecture; Phases 1-3.6 implemented.* Staged move from in-process synchronous OCR/PII to an
+  isolated worker boundary: internal job model, SQLite-backed metadata-only job state + safe status
+  API, isolated `ocr-worker`, and a simplified default Compose stack (`frontend`, `api`,
+  `ocr-worker`) with OCR worker mode as the normal runtime. Artifacts stay file-based; no
+  Kubernetes/microservices/broker near-term.
+- [ADR-0024](../docs/adr/0024-ocr-l13-table-form-reconstruction-v2.md) — OCR/Text L13 is table/form
+  reconstruction v2 (geometry-only table detection, partially fused header recovery, multiline
+  label/value continuation) inside `reading_text`/`structured_content`; the older
+  document-understanding placeholder is deferred and technical raw text/active PII input remain
+  unchanged.
+- [ADR-0025](../docs/adr/0025-ocr-l14-quality-evidence-and-lineage-coverage.md) — OCR/Text L14 is
+  additive, metrics-only `quality_evidence` and lineage coverage on `text_result`; the older local
+  AI assist placeholder is deferred and technical raw text/active PII input remain unchanged.
+- [ADR-0026](../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md) — OCR/Text L15 is
+  deterministic noise/token artifact *evidence* (glyph artifacts, suspicious token shapes,
+  character-confusion candidates, spacing candidates) folded into the same `quality_evidence` list;
+  the older redaction-ready-geometry placeholder is deferred, and no OCR text is ever corrected,
+  removed, or rewritten.
+- [ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md) — Implemented additively as the
+  **OCR Output Contract v1 / Document Text Package** (`contract_version = "1.0"`): a derived
+  package of raw/canonical/layout/structured/evidence layers plus source roles and
+  `contract_status` (`valid`/`degraded`/`invalid`), so PII and future consumers depend on the
+  contract rather than OCR internals. PII is not migrated yet; existing OCR endpoints remain
+  backward-compatible. Cross-cutting stabilization milestone, not a numbered level; the 0–19 scale
+  (ADR-0016) is unchanged.

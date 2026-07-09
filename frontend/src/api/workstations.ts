@@ -1,4 +1,4 @@
-// Typed client for the synchronous Audit, OCR/Text, and PII workstation endpoints.
+// Typed client for the Audit, OCR/Text, PII, and safe job-status endpoints.
 
 export interface AuditPageResult {
   page_number: number;
@@ -313,6 +313,24 @@ export interface PiiRunRequest {
   pii_profile: string;
 }
 
+export interface JobStatus {
+  job_id: string;
+  document_id: string;
+  kind: "ocr_text" | "pii_detection";
+  status: "pending" | "running" | "succeeded" | "failed" | "canceled";
+  execution_mode: "synchronous_inline" | "future_worker";
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+  attempt_count: number;
+  error_code: string | null;
+  error_message: string | null;
+  result_artifact_id: string | null;
+  result_artifact_type: string | null;
+  metadata: Record<string, string>;
+}
+
 interface ApiError {
   detail?: string;
   correlation_id?: string | null;
@@ -331,6 +349,8 @@ export class WorkstationApiError extends Error {
 }
 
 type Station = "audit" | "ocr" | "pii";
+const OCR_JOB_POLL_INTERVAL_MS = 2000;
+const OCR_JOB_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function fetchAudit(documentId: string): Promise<AuditArtifact> {
   return requestArtifact<AuditArtifact>(documentId, "audit", "GET");
@@ -344,8 +364,17 @@ export function fetchOcr(documentId: string): Promise<TextArtifact> {
   return requestArtifact<TextArtifact>(documentId, "ocr", "GET");
 }
 
-export function runOcr(documentId: string): Promise<TextArtifact> {
-  return requestArtifact<TextArtifact>(documentId, "ocr", "POST");
+export async function runOcr(documentId: string): Promise<TextArtifact> {
+  const response = await requestStation(documentId, "ocr", "POST");
+  if (response.status === 202) {
+    const queuedJob = (await response.json()) as JobStatus;
+    await waitForOcrJob(queuedJob.job_id);
+    return fetchOcr(documentId);
+  }
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+  return (await response.json()) as TextArtifact;
 }
 
 export function fetchPii(documentId: string): Promise<PiiArtifact> {
@@ -362,6 +391,19 @@ async function requestArtifact<T>(
   method: "GET" | "POST",
   body?: unknown,
 ): Promise<T> {
+  const response = await requestStation(documentId, station, method, body);
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+  return (await response.json()) as T;
+}
+
+async function requestStation(
+  documentId: string,
+  station: Station,
+  method: "GET" | "POST",
+  body?: unknown,
+): Promise<Response> {
   let response: Response;
   try {
     const request: RequestInit = { method };
@@ -376,10 +418,63 @@ async function requestArtifact<T>(
   } catch {
     throw new WorkstationApiError("Keine Verbindung zum Server.", 0);
   }
+  return response;
+}
+
+async function fetchJobStatus(jobId: string): Promise<JobStatus> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "GET" });
+  } catch {
+    throw new WorkstationApiError("Keine Verbindung zum Server.", 0);
+  }
   if (!response.ok) {
     await throwApiError(response);
   }
-  return (await response.json()) as T;
+  return (await response.json()) as JobStatus;
+}
+
+async function waitForOcrJob(jobId: string): Promise<JobStatus> {
+  const deadline = Date.now() + OCR_JOB_TIMEOUT_MS;
+  while (true) {
+    const job = await fetchJobStatus(jobId);
+    if (job.status === "succeeded") {
+      return job;
+    }
+    if (job.status === "failed" || job.status === "canceled") {
+      throw jobStatusError(job);
+    }
+    if (Date.now() >= deadline) {
+      throw new WorkstationApiError(
+        "Die OCR-Verarbeitung dauert zu lange. Bitte versuchen Sie es später erneut.",
+        504,
+      );
+    }
+    await sleep(OCR_JOB_POLL_INTERVAL_MS);
+  }
+}
+
+function jobStatusError(job: JobStatus): WorkstationApiError {
+  const status = statusFromJobErrorCode(job.error_code) ?? 500;
+  const message =
+    job.error_message && job.error_message !== ""
+      ? job.error_message
+      : "Die OCR-Verarbeitung ist fehlgeschlagen.";
+  return new WorkstationApiError(message, status);
+}
+
+function statusFromJobErrorCode(errorCode: string | null): number | null {
+  const match = errorCode?.match(/^api_error_(\d{3})$/);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]);
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }
 
 async function throwApiError(response: Response): Promise<never> {
