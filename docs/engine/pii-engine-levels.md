@@ -280,15 +280,16 @@ stage that runs after detection**. This stage is a first-class part of the engin
   deliberately deferred in favour of flag-for-review, pending benchmark/review evidence.
 - **Acceptance:** overlapping candidates resolve deterministically without dropping distinct
   (cross-type) entities; merge/drop/flag decisions are recorded in provenance and the run summary.
-- **Review-ready entity contract (additive stabilization, not a level bump):** on top of L12, a
-  pure derived view (`pii_entity_contract.py`, `GET …/pii/entity-contract`) packages the resolved
-  entities review-ready — a **stable `entity_id`** (hash of document id + type + raw span), raw +
-  optional canonical span, explicit `mapping_status`
-  (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`), overlap provenance, the
-  resolved review state, and a text-free display model. Missing/partial/ambiguous canonical mapping
-  never drops an entity (it is flagged for review); `not_applicable` is not flagged. This is the
-  stable foundation the formal L13 `review_result` builds on, **not** that binding artifact itself.
-  See [ADR-0029](../adr/0029-pii-review-ready-entity-contract.md).
+- **Anchor-bound entity contract (additive stabilization, not a level bump):** on top of L12 and
+  ADR-0031 Phase B, a pure derived view (`pii_anchor_binding.py`, `pii_entity_contract.py`,
+  `GET …/pii/entity-contract`) packages the resolved entities review-ready with anchor-derived
+  identity where the matching Text Anchor Graph binds, explicit evidence-only fallback when binding
+  is missing/ambiguous/not applicable, detector source observations, raw + optional canonical display
+  ranges, canonical `mapping_status`, overlap provenance, resolved review state, and a text-free
+  display model. Missing/partial/ambiguous anchor or canonical mapping never drops an entity. This is
+  the stable foundation the formal L13 `review_result` builds on, **not** that binding artifact
+  itself. See [ADR-0029](../adr/0029-pii-review-ready-entity-contract.md) and
+  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md).
 - **Boundary to L13:** L12 makes the machine's entity set clean; L13 makes a human's decision binding.
 
 ## Level 13 — Review confirm / reject  ⛔ *open*
@@ -335,10 +336,11 @@ stage that runs after detection**. This stage is a first-class part of the engin
 - **Acceptance:** each entity has a stable identity across occurrences and re-runs, with explicit
   lineage to the text and review artifacts it derives from.
 - **Design:** the target substrate is the OCR/Text-owned **text anchor** identity layer in
-  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Phase B anchor graph
-  implemented; PII binding open**) — PII entities bind to anchors (`entity_anchors`) rather than
-  string offsets, which is what makes identity stable across views/re-runs and consistent between raw
-  and canonical highlights.
+  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Phase B anchor graph and
+  Phase C PII binding implemented additively**) — PII entities bind to anchors (`entity_anchors`)
+  rather than string offsets where anchors are available, with explicit evidence-only fallback for
+  missing/ambiguous/no-graph cases. This is what makes identity stable across views/re-runs and
+  consistent between raw and canonical highlights.
 - **Boundary to L18:** L17 stabilises the model; L18 makes its spans redaction-ready.
 
 ## Level 18 — Redaction-ready entity spans  ⛔ *open*

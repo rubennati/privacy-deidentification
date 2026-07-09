@@ -82,16 +82,18 @@ Text identity now has its first concrete OCR/Text-owned layer:
 `GET /api/documents/{document_id}/text-anchors` derives **Text Anchor Graph v1** from the same
 `DocumentTextPackageV1`. It emits anchor ids, raw/canonical/layout ranges, counts, statuses, token
 classes/shapes, and warning codes only — no copied text. In v1, canonical ranges attach through the
-existing `reading_text_map`, layout ranges attach only when byte-aligned with raw, and PII does not
-bind to anchors yet.
+existing `reading_text_map`, layout ranges attach only when byte-aligned with raw, and PII consumes
+the matching graph for anchor-bound entity identity without changing the active raw-text input.
 
-On top of that, the **review-ready entity contract v1**
-([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md)) is the stable, review-facing shape the
-Review UI (and later pseudonymization/analysis/export) depend on: a derived, additive view
-(`pii_entity_contract.py`, `GET …/pii/entity-contract`) that packages each resolved entity with a
-stable `entity_id`, its raw span, an optional canonical reading span, an explicit `mapping_status`,
-overlap provenance, the resolved review state, and a text-free display model — without mutating the
-`pii_result` or being the formal binding `review_result`.
+On top of that, the **anchor-bound entity contract v1**
+([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md),
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) is the stable, review-facing
+shape the Review UI (and later pseudonymization/analysis/export) depend on: a derived, additive view
+(`pii_entity_contract.py`, `GET …/pii/entity-contract`) that packages each resolved entity with
+anchor-derived identity where available, explicit evidence-only fallback when binding is missing or
+ambiguous, detector source observations, raw/canonical display ranges, overlap provenance, resolved
+review state, and a text-free display model — without mutating the `pii_result` or being the formal
+binding `review_result`.
 
 ## Runtime job contract
 

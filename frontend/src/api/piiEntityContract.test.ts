@@ -4,28 +4,43 @@ import {
   fetchPiiEntityContract,
   resolveHighlightRange,
   type PiiEntityContractV1,
-  type ReviewReadyPiiEntity,
+  type ReviewReadyAnchorBoundPiiEntity,
 } from "./piiEntityContract";
 
-function makeEntity(overrides: Partial<ReviewReadyPiiEntity> = {}): ReviewReadyPiiEntity {
+function makeEntity(
+  overrides: Partial<ReviewReadyAnchorBoundPiiEntity> = {},
+): ReviewReadyAnchorBoundPiiEntity {
   return {
     entity_id: "1".repeat(32),
-    source_entity_id: "2".repeat(32),
-    entity_group_id: "3".repeat(32),
-    document_id: "doc-1",
-    package_id: "4".repeat(32),
-    text_artifact_id: "4".repeat(32),
     entity_type: "LOCATION",
-    value: "Wien",
-    confidence: 0.9,
-    detection_source: "raw_text",
-    source_role: "primary",
-    page_number: null,
-    raw_text_range: { start: 0, end: 4, page_number: null, page_start: null, page_end: null },
-    canonical_reading_text_range: null,
-    mapping_status: "missing",
-    overlap_decision: null,
+    identity_basis: "evidence_only",
+    binding_status: "missing",
+    binding_reasons: ["anchor_missing", "detection_evidence_only"],
+    anchor_set: { anchor_ids: [], binding_status: "missing", count: 0 },
+    anchor_refs: [],
+    source_observations: [
+      {
+        detection_id: "2".repeat(32),
+        recognizer: "TestRecognizer",
+        entity_type: "LOCATION",
+        source_name: "technical_raw_text",
+        detection_source: "raw_text",
+        detection_role: "primary",
+        source_range: { start: 0, end: 4, page_number: null, page_start: null, page_end: null },
+        confidence: 0.9,
+        binding_status: "missing",
+        binding_reasons: ["anchor_missing", "detection_evidence_only"],
+        provenance: null,
+      },
+    ],
     provenance: null,
+    confidence: 0.9,
+    value: "Wien",
+    raw_text_range: { start: 0, end: 4, page_number: null, page_start: null, page_end: null },
+    entity_group_id: "3".repeat(32),
+    source_entity_ids: ["2".repeat(32)],
+    mapping_status: "missing",
+    canonical_reading_text_range: null,
     review_state: "accepted",
     review_decision: null,
     decision_scope: null,
@@ -36,14 +51,14 @@ function makeEntity(overrides: Partial<ReviewReadyPiiEntity> = {}): ReviewReadyP
       display_label: "LOCATION",
       display_context_available: false,
       needs_review: true,
-      review_reason_codes: ["canonical_mapping_missing"],
+      review_reason_codes: ["anchor_binding_missing", "canonical_mapping_missing"],
     },
-    warnings: ["canonical_mapping_missing"],
+    warnings: ["anchor_binding_missing", "canonical_mapping_missing"],
     ...overrides,
   };
 }
 
-function makeContract(entities: ReviewReadyPiiEntity[]): PiiEntityContractV1 {
+function makeContract(entities: ReviewReadyAnchorBoundPiiEntity[]): PiiEntityContractV1 {
   return {
     contract_version: "1.0",
     document_id: "doc-1",
@@ -51,9 +66,21 @@ function makeContract(entities: ReviewReadyPiiEntity[]): PiiEntityContractV1 {
     package_id: "4".repeat(32),
     text_artifact_id: "4".repeat(32),
     reading_text_available: true,
+    anchor_graph_available: false,
+    anchor_graph_status: null,
     input_contract: null,
     overlap_resolution: null,
     entities,
+    binding_summary: {
+      total: 1,
+      anchor_bound: 0,
+      evidence_only: 1,
+      exact: 0,
+      partial: 0,
+      missing: 1,
+      ambiguous: 0,
+      not_applicable: 0,
+    },
     mapping_summary: { exact: 0, projected: 0, partial: 0, missing: 1, ambiguous: 0, not_applicable: 0 },
     needs_review_count: 1,
   };
@@ -101,8 +128,12 @@ describe("resolveHighlightRange", () => {
     }
   });
 
-  it("prefers the canonical range when the mapping is exact", () => {
+  it("prefers the canonical range when the entity is anchor-bound and the mapping is exact", () => {
     const entity = makeEntity({
+      identity_basis: "anchor_exact",
+      binding_status: "exact",
+      binding_reasons: ["anchor_exact_match"],
+      anchor_set: { anchor_ids: ["a".repeat(32)], binding_status: "exact", count: 1 },
       mapping_status: "exact",
       canonical_reading_text_range: { start: 2, end: 6, projection_method: "offset_map" },
       display: {
