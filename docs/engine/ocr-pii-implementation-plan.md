@@ -42,8 +42,8 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 | Engine | Current level | Next |
 | --- | --- | --- |
 | OCR / Text | **L15 done (built on the L10.5 contract step)** | scoped construction-lineage coverage |
-| PII / Sensitive-Data | **L12 done; L10 partial** (dev-only feedback capture) | checkpoint before L13 completion |
-| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L8 done; L9 partial** | complete confirm/reject semantics |
+| PII / Sensitive-Data | **L13 done; L10 partial** (dev-only feedback capture) | L14 manual add / missed entities |
+| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L9 done** | L10 manual add |
 | Benchmark / Regression | **L10 done** | L11 OCR runtime/memory |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 

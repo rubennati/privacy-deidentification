@@ -140,7 +140,9 @@ def test_decision_creates_a_persisted_snapshot(client: TestClient, settings: Set
     snapshot = snapshot_response.json()
     assert snapshot["document_id"] == document_id
     assert snapshot["input_pii_artifact_id"] == artifact.id
+    assert snapshot["input_text_artifact_id"] == "a" * 32
     assert snapshot["artifact_type"] == "pii_review_result"
+    assert snapshot["content"]["input_text_artifact_id"] == "a" * 32
     assert snapshot["content"]["occurrences"][0]["review_status"] == "kept"
     assert snapshot["content"]["stale_decision_count"] == 0
     assert snapshot["content"]["has_stale_decisions"] is False
@@ -278,6 +280,22 @@ def test_content_identity_mismatch_artifact_id_is_rejected() -> None:
             input_pii_artifact_id="b" * 32,
             created_at="2026-07-10T10:00:00.000001Z",
             content=_review_result("a" * 32, "d" * 32),
+        )
+
+
+def test_content_identity_mismatch_text_artifact_id_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        PiiReviewResultArtifact(
+            id=uuid4().hex,
+            document_id="a" * 32,
+            input_pii_artifact_id="b" * 32,
+            input_text_artifact_id="c" * 32,
+            created_at="2026-07-10T10:00:00.000001Z",
+            content=PiiReviewResult(
+                document_id="a" * 32,
+                artifact_id="b" * 32,
+                input_text_artifact_id="d" * 32,
+            ),
         )
 
 

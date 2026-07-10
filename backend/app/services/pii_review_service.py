@@ -112,7 +112,13 @@ def get_pii_review_result(settings: Settings, document_id: str) -> PiiReviewResu
     decisions = _load_latest_decisions(settings, document_id, artifact.id)
     stale_count = _count_stale_decisions(settings, document_id, artifact.id)
     return _build_review_result(
-        document_id, artifact.id, entities, groups, decisions, stale_count
+        document_id,
+        artifact.id,
+        artifact.input_text_artifact_id,
+        entities,
+        groups,
+        decisions,
+        stale_count,
     )
 
 
@@ -152,6 +158,7 @@ def set_pii_review_decision(
         recorded_at=_now_utc_iso(),
         document_id=document_id,
         artifact_id=artifact.id,
+        text_artifact_id=artifact.input_text_artifact_id,
         target_type=request.target_type,
         target_id=request.target_id,
         decision=request.decision,
@@ -159,7 +166,14 @@ def set_pii_review_decision(
         source="user",
     )
     _append_decision_line(settings, document_id, record)
-    _persist_review_result_snapshot(settings, document_id, artifact.id, entities, groups)
+    _persist_review_result_snapshot(
+        settings,
+        document_id,
+        artifact.id,
+        artifact.input_text_artifact_id,
+        entities,
+        groups,
+    )
     return PiiReviewDecisionAck(
         recorded=True,
         target_type=record.target_type,
@@ -174,6 +188,7 @@ def _persist_review_result_snapshot(
     settings: Settings,
     document_id: str,
     artifact_id: str,
+    text_artifact_id: str,
     entities: list[PiiEntity],
     groups: list[PiiEntityGroup],
 ) -> None:
@@ -186,12 +201,13 @@ def _persist_review_result_snapshot(
     decisions = _load_latest_decisions(settings, document_id, artifact_id)
     stale_count = _count_stale_decisions(settings, document_id, artifact_id)
     content = _build_review_result(
-        document_id, artifact_id, entities, groups, decisions, stale_count
+        document_id, artifact_id, text_artifact_id, entities, groups, decisions, stale_count
     )
     snapshot = PiiReviewResultArtifact(
         id=uuid4().hex,
         document_id=document_id,
         input_pii_artifact_id=artifact_id,
+        input_text_artifact_id=text_artifact_id,
         created_at=_now_utc_iso(),
         content=content,
     )
@@ -212,6 +228,7 @@ def _target_exists(
 def _build_review_result(
     document_id: str,
     artifact_id: str,
+    text_artifact_id: str,
     entities: list[PiiEntity],
     groups: list[PiiEntityGroup],
     decisions: dict[tuple[str, str], PiiReviewDecisionRecord],
@@ -277,6 +294,7 @@ def _build_review_result(
     return PiiReviewResult(
         document_id=document_id,
         artifact_id=artifact_id,
+        input_text_artifact_id=text_artifact_id,
         groups=review_groups,
         occurrences=review_occurrences,
         stale_decision_count=stale_decision_count,

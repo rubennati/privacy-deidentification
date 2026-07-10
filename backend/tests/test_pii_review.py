@@ -135,6 +135,7 @@ def test_review_lists_groups_and_occurrences_with_default_pseudonymize_status(
     assert response.status_code == 200
     body = response.json()
     assert body["document_id"] == document_id
+    assert body["input_text_artifact_id"] == "a" * 32
     assert len(body["groups"]) == 1
     group = body["groups"][0]
     assert group["entity_type"] == "LOCATION"
@@ -472,3 +473,4 @@ def test_decision_note_is_persisted_but_not_leaked_into_group_response(
     entry = json.loads(decisions_file.read_text("utf-8").splitlines()[0])
     assert entry["note"] == "reviewer note"
     assert entry["source"] == "user"
+    assert entry["text_artifact_id"] == "a" * 32
