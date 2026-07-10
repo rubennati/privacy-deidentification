@@ -210,6 +210,15 @@ metadata L11, suppression rules L12, and reusable cross-run decisions L13 remain
 - **Persisted:** manual additions in `review_result` with canonical-text offsets and `origin = human`.
 - **Acceptance:** a human-added span round-trips with valid offsets and is distinguishable from
   machine detections; it becomes a missed-entity (recall) signal.
+- **Design (scoped, not implemented):**
+  [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md) scopes a new `manual_addition`
+  record layered on the existing `pii_review_decisions.jsonl` log and an additive
+  `PiiReviewResult.manual_additions` list — never merged into `pii_result` or the anchor-bound
+  entity contract, since both structurally assume a detector-originated span. Once created, an
+  addition's own accept/keep/reject reuses the existing decision endpoint (`target_type:
+  "manual_addition"`) rather than a new edit/delete action. The frontend needs three primitives that
+  don't exist today: text-selection capture, an entity-type picker, and a visually distinct
+  rendering for human-added spans.
 - **Boundary to L11:** L10 records what/where; L11 records *why*.
 
 ## Level 11 — Reason / comment  ⛔ *open*
@@ -330,7 +339,7 @@ Design constraints (not features) for L8+:
 | 7 Stale review detection | ✅ done | direct PII/text lineage for new decisions, explicit stale API/UI state, never automatic reapply |
 | 8 `review_result` model | ✅ done | immutable, versioned snapshot after every decision; JSONL remains append-only write model |
 | 9 Confirm / reject | ✅ done | pseudonymize-by-default `pseudonymize/keep/false_positive` decisions at group/occurrence scope |
-| 10 Manual add | ⛔ open | — |
+| 10 Manual add | ⛔ open | design scoped, not delivered ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) |
 | 11 Reason / comment | ⛔ open | — |
 | 12 Suppression rules | ⛔ open | — |
 | 13 Reusable decisions | ⛔ open | — |
