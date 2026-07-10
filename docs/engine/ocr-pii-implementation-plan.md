@@ -41,9 +41,9 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 
 | Engine | Current level | Next |
 | --- | --- | --- |
-| OCR / Text | **L12 done (built on the L10.5 contract step)** | PII L12 overlap resolution |
-| PII / Sensitive-Data | **L11 done; L10 partial** (dev-only feedback capture) | L12 overlap resolution |
-| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | formal `review_result` artifact |
+| OCR / Text | **L15 done (built on the L10.5 contract step)** | scoped construction-lineage coverage |
+| PII / Sensitive-Data | **L12 done; L10 partial** (dev-only feedback capture) | checkpoint before L13 completion |
+| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L8 done; L9 partial** | complete confirm/reject semantics |
 | Benchmark / Regression | **L8 done; L10 slice out of order** | L9 per-profile metrics |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 
@@ -137,7 +137,7 @@ Priority order, authoritative levels from [`pii-engine-levels.md`](pii-engine-le
    practical intent (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)).
 3. **PII L12 — overlap / entity resolution.** Deterministic, auditable engine-level precedence for
    duplicate/nested/overlapping candidates (not the display-only highlight resolver).
-4. **PII validation transparency report.** Surface the *already-stored* candidate-validation summary
+4. **PII validation transparency report — delivered.** Surface the *already-stored* candidate-validation summary
    (kept/dropped/score_down + reason codes from `pii_result`) as a readable transparency view. No new
    detection, no benchmark-logic change.
 5. **PII L13 — review confirm / reject.** Binding confirm/reject persisted in a `review_result`
@@ -213,10 +213,10 @@ hardening + OCR L6/L7 here).
 | 5 | PII entity grouping + occurrences (delivered) | PII | **PII L11** | group repeated same-type occurrences with clickable offsets | detection changes, overlap resolution, review persistence | repeated mentions render as one group with correct per-occurrence offsets; no detection dropped/invented |
 | 6 | OCR layout-aware blocks (delivered) | OCR/Text | **OCR L9** | layout-aware reading order + typed blocks; coarse normalized bounds; page boundaries/headers/footers | precise line/word geometry (L10), tables (L11), lineage map, redaction | multi-column/header-footer pages produce deterministic review blocks; canonical text remains the PII input |
 | 7 | PII overlap / entity resolution | PII | **PII L12** | deterministic engine-level precedence (ADDRESS>LOCATION, EMAIL>URL-fragment, structured>NER) | new detection, NER retuning, AI | overlapping candidates resolve deterministically without dropping distinct entities; decisions are auditable |
-| 8 | PII validation transparency report | PII | none (surfaces L6 data) | readable view of stored validation counts/reason codes | new detection, benchmark-logic change, DB | a transparency view reflects `pii_result` validation summary; no raw candidate text; no new metrics computed |
+| 8 | PII validation transparency report (delivered) | PII | none (surfaces L6 data) | readable Dev View of stored validation counts/reason codes | new detection, benchmark-logic change, DB | the view reflects `pii_result.validation`; legacy/disabled states are explicit; no raw candidate text; no new metrics computed |
 | 9 | OCR span geometry (delivered) | OCR/Text | **OCR L10** | additive `text_geometry` mapping canonical line spans to page-local line boxes + `resolve_span_geometry` lookup | word-level geometry, tables, lineage map, pseudonymization/placeholder mapping/export | line geometry maps to canonical coordinates; per-page lineage and canonical text remain unchanged |
 | 9a | OCR canonical reading text (delivered prerequisite) | OCR/Text | **L10.5 intermediate** | versioned block-aware `reading_text`; relabel legacy `text` as technical raw; exact synthetic quote fixture | PII input switch, lineage map, structured content, pseudonymization/export | User View defaults to useful reading text; raw/page text and PII behavior remain unchanged |
-| 10 | Review result artifact (partially delivered as a JSONL decision overlay) | Review / PII | **Review L8 (→ PII L13)** | immutable, lineage-bound `review_result` overlay | confirm/reject UI actions (next), rules, DB migration | a `review_result` persists bound to `pii_result`+`text_result` and re-renders; `pii_result` immutable; re-extraction marks it stale — delivered: bound to `pii_result.id` (not yet `text_result.id`), persists/re-renders, `pii_result` immutable; not yet delivered: an explicit stale flag and the formal single-artifact model (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
+| 10 | Review result artifact (delivered) | Review / PII | **Review L8 (→ PII L13 partial)** | immutable, lineage-bound `review_result` overlay | new decision semantics, rules, DB migration | immutable snapshots persist after decisions, `pii_result` stays immutable, and superseded decisions surface explicitly as stale (ADR-0034) |
 | 11 | OCR table/form reconstruction (delivered) | OCR/Text | **OCR L11** | additive span-backed tables, fields, and sections with conservative confidence/flags | PII-input switch, pseudonymization/placeholder mapping/export, UI | representative PDF/OCR/DOCX structures resolve to raw/reading spans; raw text and PII input remain unchanged |
 | 12 | OCR multi-column layout reconstruction (delivered) | OCR/Text | **OCR L12** | safe multi-column reading order, fused table headers, label/value pairing | PII-input switch, new dependency, pseudonymization/export, API/UI | complex dense layouts render more readably; raw text and PII input remain unchanged |
 | 13 | Feedback-to-regression workflow | PII / Review | **PII L15 / Review L14** | promote reviewed corrections into private benchmark ground truth | exporting PII outside `volumes/`, benchmark scoring changes | corrections become private benchmark data without leaving `volumes/`; ground truth improves |

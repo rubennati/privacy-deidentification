@@ -11,17 +11,15 @@
 
 ## Current sequence
 
-- [ ] Reconcile repository documentation with the 0–19 engine model.
-- [ ] Fix feedback integrity in a focused bugfix.
-- [ ] Prepare the next OCR/PII implementation plan.
-- [ ] Advance OCR/Text to L6 — OCR confidence.
-- [ ] Advance OCR/Text to L7 — `quality_report`.
+- [x] Deliver Review L8 `review_result` with explicit stale-decision state.
+- [x] Surface the stored PII candidate-validation summary in a transparency view.
+- [ ] Benchmark L9 — report all profiles in one invocation.
+- [ ] Re-scope the next construction-time OCR lineage coverage path.
+- [ ] Re-run the prerequisite checkpoint before completing PII L13 / Review L9.
 
 ## Later
 
-- [ ] Benchmark L9 — report all profiles in one invocation.
-- [ ] PII L11 — entity grouping.
-- [ ] PII L12 — engine-level overlap/conflict resolution.
-- [ ] Review L8 — lineage-bound `review_result` overlay.
+- [x] PII L11 — entity grouping.
+- [x] PII L12 — engine-level overlap/conflict resolution.
 - [ ] Keep Redaction at L0 until its documented OCR/PII/Review prerequisites are met.
 - [ ] Add CI/CD gates (lint/typecheck/test/SAST/SCA/SBOM and benchmark regression).

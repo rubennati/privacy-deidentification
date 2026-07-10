@@ -169,13 +169,12 @@
   when binding is exact or partial, evidence-only when binding is missing/ambiguous/not applicable;
   `source_observations` carry detector evidence; raw + optional canonical ranges remain
   view-specific display/evidence; provenance and review state are preserved; metadata stays
-  text-free. The formal binding-review artifact model (L13/Review L8) remains open.
-- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6 done; L7–L9 partial.** Grouped
-  occurrences (L6) are delivered, and a file-based (JSONL, not yet a single artifact-per-run)
-  decision overlay covers much of L7–L9's practical intent (decisions persist, restore on reload,
-  and are scoped to the exact current PII artifact so a re-run never silently reapplies a stale one)
-  without an explicit stale-decision flag or the formal `review_result` artifact model — both remain
-  open.
+  text-free. Review L8's formal immutable `review_result` snapshot is delivered separately;
+  binding confirm/reject remains partially covered toward PII L13.
+- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6–L8 done; L9 partial.** Grouped
+  occurrences and the lineage-bound JSONL decision log now produce an immutable `review_result`
+  snapshot after every decision. Superseded decisions are explicitly surfaced as stale and never
+  reapplied; confirm/reject semantics remain partial toward Review L9/PII L13.
 - **Benchmark/Regression: L8 done; out-of-order L10 OCR confidence/coverage slice delivered.** L9
   per-profile reporting in one run is next.
 - **Redaction/De-Identification: L0 by design.** It remains blocked on mature OCR, PII, and review
@@ -229,8 +228,9 @@ stabilization milestone, not the binding `review_result`
 technical raw text only. Frontend highlight rendering now uses the server entity contract as the
 single PII highlight source of truth: raw/canonical/layout views render only the view-specific
 ranges the contract provides, and missing/partial/ambiguous or evidence-only states are visible
-instead of guessed. The next engine priority is formal **Review L8 `review_result`** and the
-**PII validation transparency report**.
+instead of guessed. Formal Review L8 `review_result` and the **PII validation transparency report**
+are now delivered. The next documented independent engine priority is **Benchmark L9 per-profile
+reporting**, followed by a checkpoint before PII advances beyond L12.
 
 **Strategic direction (OCR/Text as an independent module).** The **OCR Output Contract v1 /
 Document Text Package** stabilizes OCR/Text output as a versioned package of
@@ -262,14 +262,12 @@ layout/PII-input layers are additive and never a standalone PII input.
 The checkpoint leaves OCR/Text at L15 (built on the L10.5 prerequisite), PII at L12 done/L10
 partial, and Redaction L0; after reconfirming the next-three cadence, the plan is:
 
-1. Formalize the **Review L8 `review_result`** artifact model — today's JSONL decision overlay
-   (see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md)) covers much of
-   L8/L9's practical intent but not the single-artifact-per-run shape or an explicit stale-decision
-   flag (L7); keep `pii_result` immutable.
-2. Surface the **PII validation transparency report** by exposing already-stored L6 validation
-   counts without changing detection.
-3. Re-run the checkpoint loop for any missing OCR lineage/geometry prerequisites before advancing
-   PII beyond L12 (e.g. toward the `text_lineage_map` separation gate).
+1. Advance **Benchmark L9 — per-profile reporting in one invocation**, the documented benchmark
+   next step, without changing detection or exposing private inputs.
+2. Re-scope the next real construction-time OCR lineage coverage path; keep the existing partial
+   row-construction boundary explicit and do not claim full-document lineage.
+3. Re-run the prerequisite checkpoint before completing PII L13 / Review L9 semantics or advancing
+   PII further; the active-input separation gate remains closed.
 
 PII **L12 — overlap resolution** (deterministic engine-level precedence for duplicate/nested/
 overlapping candidates) is now delivered as downstream consumer work
@@ -735,6 +733,15 @@ fields. See [ADR-0034](../docs/adr/0034-review-l8-review-result-artifact.md). Th
 the feasibility audit's three recommended branches (Phases 1–3); the next engine priority should
 re-run the checkpoint loop against this file's current-sequence section rather than continuing that
 specific audit's list.
+
+**Latest checkpoint (PII validation transparency report):** No engine level change. The Dev View
+renders the already-stored `PiiValidationSummary` from the latest immutable `pii_result` as a
+readable report: kept/dropped/score-down counts plus deterministic fixed reason-code counts. Legacy
+artifacts without the optional summary and runs with validation disabled remain explicit states.
+No metric is recomputed, no candidate/entity/document text is added, and detection, recognizers,
+artifact schemas, APIs, dependencies, benchmark logic, active PII input, pseudonymization,
+redaction, and export are unchanged. Review L8 and this planned transparency slice are closed.
+Next: Benchmark L9 per-profile reporting, then the checkpointed OCR-lineage/PII-L13 choices above.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
