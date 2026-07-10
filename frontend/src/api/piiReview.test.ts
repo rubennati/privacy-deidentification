@@ -44,6 +44,8 @@ const review: PiiReviewResult = {
       decision_scope: "entity_group",
     },
   ],
+  stale_decision_count: 0,
+  has_stale_decisions: false,
 };
 
 describe("fetchPiiReview", () => {

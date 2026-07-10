@@ -10,7 +10,13 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.schemas import AuditArtifact, PiiArtifact, QualityReportArtifact, TextArtifact
+from app.schemas import (
+    AuditArtifact,
+    PiiArtifact,
+    PiiReviewResultArtifact,
+    QualityReportArtifact,
+    TextArtifact,
+)
 
 _ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _ARTIFACTS_DIRECTORY = "artifacts"
@@ -33,6 +39,13 @@ def save_quality_report_artifact(settings: Settings, artifact: QualityReportArti
 
 def save_pii_artifact(settings: Settings, artifact: PiiArtifact) -> None:
     """Write a PII artifact through a temporary file and atomic rename."""
+    _save_artifact_json(settings, artifact.document_id, artifact.id, artifact.model_dump_json())
+
+
+def save_pii_review_result_artifact(
+    settings: Settings, artifact: PiiReviewResultArtifact
+) -> None:
+    """Write a PII review-result snapshot through a temporary file and atomic rename."""
     _save_artifact_json(settings, artifact.document_id, artifact.id, artifact.model_dump_json())
 
 
@@ -118,6 +131,24 @@ def get_pii_artifact(
     return _read_pii_artifact(path, document_id)
 
 
+def get_latest_pii_review_result_artifact(
+    settings: Settings, document_id: str
+) -> PiiReviewResultArtifact | None:
+    """Return the newest PII review-result snapshot for a document, if one exists."""
+    directory = _document_artifact_directory(settings, document_id)
+    if not directory.is_dir():
+        return None
+
+    artifacts = [
+        artifact
+        for path in directory.glob("*.json")
+        if (artifact := _read_pii_review_result_artifact(path, document_id)) is not None
+    ]
+    if not artifacts:
+        return None
+    return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
+
+
 def _document_artifact_directory(settings: Settings, document_id: str) -> Path:
     if not _ID_PATTERN.fullmatch(document_id):
         raise ValueError("invalid document id")
@@ -174,6 +205,16 @@ def _read_quality_report_artifact(
 def _read_pii_artifact(path: Path, document_id: str) -> PiiArtifact | None:
     try:
         artifact = PiiArtifact.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError):
+        return None
+    return artifact if artifact.document_id == document_id else None
+
+
+def _read_pii_review_result_artifact(
+    path: Path, document_id: str
+) -> PiiReviewResultArtifact | None:
+    try:
+        artifact = PiiReviewResultArtifact.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValidationError):
         return None
     return artifact if artifact.document_id == document_id else None
