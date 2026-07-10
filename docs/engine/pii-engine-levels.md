@@ -314,6 +314,14 @@ stage that runs after detection**. This stage is a first-class part of the engin
 - **Artifacts:** manual additions in `review_result` with canonical-text offsets and `origin = human`.
 - **Acceptance:** a human-added span round-trips with valid offsets and is distinguishable from
   machine detections; it becomes a recall (missed-entity) signal.
+- **Design (scoped, not implemented):** [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)
+  audits why a naive implementation breaks existing invariants — `pii_result` stays
+  immutable/detector-only, and `AnchorBoundPiiEntityV1.source_observations` structurally requires a
+  detector observation — and scopes a new `manual_addition` record layered on the existing
+  `pii_review_decisions.jsonl` log/`PiiReviewResult`, never merged into `pii_result` or the
+  anchor-bound entity contract. Canonical-text offsets are captured with a best-effort raw-span
+  reverse projection reusing existing `reading_text_map`/anchor projection machinery; staleness keys
+  off `text_artifact_id`; type is constrained to the running profile's configured entity types.
 - **Boundary to L15:** L14 records corrections; L15 turns them into regression data.
 
 ## Level 15 — Feedback-derived regression sets  ⛔ *open*
@@ -414,7 +422,7 @@ must account for that boundary explicitly.
 | 11 Entity grouping | ✅ done | derived `pii_grouping.py` view + review-decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
 | 12 Overlap / conflict resolution | ✅ done | `pii_input` adapter + deterministic `pii_overlap` resolution + anchor-bound entity diagnostics ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) |
 | 13 Review confirm / reject | ⛔ open | review UI is display + dev-feedback only |
-| 14 Manual add | ⛔ open | — |
+| 14 Manual add | ⛔ open | design scoped, not delivered ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) |
 | 15 Feedback-derived regression | ⛔ open | benchmark inputs hand-authored today |
 | 16 Policy / profile presets | ⛔ open | profiles exist as config, not policy |
 | 17 Stable entity model + lineage | ⛔ open | — |

@@ -25,7 +25,11 @@
   contract as their source of truth and derive raw/canonical/layout view ranges from the same
   anchor-bound entity identity; missing canonical/layout ranges remain visible reason-coded states,
   never frontend guesses. Formal Review L8 `review_result` is now delivered (ADR-0034, see the
-  "Latest checkpoint" entries below); re-run the checkpoint loop for the next engine priority.
+  "Latest checkpoint" entries below). PII L14 / Review L10 (manual add of missed entities) is now
+  **scoped, not implemented** (ADR-0035, docs-only): a new `manual_addition` record layered on the
+  existing decision log, deliberately kept out of `pii_result` and the anchor-bound entity contract
+  because both structurally assume a detector-originated span. The next engine priority is
+  implementing that design (`pii-l14-manual-add-v1`).
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -769,6 +773,37 @@ the review API exposes that additive link. Legacy records remain readable. Exist
 is unchanged: decisions never silently reapply across a new PII artifact, and the stale count stays
 explicit. No detection, active input, anchors, SQLite, dependency, pseudonymization, redaction, or
 export change. Next: PII L14 / Review L10 manual add of missed entities remains checkpoint-gated.
+
+**Latest checkpoint (PII L14 / Review L10 — manual add scope, docs-only):** Not an engine level
+change; PII L14 and Review L10 both remain `⛔ open`. Scopes the architecture for the step named at
+the end of the previous entry. An audit of `pii_review_service.py`, `schemas.py`,
+`pii_entity_contract.py`, `pii_anchor_binding.py`, and the frontend review components found four
+load-bearing constraints a naive implementation would break: `pii_result` stays
+immutable/detector-only; `AnchorBoundPiiEntityV1.source_observations` structurally requires a
+detector observation (`Field(min_length=1)`) and even its evidence-only fallback identity derives
+from a `PiiEntity`'s raw offsets, so a human-added span with no detection has no path into that
+model; `PiiReviewResultArtifact`/`PiiReviewResult` are occurrence-id-primary and
+`PiiReviewOccurrence.occurrence_id` *is* `PiiEntity.id` (ADR-0033/ADR-0034's deliberate choice); and
+no actor/origin field exists anywhere in review persistence today (`PiiReviewDecisionRecord.source`
+is a static request-source tag, not a per-record origin marker). The scoped decision: a new
+`manual_addition` record variant appended to the existing `pii_review_decisions.jsonl` log, and an
+additive `PiiReviewResult.manual_additions` list — never merged into `pii_result` or the anchor-bound
+entity contract. Canonical-text (`reading_text`) offsets are captured at add time (matching the
+acceptance criterion already stated in `pii-engine-levels.md`/`review-feedback-levels.md`), with a
+best-effort raw-span reverse projection reusing the *existing* `reading_text_map`/anchor projection
+machinery (exact/partial/unmapped, never a new matching heuristic); staleness keys off
+`text_artifact_id` rather than a `pii_result` artifact id, since a manual addition has no originating
+detection to key on; the entity-type picker is constrained to the current `pii_result`'s own
+`PiiContent.configured_entity_types`; and once created, an addition's own accept/keep/reject
+reuses the existing `POST …/pii/review/decisions` endpoint under a new
+`target_type: "manual_addition"` rather than a new edit/delete action. The frontend gap is real and
+explicitly named: text-selection capture, an entity-type picker, and a visually distinct rendering
+for human-added spans are net-new primitives — none exist in `PiiTextViewer.tsx`/
+`ReviewTextViewer.tsx`/`PiiReviewGroupList.tsx` today. No detection, `pii_result` schema,
+anchor-graph, active-PII-input, pseudonymization, redaction, export, dependency, or code change is
+introduced by this checkpoint. See
+[ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md). Next: implement this design as
+the `pii-l14-manual-add-v1` branch, then re-run the checkpoint loop.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

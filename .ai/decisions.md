@@ -181,3 +181,20 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   introduced. No detection, `pii_result` schema, active-PII-input, pseudonymization, redaction, or
   export change; existing `GET …/pii/review`/`POST …/pii/review/decisions` behavior is unchanged
   except for the two additive fields.
+- [ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md) — **PII L14 / Review L10
+  manual-add scope (docs-only).** Scopes, without implementing, the design for letting a reviewer add
+  a span the engine missed. Audited why a naive implementation would break existing invariants:
+  `pii_result` stays immutable/detector-only; `AnchorBoundPiiEntityV1.source_observations` structurally
+  requires a detector observation; `PiiReviewResultArtifact` is occurrence-id-primary and
+  `PiiReviewOccurrence.occurrence_id` *is* `PiiEntity.id`; no actor field exists anywhere yet.
+  Decision: a new `manual_addition` record variant in the *same* `pii_review_decisions.jsonl` log and
+  an additive `PiiReviewResult.manual_additions` list — never forced into `pii_result` or the
+  anchor-bound entity contract. Canonical-text (`reading_text`) offsets are captured at add time, with
+  a best-effort raw-span reverse projection reusing the existing `reading_text_map`/anchor projection
+  machinery (exact/partial/unmapped, never guessed); staleness keys off `text_artifact_id` (no
+  originating `pii_result` entity exists to key on); entity type is constrained to the current
+  `pii_result`'s own `PiiContent.configured_entity_types`; and once created, an addition's own accept/keep/reject
+  reuses the existing decision endpoint under a new `target_type: "manual_addition"` rather than a new
+  edit/delete action. Frontend needs three net-new primitives: text-selection capture, an entity-type
+  picker, and a visually distinct rendering for human-added spans — none exist today. PII L14/Review
+  L10 remain `⛔ open`; this is the design for the follow-up implementation PR.

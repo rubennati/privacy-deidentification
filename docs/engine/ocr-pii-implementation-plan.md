@@ -42,7 +42,7 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 | Engine | Current level | Next |
 | --- | --- | --- |
 | OCR / Text | **L15 done (built on the L10.5 contract step)** | scoped construction-lineage coverage |
-| PII / Sensitive-Data | **L13 done; L10 partial** (dev-only feedback capture) | L14 manual add / missed entities |
+| PII / Sensitive-Data | **L13 done; L10 partial** (dev-only feedback capture) | L14 manual add / missed entities — design scoped ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)), not yet implemented |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L9 done** | L10 manual add |
 | Benchmark / Regression | **L10 done** | L11 OCR runtime/memory |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
@@ -272,6 +272,20 @@ Redaction L0 again; before advancing PII beyond L12, re-run the checkpoint loop 
 lineage or geometry prerequisite is missing. The next documented engine steps remain **PII L12
 overlap resolution**, formal **Review L8 `review_result`**, and **PII validation transparency
 report**, unless benchmark/private-corpus evidence reprioritizes OCR L13 document understanding.
+
+**Latest checkpoint (PII L14 / Review L10 — manual add scope, docs-only):** PII L12/L13, Review
+L6–L9, and the anchor-bound entity contract (Phase C) are all now delivered — see `.ai/state.md`'s
+"Latest checkpoint" entries for the full sequence between the OCR L12 checkpoint above and this one.
+This entry scopes, without implementing, the next step named at the top of this document:
+[ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md) audits why letting a reviewer add a
+missed span cannot reuse `pii_result` (strictly immutable/detector-only) or
+`AnchorBoundPiiEntityV1` (`source_observations` structurally requires a detector observation), and
+scopes a new `manual_addition` record layered on the existing `pii_review_decisions.jsonl`
+log/`PiiReviewResult`, with canonical-text offsets, a best-effort raw-span reverse projection reused
+from `reading_text_map`/anchor projection, `text_artifact_id`-keyed staleness, and reuse of the
+existing decision endpoint for an addition's own accept/keep/reject. No dependency, detection,
+`pii_result` schema, anchor-graph, active-PII-input, pseudonymization, redaction, export, or code
+change is introduced. Next: implement this design as `pii-l14-manual-add-v1`.
 
 ## References
 
