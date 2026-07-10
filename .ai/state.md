@@ -636,7 +636,8 @@ output bytes, runtime, or the DB. Metadata stays text-free (leak-tested, includi
 Covered by `backend/tests/test_reading_text_geometry_projection.py` (renamed from
 `test_anchor_first_text_package_v2.py`) plus updated anchor-graph, package, and E2E-conformance
 suites. Next: thread real raw offsets through `reading_text.py`'s own `ReadingRow`/`ReadingCell` path
-for genuine construction-time lineage, then `pii-binding-quality-suite`, then `review-result-v1`.
+for genuine construction-time lineage (delivered as a partial first slice — see the "Reading-text row
+construction lineage v1" checkpoint below), then `pii-binding-quality-suite`, then `review-result-v1`.
 
 **Latest checkpoint (Runtime Job UX / in-app notifications v1):** Cross-cutting runtime/UX step, not
 an engine level change. On top of ADR-0023's job model/status API, the product-facing presentation
@@ -663,6 +664,35 @@ replace *how* the store learns about updates without changing the job contract, 
 or any component reading from the store. No OCR/PII detection, artifact contract, `OCR_EXECUTION_MODE`
 semantics, Docker/Compose, or Makefile change. See
 [ADR-0030](../docs/adr/0030-runtime-job-ux-notifications-v1.md).
+
+**Latest checkpoint (Reading-text row construction lineage v1 — Phase 1, partial):** The first
+genuinely builder-emitted (not post-render) raw↔canonical lineage mechanism. `reading_text.py`'s
+`ReadingRow` gains an optional page-local `source_range`, attached once at collection time — exact
+from persisted L10 geometry, or via a global-uniqueness match of a row's own text against the page's
+raw lines for the primary pypdf-visitor path (reusing `text_geometry.py`'s exact-match discipline,
+now shared as `segment_page_lines`/`collapse_line`) — and threaded only through the
+plain-paragraph/body rendering path (`_join_continuations_with_flags`); a merge of rows unions their
+ranges only when every contributing row has one and raw order stays non-decreasing, so a visual
+(reading-order) merge of raw-reordered rows declines instead of risking a swallowed unrelated range.
+Canonical offsets are computed by walking the same block/line join arithmetic the text was already
+assembled with (`_join_blocks_with_lineage`, byte-identical to the existing `_join_blocks`), never by
+searching the finished string — and `build_reading_text` only keeps the result when the exact
+per-page strings it was computed against are still the ones being joined (an equality check),
+discarding it entirely if repeated-margin filtering or a whole-document fallback later changes that
+text. New `ReadingTextRowLineageMap` (`lineage_source: row_construction`) is preferred over
+`geometry_projection` over `fallback_text_match` in `DocumentTextPackageLineageSummary` and the Text
+Anchor Graph's per-token projection (new `canonical_row_construction` flag/count). This is
+deliberately partial, not a claim of full coverage: party columns, tables, multi-column
+reconstruction, metadata, and post-table rendering always decline row-construction lineage (those
+spans keep falling back to the pre-existing post-hoc mechanisms, unchanged), and cell-level
+granularity remains out of scope. No detection, active-PII-input, routing, schema-breaking,
+pseudonymization, redaction, export, or dependency change; `reading_text` bytes are unchanged, proven
+byte-identical across the full existing regression suite. See
+[ADR-0032](../docs/adr/0032-reading-text-row-construction-lineage-v1.md) and the "Phase 1" gap
+in [`text-anchor-architecture-feasibility-audit.md`](../docs/engine/text-anchor-architecture-feasibility-audit.md).
+Next: extend real coverage to more rendering paths (re-scoped explicitly, not assumed), then the
+feasibility audit's remaining two recommended branches, **`pii-binding-quality-suite`** and
+**`review-result-v1`**.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

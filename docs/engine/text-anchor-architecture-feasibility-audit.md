@@ -415,6 +415,21 @@ persistence.
 > text builder itself emitting `(raw_span → reading_span)` while rendering — remains unimplemented;
 > Phase 1 as originally scoped is **not complete**, and a real `anchor-first-text-package-v2` is a
 > separate, future branch. No reading-text byte change, no detection change, no DB.
+>
+> **Status update (2026-07-10).** A genuine, but partial, first slice of this phase is delivered —
+> see [ADR-0032](../adr/0032-reading-text-row-construction-lineage-v1.md). `ReadingRow` now carries
+> an optional `source_range`, attached once at collection time (exact from L10 geometry; via a
+> global-uniqueness row-text match for the primary pypdf-visitor path) and threaded through
+> rendering by the builder itself for the plain-paragraph/body path only
+> (`_join_continuations_with_flags`); canonical offsets are computed by walking the same block/line
+> join arithmetic the text was assembled with, never by searching the finished string. This is
+> **real construction-time lineage** for the paths it covers — the goal this phase set out to
+> achieve — but it is deliberately **not** the full builder rewrite the goal below describes: party
+> columns, tables, multi-column reconstruction, metadata, and post-table rendering still emit no
+> lineage at all (not even an explicit decline marker), and cell-level granularity is out of scope.
+> Those paths, and a real `anchor-first-text-package-v2` that unifies every rendering path behind
+> one contract, remain open — the acceptance criteria below (byte-stability, legacy-artifact safety,
+> e2e conformance) hold for the delivered slice, but full-document acceptance does not yet.
 
 - **Goal:** the reading-text builder emits `(raw_span → reading_span)` segments *while rendering*
   each fragment (it already holds the source rows/geometry), replacing dependence on post-hoc

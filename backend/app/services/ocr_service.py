@@ -55,6 +55,7 @@ from app.services.reading_text_geometry_projection import (
     build_reading_text_geometry_projection_map,
 )
 from app.services.reading_text_projection import build_reading_text_map
+from app.services.reading_text_row_lineage import build_reading_text_row_lineage_map
 from app.services.structured_content import build_structured_content
 from app.services.text_geometry import (
     build_ocr_page_geometry,
@@ -234,7 +235,7 @@ def _extract_pdf(
                 page_geometry = build_pdf_page_geometry(
                     page, page_number, text, canonical_base
                 )
-                reading_rows.extend(collect_pdf_reading_rows(page, page_number))
+                reading_rows.extend(collect_pdf_reading_rows(page, page_number, text))
                 ocr_result = None
             pages.append(
                 TextPageResult(
@@ -486,6 +487,16 @@ def _text_content(
         if reading is not None
         else None
     )
+    row_lineage_map = (
+        build_reading_text_row_lineage_map(
+            document_id=document_id,
+            reading_text=reading.text,
+            pages=pages,
+            row_lineage=reading.row_lineage,
+        )
+        if reading is not None
+        else None
+    )
     quality_evidence = build_quality_evidence(
         source=source,
         text=text,
@@ -516,6 +527,8 @@ def _text_content(
             "1" if geometry_projection_map is not None else None
         ),
         reading_text_geometry_projection_map=geometry_projection_map,
+        reading_text_row_lineage_map_version="1" if row_lineage_map is not None else None,
+        reading_text_row_lineage_map=row_lineage_map,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
         layout_blocks_version="1" if blocks else None,
