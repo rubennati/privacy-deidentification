@@ -288,6 +288,22 @@ describe("buildAnchorBoundPiiHighlights", () => {
     ]);
   });
 
+  it("renders raw and canonical highlights as the same entity identity across views", () => {
+    const model = buildAnchorBoundPiiHighlights(contract([anchorEntity()]));
+    const [raw] = model.byView.technical_raw_text;
+    const [canonical] = model.byView.canonical_reading_text;
+
+    // One anchor-bound entity powers both views: same entity id and type, view-specific ranges.
+    expect(raw.entity_id).toBe(canonical.entity_id);
+    expect(raw.entity_type).toBe(canonical.entity_type);
+    expect(raw.source_name).toBe("technical_raw_text");
+    expect(canonical.source_name).toBe("canonical_reading_text");
+    expect(raw.anchor_ids).toEqual(canonical.anchor_ids);
+    // The frontend renders the contract-supplied ranges verbatim; it does not re-derive them.
+    expect({ start: raw.start, end: raw.end }).toEqual({ start: 0, end: 4 });
+    expect({ start: canonical.start, end: canonical.end }).toEqual({ start: 7, end: 11 });
+  });
+
   it("builds layout highlights only from layout anchor refs", () => {
     const model = buildAnchorBoundPiiHighlights(
       contract([
