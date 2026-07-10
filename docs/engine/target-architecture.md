@@ -99,7 +99,11 @@ codes for missing canonical/layout ranges, evidence-only fallback, degraded anch
 token ambiguity, reading-text mapping gaps, and intentionally unavailable layout mapping. The
 frontend renders PII highlights from this contract rather than deriving independent
 raw/canonical/layout highlight sets; view-specific ranges are used only when the contract provides
-them, and missing/partial/ambiguous mappings remain visible states.
+them, and missing/partial/ambiguous mappings remain visible states. An end-to-end feasibility audit
+of the anchor layer ([`text-anchor-architecture-feasibility-audit.md`](text-anchor-architecture-feasibility-audit.md))
+confirms this consumption discipline, classifies the current graph as anchor-*derived* (identity
+offset-minted; canonical lineage via the post-hoc unique-token `reading_text_map`), and stages
+construction-time lineage as the next structural step toward true anchor-first.
 
 ## Runtime job contract
 

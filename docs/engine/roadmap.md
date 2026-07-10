@@ -349,6 +349,14 @@ of truth for raw/canonical/layout view ranges, making missing/partial/ambiguous 
 rather than guessed. It stores no copied binding text, adds no DB, and does not change the active PII
 detection input. Pseudonymization and reconstruction remain later phases.
 
+A full feasibility and conformance audit of this approach —
+[`text-anchor-architecture-feasibility-audit.md`](text-anchor-architecture-feasibility-audit.md) —
+classifies v1 as a sound **anchor-derived** transitional layer (not yet anchor-first: identity is
+offset-minted, canonical lineage is the post-hoc unique-token map) and recommends
+`anchor-first-text-package-v2` (construction-time lineage from the reading-text builder),
+`pii-binding-quality-suite`, then `review-result-v1` as the next three phases, with anchor-id
+persistence pinned to the graph builder version before any durable state references anchor ids.
+
 ### Redaction remains blocked
 
 Redaction stays at L0 until reviewed decisions, stable/resolved PII spans, and OCR text-to-geometry
