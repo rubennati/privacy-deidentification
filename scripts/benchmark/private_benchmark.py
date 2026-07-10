@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 from artifact_loader import DocumentArtifacts, load_local_corpus  # noqa: E402
 from document_matching import (  # noqa: E402
@@ -43,6 +44,7 @@ from pii_matching import (  # noqa: E402
 )
 from privacy_guard import PrivacyGuardError, assert_report_is_safe, assert_text_is_safe  # noqa: E402
 from report_builder import build_report, render_markdown  # noqa: E402
+from app.services.pii_profiles import PII_PROFILES  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -190,6 +192,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     pii_per_document = []
     global_pii = None
     validation_aggregate = None
+    profile_benchmarks: dict[str, dict[str, Any]] = {}
     if not args.no_pii:
         for matched in match_result.matched:
             groundtruth_doc = groundtruth_by_filename.get(matched.benchmark_filename)
@@ -219,6 +222,42 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             for matched in match_result.matched
             if artifacts_by_id[matched.document_id].pii is not None
         )
+        for profile in PII_PROFILES:
+            profile_metrics = []
+            profile_validations = []
+            documents_with_artifact = 0
+            for matched in match_result.matched:
+                artifacts = artifacts_by_id[matched.document_id]
+                profile_artifact = artifacts.pii_by_profile.get(profile)
+                if profile_artifact is None:
+                    continue
+                documents_with_artifact += 1
+                if profile_artifact.validation is not None:
+                    profile_validations.append(profile_artifact.validation)
+                groundtruth_doc = groundtruth_by_filename.get(matched.benchmark_filename)
+                if groundtruth_doc is None:
+                    continue
+                matching_mode = (
+                    "page_aware"
+                    if artifacts.text is not None and artifacts.text.pages
+                    else "document_level"
+                )
+                profile_metrics.append(
+                    build_document_pii_metrics(
+                        matched.document_id,
+                        matched.local_filename,
+                        profile_artifact.entities,
+                        profile_artifact.configured_entity_types,
+                        groundtruth_doc.entities,
+                        matching_mode,
+                    )
+                )
+            profile_benchmarks[profile] = {
+                "documents_with_artifact": documents_with_artifact,
+                "documents_with_groundtruth": len(profile_metrics),
+                "global": build_global_pii_metrics(profile_metrics),
+                "validation": aggregate_validation_summaries(profile_validations),
+            }
 
     inputs = {
         "uploads_dir": str(args.uploads_dir),
@@ -242,6 +281,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         pii_per_document=pii_per_document,
         global_pii=global_pii,
         validation_aggregate=validation_aggregate,
+        profile_benchmarks=profile_benchmarks,
         missing_artifacts=_missing_artifacts(local_artifacts),
     )
     return report
@@ -301,6 +341,43 @@ def _write_summary_csv(path: Path, report: dict[str, Any]) -> None:
             )
 
 
+def _write_profile_csv(path: Path, report: dict[str, Any]) -> None:
+    """Write one privacy-safe aggregate row for every configured PII profile."""
+    fieldnames = [
+        "profile",
+        "documents_with_artifact",
+        "documents_with_groundtruth",
+        "pii_expected",
+        "pii_detected",
+        "pii_tp",
+        "pii_fp",
+        "pii_fn",
+        "pii_precision",
+        "pii_recall",
+        "pii_f1",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for profile, data in (report.get("pii_benchmark") or {}).get("by_profile", {}).items():
+            metrics = data["global"]
+            writer.writerow(
+                {
+                    "profile": profile,
+                    "documents_with_artifact": data["documents_with_artifact"],
+                    "documents_with_groundtruth": data["documents_with_groundtruth"],
+                    "pii_expected": metrics["total_expected"],
+                    "pii_detected": metrics["total_detected"],
+                    "pii_tp": metrics["total_tp"],
+                    "pii_fp": metrics["total_fp"],
+                    "pii_fn": metrics["total_fn"],
+                    "pii_precision": metrics["precision"],
+                    "pii_recall": metrics["recall"],
+                    "pii_f1": metrics["f1"],
+                }
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -338,6 +415,9 @@ def main(argv: list[str] | None = None) -> int:
         csv_path = output_dir / "benchmark_summary.csv"
         _write_summary_csv(csv_path, report)
         written.append(csv_path)
+        profile_csv_path = output_dir / "benchmark_profiles.csv"
+        _write_profile_csv(profile_csv_path, report)
+        written.append(profile_csv_path)
 
     coverage = report["corpus_coverage"]
     print(f"Report written to: {output_dir}")
@@ -364,6 +444,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"score_down={validation['total_score_down']} "
                 f"(documents={validation['documents_considered']}, "
                 f"validation_enabled={validation['documents_with_validation_enabled']})"
+            )
+        for profile, data in report["pii_benchmark"].get("by_profile", {}).items():
+            metrics = data["global"]
+            print(
+                f"PII profile {profile}: artifacts={data['documents_with_artifact']} "
+                f"groundtruth={data['documents_with_groundtruth']} "
+                f"precision={metrics['precision']} recall={metrics['recall']} f1={metrics['f1']}"
             )
     return 0
 

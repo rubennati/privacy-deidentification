@@ -13,7 +13,7 @@
 
 - [x] Deliver Review L8 `review_result` with explicit stale-decision state.
 - [x] Surface the stored PII candidate-validation summary in a transparency view.
-- [ ] Benchmark L9 — report all profiles in one invocation.
+- [x] Benchmark L9 — report all profiles in one invocation.
 - [ ] Re-scope the next construction-time OCR lineage coverage path.
 - [ ] Re-run the prerequisite checkpoint before completing PII L13 / Review L9.
 

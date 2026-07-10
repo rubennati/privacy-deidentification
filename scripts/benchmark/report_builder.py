@@ -205,6 +205,7 @@ def build_report(
     global_pii: GlobalPiiMetrics | None,
     missing_artifacts: Sequence[dict[str, Any]],
     validation_aggregate: ValidationBenchmarkSummary | None = None,
+    profile_benchmarks: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the full JSON-serializable report structure. Markdown is rendered from this."""
     documents_by_id = {doc.document_id: doc for doc in local_documents}
@@ -268,6 +269,16 @@ def build_report(
         pii_benchmark = {"global": _global_pii_to_dict(global_pii)}
         if validation_aggregate is not None:
             pii_benchmark["validation"] = _validation_aggregate_to_dict(validation_aggregate)
+        if profile_benchmarks is not None:
+            pii_benchmark["by_profile"] = {
+                profile: {
+                    "documents_with_artifact": data["documents_with_artifact"],
+                    "documents_with_groundtruth": data["documents_with_groundtruth"],
+                    "global": _global_pii_to_dict(data["global"]),
+                    "validation": _validation_aggregate_to_dict(data["validation"]),
+                }
+                for profile, data in profile_benchmarks.items()
+            }
 
     return {
         "generated_at": generated_at,
@@ -351,6 +362,14 @@ def render_markdown(report: dict[str, Any]) -> str:
             lines.append(
                 f"  - Unsupported entity types: {', '.join(g['unsupported_entity_types'])}"
             )
+        for profile, profile_data in pii_benchmark.get("by_profile", {}).items():
+            profile_global = profile_data["global"]
+            lines.append(
+                f"- Profile `{profile}`: artifacts={profile_data['documents_with_artifact']}, "
+                f"groundtruth={profile_data['documents_with_groundtruth']}, "
+                f"precision={profile_global['precision']}, recall={profile_global['recall']}, "
+                f"f1={profile_global['f1']}"
+            )
     lines.append("")
 
     lines += [
@@ -427,6 +446,25 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append("## PII Benchmark")
     lines.append("")
     if pii_benchmark:
+        by_profile = pii_benchmark.get("by_profile") or {}
+        if by_profile:
+            lines += [
+                "### Per-profile comparison (Benchmark L9)",
+                "",
+                "| Profile | Artifacts | Ground truth docs | TP | FP | FN | "
+                "Precision | Recall | F1 |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+            for profile, profile_data in by_profile.items():
+                profile_global = profile_data["global"]
+                lines.append(
+                    f"| {profile} | {profile_data['documents_with_artifact']} | "
+                    f"{profile_data['documents_with_groundtruth']} | {profile_global['total_tp']} | "
+                    f"{profile_global['total_fp']} | {profile_global['total_fn']} | "
+                    f"{profile_global['precision']} | {profile_global['recall']} | "
+                    f"{profile_global['f1']} |"
+                )
+            lines.append("")
         lines += [
             "| Document | Expected | Detected | TP | FP | FN | Precision | Recall | F1 | Mode |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",

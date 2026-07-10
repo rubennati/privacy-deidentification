@@ -12,7 +12,7 @@ documents.
 | OCR / Text | **L15 (built on the required L10.5 step) + output-contract stabilization** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), L15 additive noise/token artifact evidence in the same list, and Document Text Package v1 (`contract_version = "1.0"`, `valid`/`degraded`/`invalid`) | PII L12 overlap resolution downstream; future OCR capabilities plug into the contract |
 | PII / Sensitive-Data | **L12; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation plus a Dev View transparency report, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **anchor-bound entity contract** (Text Anchor Graph binding where available, explicit evidence-only fallback, source observations, display model, and text-free coverage/reason diagnostics for missing canonical/layout ranges) plus frontend highlight rendering from that contract ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) | checkpoint before PII L13 completion |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L8 done; L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)); immutable `review_result` snapshots and explicit stale-decision state ([ADR-0034](../adr/0034-review-l8-review-result-artifact.md)) | complete confirm/reject semantics, then manual add (L10) |
-| Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
+| Benchmark / Regression | **L10** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, per-profile comparison in one read-only invocation, OCR confidence/coverage columns | L11 OCR runtime/memory |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
 
 ## Delivered foundation
@@ -326,11 +326,11 @@ with an explicit stale-decision indicator (L7), manual add (L10), and reason/com
 Dev feedback JSONL remains a separate, dev-gated analysis input. See
 [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 
-### Benchmark L9–L10
+### Benchmark L9–L10 — delivered
 
-Add per-profile PII metrics in one invocation at L9. The L10 OCR confidence/coverage columns are
-already delivered out of order using L7 `quality_report` with a legacy artifact fallback; cumulative
-benchmark maturity remains L8 until L9 lands.
+L9 compares the newest available immutable PII result for every configured profile in one read-only
+invocation and exposes missing profile artifacts as coverage gaps. L10 OCR confidence/coverage
+columns use L7 `quality_report` with a legacy artifact fallback. Benchmark maturity is now L10.
 
 ### Text identity / anchor lineage — Phases B-C delivered, frontend consistency next
 
