@@ -187,11 +187,11 @@ def _assemble_page(
     canonical_base: int,
 ) -> TextGeometryPage:
     """Match reading-order line candidates to canonical page-text segments and build line boxes."""
-    segments = _segment_offsets(page_text)
+    segments = segment_page_lines(page_text)
     matched: list[tuple[int, int, _GeoLine]] = []
     cursor = 0
     for geo_line in geo_lines:
-        target = _collapse(geo_line.text)
+        target = collapse_line(geo_line.text)
         if not target:
             continue
         index = cursor
@@ -310,20 +310,24 @@ def _group_fragment_lines(
     return lines
 
 
-def _segment_offsets(text: str) -> list[tuple[int, int, str]]:
-    """Half-open ``(start, end, collapsed)`` for each non-blank ``\\n``-delimited page-text line."""
+def segment_page_lines(text: str) -> list[tuple[int, int, str]]:
+    """Half-open ``(start, end, collapsed)`` for each non-blank ``\\n``-delimited page-text line.
+
+    Shared with ``reading_text.py``: the same exact-match, whitespace-collapsed line segmentation
+    used here to resolve L10 geometry also backs row-level construction-time source ranges there.
+    """
     segments: list[tuple[int, int, str]] = []
     start = 0
     for line in text.split("\n"):
         end = start + len(line)
-        collapsed = _collapse(line)
+        collapsed = collapse_line(line)
         if collapsed:
             segments.append((start, end, collapsed))
         start = end + 1
     return segments
 
 
-def _collapse(text: str) -> str:
+def collapse_line(text: str) -> str:
     return " ".join(text.split())
 
 

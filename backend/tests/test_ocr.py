@@ -293,6 +293,39 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     assert audit_path.read_bytes() == audit_bytes
 
 
+def test_pdf_text_layer_single_line_gets_real_row_construction_lineage(
+    client: TestClient, ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer]
+) -> None:
+    """End-to-end proof that the real pypdf-visitor row matching in ``collect_pdf_reading_rows``
+
+    (not just directly-constructed ``ReadingRow`` fixtures elsewhere) resolves construction-time row
+    lineage for a single, unambiguous line extracted through the actual PDF text layer.
+    """
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["reading_text"] == "Digital text"
+    row_lineage_map = content["reading_text_row_lineage_map"]
+    assert content["reading_text_row_lineage_map_version"] == "1"
+    assert row_lineage_map is not None
+    assert row_lineage_map["lineage_source"] == "row_construction"
+    assert len(row_lineage_map["segments"]) == 1
+    segment = row_lineage_map["segments"][0]
+    assert segment["mapping_status"] == "exact"
+    assert segment["confidence"] == 1.0
+    assert (segment["canonical_start"], segment["canonical_end"]) == (0, len("Digital text"))
+    source_range = segment["source_range"]
+    assert source_range is not None
+    assert (source_range["start"], source_range["end"]) == (0, len("Digital text"))
+    assert content["text"][source_range["start"] : source_range["end"]] == "Digital text"
+    assert row_lineage_map["summary"]["coverage_ratio"] == 1.0
+
+
 def test_mixed_pdf_routes_each_page_and_preserves_order(
     client: TestClient,
     upload_dir: Path,
@@ -1098,6 +1131,8 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     payload["content"].pop("reading_text_map", None)
     payload["content"].pop("reading_text_geometry_projection_map_version", None)
     payload["content"].pop("reading_text_geometry_projection_map", None)
+    payload["content"].pop("reading_text_row_lineage_map_version", None)
+    payload["content"].pop("reading_text_row_lineage_map", None)
     payload["content"].pop("layout_text_result", None)
     payload["content"].pop("layout_blocks_version", None)
     payload["content"].pop("layout_blocks", None)

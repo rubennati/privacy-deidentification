@@ -118,17 +118,26 @@ Gates for the implemented **Text Anchor Graph v1** and any future PR that extend
   `backend/tests/test_anchor_bound_pii_e2e_conformance.py`.
 - **Technical raw text stays the offset authority and is never mutated**, and the active-PII-input
   `text_lineage_map` separation gate is not bypassed by anchor work.
+- **Row construction lineage is real, builder-emitted, construction-time lineage, but only for the
+  plain-paragraph/body rendering path — never describe it as full-document coverage.**
+  `reading_text.py`'s `ReadingRow` carries an optional `source_range` attached once at collection
+  time (before any rendering), and only `_join_continuations_with_flags` threads it through as text
+  is assembled; canonical offsets are computed by walking the same block/line join arithmetic the
+  text was built with, never by searching the finished string (`ReadingTextRowLineageMap`,
+  `lineage_source: row_construction`). Party columns, tables, multi-column reconstruction, metadata,
+  and post-table rendering redistribute/reformat cells and always emit no lineage for this
+  mechanism — that is a scope boundary, not a bug, and those spans still rely on the mechanisms
+  below. See [ADR-0032](../docs/adr/0032-reading-text-row-construction-lineage-v1.md).
 - **The geometry-backed reading projection is a preferred *post-hoc* mechanism, not construction-time
   lineage — never describe it as builder-emitted.** `reading_text_geometry_projection.py` runs
   *after* Canonical Reading Text already exists and re-derives canonical↔raw correspondence by
   searching the finished string for an exact, line-bounded occurrence of each raw geometry line
-  (`ReadingTextGeometryProjectionMap`); the reading-text builder (`reading_text.py`) itself emits no
-  lineage and still discards its own per-fragment source knowledge (`ReadingRow`/`ReadingCell` carry
-  no raw offsets). The anchor graph and package prefer this projection over the older unique-token
-  `reading_text_map` only when it resolves a line unambiguously, and report which mechanism was used
-  (`geometry_projection` / `fallback_text_match` / `unavailable`; per-anchor
-  `canonical_geometry_projection` vs `canonical_map_lineage`) — neither is authoritative construction
-  identity.
+  (`ReadingTextGeometryProjectionMap`). The anchor graph and package prefer row construction lineage
+  first, then this projection, then the older unique-token `reading_text_map`, only when each
+  resolves a line unambiguously, and report which mechanism was used (`row_construction` /
+  `geometry_projection` / `fallback_text_match` / `unavailable`; per-anchor
+  `canonical_row_construction` / `canonical_geometry_projection` / `canonical_map_lineage`) — only
+  `row_construction` is builder-emitted; the other two are not authoritative construction identity.
 - **Cursor/processing order is never identity proof; a non-unique line must decline, not guess.** A
   source line may be projected as `exact` only when its exact text occurs exactly once among the
   collected verbatim source lines **and** exactly once, line-bounded, in the canonical text. A line
