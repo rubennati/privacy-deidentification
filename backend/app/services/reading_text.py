@@ -671,9 +671,9 @@ def _render_positioned_rows(
             table_end = table_index + 1
 
     if table_end < len(ordered):
-        post_blocks, post_flags = _render_post_table(ordered[table_end:])
+        post_blocks, post_flags, post_lineage = _render_post_table(ordered[table_end:])
         blocks.extend(post_blocks)
-        blocks_lineage.extend(_none_lineage(post_blocks))
+        blocks_lineage.extend(post_lineage)
         flags.extend(post_flags)
     kept_blocks, kept_lineage = _drop_empty_blocks(blocks, blocks_lineage)
     return kept_blocks, flags, kept_lineage
@@ -747,9 +747,9 @@ def _generic_table_blocks(
     blocks_lineage: list[list[tuple[int, int] | None]] = [*prefix_lineage, table_block_lineage]
     flags = [*prefix_flags, "table_row_reconstruction", "generic_table_reconstruction"]
     if end < len(row_list):
-        post_blocks, post_flags = _render_post_table(row_list[end:])
+        post_blocks, post_flags, post_lineage = _render_post_table(row_list[end:])
         blocks.extend(post_blocks)
-        blocks_lineage.extend(_none_lineage(post_blocks))
+        blocks_lineage.extend(post_lineage)
         flags.extend(post_flags)
     return blocks, flags, blocks_lineage
 
@@ -1417,17 +1417,30 @@ def _align_table_cells_with_occupied(
     return cells, occupied
 
 
-def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
+def _render_post_table(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[list[str]], list[str], list[list[tuple[int, int] | None]]]:
+    """Render post-table totals and prose with scoped construction-time row lineage.
+
+    This path does not realign table cells: a total row and an ordinary standalone post-table row
+    are emitted from exactly one pre-attributed ``ReadingRow``. Conservatively joined prose remains
+    deliberately unbound in this slice. The synthetic ``SUMMEN`` heading deliberately has no source
+    range; table rows themselves remain out of scope.
+    """
     lines = [_row_text(row) for row in rows]
     blocks: list[list[str]] = []
     flags: list[str] = []
+    blocks_lineage: list[list[tuple[int, int] | None]] = []
     total_lines: list[str] = []
+    total_lineage: list[tuple[int, int] | None] = []
     cursor = 0
     while cursor < len(lines) and lines[cursor].casefold().startswith(_TOTAL_PREFIXES):
         total_lines.append(lines[cursor])
+        total_lineage.append(rows[cursor].source_range)
         cursor += 1
     if total_lines:
         blocks.append(["SUMMEN", *total_lines])
+        blocks_lineage.append([None, *total_lineage])
         flags.append("document_sections")
 
     while cursor < len(lines):
@@ -1444,6 +1457,7 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
                 paragraph = f"{paragraph} {lines[cursor]}"
                 cursor += 1
             blocks.append([paragraph])
+            blocks_lineage.append([None])
             flags.append("conservative_line_joining")
             continue
         if _is_long_prose_line(line):
@@ -1458,11 +1472,13 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
                 paragraph = f"{paragraph} {lines[cursor]}"
                 cursor += 1
             blocks.append([paragraph])
+            blocks_lineage.append([None])
             flags.append("conservative_line_joining")
             continue
         blocks.append([line])
+        blocks_lineage.append([rows[cursor].source_range])
         cursor += 1
-    return blocks, flags
+    return blocks, flags, blocks_lineage
 
 
 def _is_long_prose_line(line: str) -> bool:

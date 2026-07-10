@@ -753,6 +753,15 @@ compatible. No API call, job, detection, private input, dependency, runtime, or 
 introduced; privacy guards still run before report files are written. Next: the scoped
 construction-time OCR lineage coverage plan above.
 
+**Latest checkpoint (Construction-time post-table row lineage):** No engine level change. ADR-0032's
+partial builder-emitted lineage now covers an additional deliberately narrow path: an unchanged
+post-table total or standalone row retains its pre-attached raw range while rendering; the synthetic
+`SUMMEN` heading, table cells/rows, metadata, party/multi-column reconstruction, and joined
+post-table prose still decline rather than guess. Canonical reading-text bytes, raw offsets, active
+PII input, artifacts, APIs, dependencies, detection, review, pseudonymization, redaction, and export
+are unchanged. The 0–19 OCR/Text level remains L15; next is the prerequisite checkpoint before PII
+L13/Review L9 completion.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
