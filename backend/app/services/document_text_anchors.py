@@ -2,8 +2,14 @@
 
 The anchor graph is an OCR/Text-owned identity layer derived from the OCR Output Contract v1
 ``DocumentTextPackageV1``. It creates stable, deterministic anchors over technical raw text first,
-then attaches canonical reading-text ranges only through the existing offset-only
-``reading_text_map``. Layout text is attached in v1 only when it is byte-aligned with raw text; any
+then attaches canonical reading-text ranges through two available *post-hoc* mechanisms, preferring
+whichever is stronger: the geometry-backed post-render projection
+(``reading_text_geometry_projection.py``, full-line granularity, declines ambiguous/duplicate
+values) when it resolves a token's line unambiguously, otherwise the older post-hoc unique-token
+``reading_text_map``. **Neither mechanism is builder-emitted construction-time lineage** — both
+re-derive canonical<->raw correspondence by searching the already-completed canonical text; genuine
+construction-time lineage (the reading-text builder itself emitting correspondence while rendering)
+remains unimplemented. Layout text is attached in v1 only when it is byte-aligned with raw text; any
 other layout text remains a single-source view instead of being guessed into raw identity.
 
 Anchor metadata is deliberately text-free. Token strings are used only transiently inside this
@@ -33,6 +39,7 @@ from app.schemas import (
     DocumentTextAnchorWarning,
     DocumentTextPackageV1,
     DocumentTextSourceV1,
+    ReadingTextGeometryProjectionMap,
     ReadingTextMapSegment,
 )
 
@@ -124,12 +131,16 @@ class TextAnchorLineageBuilder:
         canonical_available = canonical_text is not None
         layout_available = layout_text is not None
         layout_byte_aligned = layout_available and layout_text == raw_text and raw_has_text
+        geometry_projection_segments = _geometry_projection_segments(
+            package.reading_text_geometry_projection_map
+        )
 
         for token in raw_tokens:
             anchor, canonical_range = self._raw_anchor(
                 package,
                 token,
                 package.reading_text_map,
+                geometry_projection_segments,
                 canonical_available=canonical_available,
                 layout_byte_aligned=layout_byte_aligned,
                 raw_value_count=raw_value_counts[token.value],
@@ -217,6 +228,7 @@ class TextAnchorLineageBuilder:
             anchors=anchors,
             summary=summary,
             validation=validation,
+            lineage_summary=package.lineage_summary,
             warnings=list(warnings),
         )
 
@@ -225,6 +237,7 @@ class TextAnchorLineageBuilder:
         package: DocumentTextPackageV1,
         token: _TokenSpan,
         reading_text_map: Sequence[ReadingTextMapSegment],
+        geometry_projection_segments: Sequence[ReadingTextMapSegment],
         *,
         canonical_available: bool,
         layout_byte_aligned: bool,
@@ -248,7 +261,14 @@ class TextAnchorLineageBuilder:
 
         canonical_range = None
         if canonical_available:
-            projection = _project_raw_token(token, reading_text_map)
+            # Prefer the geometry-backed post-render projection (stronger: full-line granularity,
+            # declines ambiguous/duplicate values rather than guessing) over the post-hoc
+            # unique-token reading_text_map, only when the projection covers this token safely.
+            # Neither mechanism is builder-emitted construction identity; the per-anchor flag
+            # records which mechanism won so nothing is silently upgraded into stable identity.
+            projection, lineage_flag = _project_canonical_range(
+                token, geometry_projection_segments, reading_text_map
+            )
             if projection is not None:
                 canonical_range = DocumentTextAnchorRange(
                     source_name="canonical_reading_text",
@@ -260,6 +280,7 @@ class TextAnchorLineageBuilder:
                 )
                 source_ranges.append(canonical_range)
                 flags.append("canonical_mapped")
+                flags.append(lineage_flag)
                 status = projection.mapping_status
                 confidence = projection.confidence
             elif canonical_value_count > 0 and (
@@ -444,6 +465,57 @@ def _normalized_shape(kind: DocumentTextAnchorKind, value: str) -> str:
     if has_symbol and not has_alpha and not has_digit:
         return "symbol"
     return "mixed"
+
+
+def _geometry_projection_segments(
+    projection_map: ReadingTextGeometryProjectionMap | None,
+) -> list[ReadingTextMapSegment]:
+    """Adapt geometry-projection segments to the offset projection shape.
+
+    Only *unambiguously resolved* segments (``exact``, carrying a raw source range) are
+    projectable. ``ambiguous`` segments deliberately carry no source range — the projector that
+    built them already declined to pick a canonical occurrence for a non-unique value — so they are
+    excluded here exactly like ``inserted`` segments, never silently promoted into a raw-token
+    projection candidate.
+    """
+    if projection_map is None:
+        return []
+    segments: list[ReadingTextMapSegment] = []
+    for segment in projection_map.segments:
+        source_range = segment.source_range
+        if source_range is None:
+            continue
+        segments.append(
+            ReadingTextMapSegment(
+                reading_start=segment.canonical_start,
+                reading_end=segment.canonical_end,
+                raw_start=source_range.start,
+                raw_end=source_range.end,
+                page_number=segment.page_number,
+                mapping_status="exact" if segment.mapping_status == "exact" else "normalized",
+            )
+        )
+    return segments
+
+
+def _project_canonical_range(
+    token: _TokenSpan,
+    geometry_projection_segments: Sequence[ReadingTextMapSegment],
+    reading_text_map: Sequence[ReadingTextMapSegment],
+) -> tuple[_CanonicalProjection | None, str]:
+    """Project a raw token to canonical, preferring the geometry projection over the fallback map.
+
+    Neither mechanism is builder-emitted construction identity; this only chooses which post-hoc
+    mechanism is stronger evidence when both are available.
+    """
+    if geometry_projection_segments:
+        projection = _project_raw_token(token, geometry_projection_segments)
+        if projection is not None:
+            return projection, "canonical_geometry_projection"
+    projection = _project_raw_token(token, reading_text_map)
+    if projection is not None:
+        return projection, "canonical_map_lineage"
+    return None, ""
 
 
 def _project_raw_token(
@@ -680,6 +752,12 @@ def _summary(
     )
     ambiguous_count = sum(anchor.anchor_status == "ambiguous" for anchor in anchors)
     single_source_count = sum(anchor.anchor_status == "single_source" for anchor in anchors)
+    canonical_geometry_projection_count = sum(
+        "canonical_geometry_projection" in anchor.flags for anchor in anchors
+    )
+    canonical_fallback_count = sum(
+        "canonical_map_lineage" in anchor.flags for anchor in anchors
+    )
     return DocumentTextAnchorGraphSummary(
         total_anchors=len(anchors),
         anchors_with_raw_range=raw_count,
@@ -708,6 +786,8 @@ def _summary(
         evidence_only_possible_count=sum(
             not _anchor_has_source(anchor, "technical_raw_text") for anchor in anchors
         ),
+        canonical_geometry_projection_count=canonical_geometry_projection_count,
+        canonical_fallback_count=canonical_fallback_count,
         raw_to_canonical_coverage_ratio=_ratio(raw_with_canonical, raw_count),
         raw_to_layout_coverage_ratio=_ratio(raw_with_layout, raw_count),
     )

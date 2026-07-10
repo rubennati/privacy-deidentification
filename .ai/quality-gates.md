@@ -118,6 +118,32 @@ Gates for the implemented **Text Anchor Graph v1** and any future PR that extend
   `backend/tests/test_anchor_bound_pii_e2e_conformance.py`.
 - **Technical raw text stays the offset authority and is never mutated**, and the active-PII-input
   `text_lineage_map` separation gate is not bypassed by anchor work.
+- **The geometry-backed reading projection is a preferred *post-hoc* mechanism, not construction-time
+  lineage — never describe it as builder-emitted.** `reading_text_geometry_projection.py` runs
+  *after* Canonical Reading Text already exists and re-derives canonical↔raw correspondence by
+  searching the finished string for an exact, line-bounded occurrence of each raw geometry line
+  (`ReadingTextGeometryProjectionMap`); the reading-text builder (`reading_text.py`) itself emits no
+  lineage and still discards its own per-fragment source knowledge (`ReadingRow`/`ReadingCell` carry
+  no raw offsets). The anchor graph and package prefer this projection over the older unique-token
+  `reading_text_map` only when it resolves a line unambiguously, and report which mechanism was used
+  (`geometry_projection` / `fallback_text_match` / `unavailable`; per-anchor
+  `canonical_geometry_projection` vs `canonical_map_lineage`) — neither is authoritative construction
+  identity.
+- **Cursor/processing order is never identity proof; a non-unique line must decline, not guess.** A
+  source line may be projected as `exact` only when its exact text occurs exactly once among the
+  collected verbatim source lines **and** exactly once, line-bounded, in the canonical text. A line
+  whose exact text repeats (same value twice, on one page or across pages) must become an explicit
+  `ambiguous` segment (no source range, no `confidence=1.0`, reason-coded
+  `duplicate_source_value`/`multiple_canonical_candidates`/`identity_ambiguous`/
+  `relative_order_not_identity_proof` — never the duplicated value itself) regardless of which order
+  the candidate lines were processed in; a regression test must assert the same input produces the
+  same (declined) outcome under reversed processing order. A repeated *sub-token* inside two
+  otherwise-unique, distinct multi-token values must still keep its canonical range (tested both
+  ways). This mechanism changes no reading-text output bytes and no PII detection.
+- **Genuine construction-time lineage remains open.** No implemented mechanism has the reading-text
+  builder itself emit canonical↔raw correspondence while rendering; a real `anchor-first-text-package-v2`
+  (threading raw offsets through `reading_text.py`'s own `ReadingRow`/`ReadingCell` path) is future
+  work, not delivered.
 - **Pseudonymization renders from decisions; reconstruction maps placeholders** — no blind string
   replacement, no fuzzy matching of private values; the reconstruction map (the only store of
   originals) is access-gated, audited, and deletable with the document.

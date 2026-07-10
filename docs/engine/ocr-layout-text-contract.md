@@ -47,8 +47,24 @@ never shift a canonical PII offset, and no layer becomes an island.
 ### 2. Canonical reading text
 
 - **Fields:** optional `reading_text_version = "1"`, `reading_text`, `reading_text_status`,
-  `reading_text_flags`, and offset-only `reading_text_map_version`/`reading_text_map` on
-  `text_result` (absent on older artifacts).
+  `reading_text_flags`, offset-only `reading_text_map_version`/`reading_text_map`, and the
+  post-render `reading_text_geometry_projection_map_version`/`reading_text_geometry_projection_map`
+  on `text_result` (absent on older artifacts).
+- **Geometry-backed reading projection (post-render; NOT construction-time lineage):** after
+  canonical text already exists, a separate module (`reading_text_geometry_projection.py`) searches
+  the finished string for an exact, line-bounded occurrence of each raw geometry line and emits a
+  `ReadingTextGeometryProjectionMap` of offset-only `CanonicalTextSegmentV1`s (canonical span → raw
+  span, deterministic id, role, status). **The reading-text builder itself emits no lineage** — this
+  runs strictly after `build_reading_text(...)` returns, re-deriving correspondence the same way the
+  post-hoc unique-token `reading_text_map` does, just at full-line granularity. It is *preferred*
+  over `reading_text_map` only when it can resolve a line unambiguously: a line's exact text must
+  occur exactly once among the collected source lines **and** exactly once, line-bounded, in the
+  canonical text before it is claimed `exact` — cursor/processing order is never treated as identity
+  proof, so two identical full lines are marked `ambiguous` (no source range, no confidence claim)
+  rather than guessed. A repeated *sub-token* inside two otherwise-unique lines (e.g. a shared
+  `GmbH` suffix on two distinct company names) still keeps a distinct canonical range for each, since
+  each whole line is itself unique. `reading_text_map` remains the labelled fallback for lines or
+  artifacts the projection declines. Genuine builder-emitted construction-time lineage remains open.
 - **Purpose:** the cleaned, deterministic, block-aware main document text: sensible top-to-bottom
   order, intact party/address/account blocks, stable pipe-delimited line-item rows, major-block blank
   lines, and conservative prose joining without visual A4 spacing.
@@ -125,9 +141,13 @@ never shift a canonical PII offset, and no layer becomes an island.
   *prerequisite* for the separation gate below, never a bypass of it.
 - **Phase B delivered:** `GET /api/documents/{document_id}/text-anchors` now derives Text Anchor
   Graph v1 from `DocumentTextPackageV1`. It creates raw-token anchors, attaches canonical ranges
-  only through `reading_text_map`, attaches layout ranges only when safely byte-aligned in v1, and
-  records missing/partial/ambiguous/single-source states as metadata. It is not persisted, carries no
-  copied source text, and does not bind PII or switch the active PII input.
+  from the geometry-backed reading projection first and the post-hoc `reading_text_map` as fallback
+  (per-anchor `canonical_geometry_projection`/`canonical_map_lineage` flag; a graph `lineage_summary`
+  naming the mechanism) — **neither mechanism is builder-emitted construction-time lineage**, both
+  re-derive correspondence by searching the already-completed canonical text; genuine construction
+  identity remains open — attaches layout ranges only when safely byte-aligned in v1, and records
+  missing/partial/ambiguous/single-source states as metadata. It is not persisted, carries no copied
+  source text, and does not bind PII or switch the active PII input.
 
 ### L9 structured layout blocks
 

@@ -20,9 +20,13 @@ from pypdf import PdfWriter
 
 from app.config import Settings
 from app.schemas import (
+    CanonicalTextSegmentV1,
+    CanonicalTextSourceRange,
     DocumentTextAnchorGraphV1,
     DocumentTextAnchorV1,
     DocumentTextAnchorWarning,
+    ReadingTextGeometryProjectionMap,
+    ReadingTextGeometryProjectionSummary,
     ReadingTextMapSegment,
     TextArtifact,
     TextContent,
@@ -30,6 +34,7 @@ from app.schemas import (
 from app.services.artifact_service import save_text_artifact
 from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
+from app.services.reading_text_projection import build_reading_text_map
 
 _KNOWN_WARNING_CODES = frozenset(get_args(DocumentTextAnchorWarning))
 
@@ -520,3 +525,95 @@ def _has_source(anchor: DocumentTextAnchorV1, source_name: str) -> bool:
     return any(
         source_range.source_name == source_name for source_range in anchor.source_ranges
     )
+
+
+# --- Geometry-backed reading projection preference (NOT construction-time lineage) ----------------
+# The projection is a post-render mechanism: it re-derives canonical<->raw correspondence by
+# searching the already-completed canonical text, exactly like the older post-hoc unique-token
+# ``reading_text_map`` — the difference is granularity and a stricter global-uniqueness requirement,
+# not a difference in when it runs. It is preferred when it resolves a line unambiguously; neither
+# mechanism is builder-emitted construction identity.
+
+
+def _projection_map(
+    raw: str, reading: str, needles: list[str]
+) -> ReadingTextGeometryProjectionMap:
+    segments: list[CanonicalTextSegmentV1] = []
+    for needle in sorted(needles, key=reading.index):
+        cs = reading.index(needle)
+        rs = raw.index(needle)
+        segments.append(
+            CanonicalTextSegmentV1(
+                segment_id=_hex_id(f"{cs}-{cs + len(needle)}-{rs}-{rs + len(needle)}"),
+                canonical_start=cs,
+                canonical_end=cs + len(needle),
+                source_range=CanonicalTextSourceRange(
+                    start=rs, end=rs + len(needle), source_role="body"
+                ),
+                segment_role="body",
+                mapping_status="exact",
+                confidence=1.0,
+                reason_codes=["geometry_line_projection"],
+            )
+        )
+    mapped_chars = sum(segment.canonical_end - segment.canonical_start for segment in segments)
+    return ReadingTextGeometryProjectionMap(
+        segments=segments,
+        summary=ReadingTextGeometryProjectionSummary(
+            total_segments=len(segments),
+            mapped_segments=len(segments),
+            ambiguous_segments=0,
+            inserted_segments=0,
+            canonical_char_count=len(reading),
+            mapped_canonical_char_count=mapped_chars,
+            coverage_ratio=round(mapped_chars / len(reading), 6),
+        ),
+    )
+
+
+def _projection_content(
+    raw: str, reading: str, projection: ReadingTextGeometryProjectionMap | None
+) -> TextContent:
+    return TextContent(
+        document_id=_DOCUMENT_ID,
+        input_artifact_id=_ORIGINAL_ID,
+        input_audit_artifact_id=_AUDIT_ID,
+        source="docx_text",
+        text=raw,
+        text_char_count=len(raw),
+        pages=[],
+        tool_versions={"test": "1"},
+        flags=[],
+        reading_text_version="1",
+        reading_text=reading,
+        reading_text_status="heuristic",
+        reading_text_map_version="1",
+        reading_text_map=build_reading_text_map(raw, reading, []),
+        reading_text_geometry_projection_map_version="1" if projection is not None else None,
+        reading_text_geometry_projection_map=projection,
+    )
+
+
+def test_graph_prefers_geometry_projection_and_reports_source() -> None:
+    raw = "Alpha One\nBeta Two\n"
+    reading = "Beta Two\nAlpha One\n"
+    projection = _projection_map(raw, reading, ["Alpha One", "Beta Two"])
+    graph = _graph(_projection_content(raw, reading, projection))
+
+    assert graph.lineage_summary is not None
+    assert graph.lineage_summary.lineage_source == "geometry_projection"
+    assert graph.summary.canonical_geometry_projection_count > 0
+    assert graph.summary.canonical_fallback_count == 0
+    assert any("canonical_geometry_projection" in anchor.flags for anchor in graph.anchors)
+    assert not any("canonical_map_lineage" in anchor.flags for anchor in graph.anchors)
+
+
+def test_graph_falls_back_to_reading_text_map_when_no_geometry_projection() -> None:
+    raw = "Alpha One\nBeta Two\n"
+    reading = "Beta Two\nAlpha One\n"
+    graph = _graph(_projection_content(raw, reading, None))
+
+    assert graph.lineage_summary is not None
+    assert graph.lineage_summary.lineage_source == "fallback_text_match"
+    assert graph.summary.canonical_geometry_projection_count == 0
+    assert any("canonical_map_lineage" in anchor.flags for anchor in graph.anchors)
