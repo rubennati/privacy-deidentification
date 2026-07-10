@@ -186,7 +186,7 @@ def test_multi_column_prose_never_attaches_row_lineage_even_with_known_ranges() 
     assert result.row_lineage == ()
 
 
-def test_generic_table_declines_but_its_plain_prefix_line_still_gets_lineage() -> None:
+def test_generic_table_declines_but_prefix_and_post_table_total_get_lineage() -> None:
     rows = [
         _row(0.10, (0.07, "KOSTEN")),
         _row(0.14, (0.07, "Pos."), (0.16, "Beschreibung"), (0.82, "Betrag EUR")),
@@ -202,11 +202,16 @@ def test_generic_table_declines_but_its_plain_prefix_line_still_gets_lineage() -
 
     assert result is not None
     assert "table_row_reconstruction" in result.flags
-    # Only the standalone "KOSTEN" line before the table is an untouched, unmerged single row.
-    assert len(result.row_lineage) == 1
-    segment = result.row_lineage[0]
-    assert raw[segment.page_start : segment.page_end] == "KOSTEN"
-    assert result.text[segment.canonical_start : segment.canonical_end] == "KOSTEN"
+    # The reconstructed table stays declined. Its untouched prefix and the post-table total row
+    # each retain their own builder-attached range; the synthetic "SUMMEN" heading has none.
+    assert len(result.row_lineage) == 2
+    assert [
+        raw[segment.page_start : segment.page_end] for segment in result.row_lineage
+    ] == ["KOSTEN", "Gesamtbetrag: 30,00"]
+    assert [
+        result.text[segment.canonical_start : segment.canonical_end]
+        for segment in result.row_lineage
+    ] == ["KOSTEN", "Gesamtbetrag: 30,00"]
 
 
 def test_repeated_page_margin_filtering_discards_all_row_lineage() -> None:

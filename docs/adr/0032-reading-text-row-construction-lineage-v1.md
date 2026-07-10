@@ -56,8 +56,10 @@ coverage in one step:
   adjacent label/value merge unions contributing rows' ranges **only when every row has one and raw
   order stays non-decreasing** (a visual merge of raw-reordered rows declines, so a merged envelope
   can never silently swallow an unrelated row's own range). Party columns, tables (keyword-header and
-  generic), multi-column reconstruction, metadata rendering, and post-table rendering all
-  redistribute or reformat cells and **always decline** (`None`) in this step — including the parts
+  generic), multi-column reconstruction, and metadata rendering all redistribute or reformat cells
+  and **always decline** (`None`) in this step. The narrowly safe post-table subpath now preserves
+  an unchanged total or standalone row's own `source_range`; its synthetic `SUMMEN` heading and any
+  conservatively joined post-table prose still decline. This includes the parts
   of those functions that reuse `_plain_blocks_with_flags` internally (e.g. a generic table's plain
   prefix before the detected table still gets real lineage; the table body and anything after it does
   not).
@@ -92,8 +94,8 @@ coverage in one step:
   duplicate-value inversion defect class the geometry projection hardening pass had to fix — a
   merged/rendered line's lineage is either known because it was already known, or explicitly absent.
 - **Deliberately partial.** Cell-level offsets are out of scope (only row-granularity provenance);
-  party columns, tables, multi-column reconstruction, metadata, and post-table rendering carry no
-  row-construction lineage at all yet, even though some of those paths (e.g. a keyword-header table's
+  party columns, table rows/cells, multi-column reconstruction, metadata, and joined post-table prose
+  carry no row-construction lineage yet, even though some of those paths (e.g. a keyword-header table's
   aligned body rows) could in principle support it with more work. A document with any repeated page
   margin gets no row-construction lineage at all. None of this is a regression: those spans simply
   fall back to the pre-existing `geometry_projection`/`fallback_text_match` mechanisms, unchanged.
@@ -108,8 +110,6 @@ coverage in one step:
 
 ## Next
 
-Extending real coverage to the table/party/multi-column paths, and eventually cell-level rather than
-row-level granularity, remain open — to be re-scoped explicitly, the same way ADR-0022/0024/0025/0026
-each re-scoped a level, rather than assumed complete. `pii-binding-quality-suite` and
-`review-result-v1` remain the next two recommended branches from the feasibility audit after this
-one.
+Extending real coverage to table cells, party/multi-column paths, metadata, and joined post-table
+prose — and eventually cell-level rather than row-level granularity — remains open and must be
+re-scoped explicitly rather than assumed complete.

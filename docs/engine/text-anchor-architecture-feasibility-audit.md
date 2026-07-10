@@ -425,8 +425,10 @@ persistence.
 > join arithmetic the text was assembled with, never by searching the finished string. This is
 > **real construction-time lineage** for the paths it covers — the goal this phase set out to
 > achieve — but it is deliberately **not** the full builder rewrite the goal below describes: party
-> columns, tables, multi-column reconstruction, metadata, and post-table rendering still emit no
-> lineage at all (not even an explicit decline marker), and cell-level granularity is out of scope.
+> columns, table cells/rows, multi-column reconstruction, metadata, and joined post-table prose
+> still emit no lineage at all (not even an explicit decline marker). A later narrow additive slice
+> permits unchanged post-table total/standalone rows to retain their own pre-attached range; the
+> synthetic section heading remains unbound. Cell-level granularity is out of scope.
 > Those paths, and a real `anchor-first-text-package-v2` that unifies every rendering path behind
 > one contract, remain open — the acceptance criteria below (byte-stability, legacy-artifact safety,
 > e2e conformance) hold for the delivered slice, but full-document acceptance does not yet.
