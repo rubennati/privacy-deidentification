@@ -3,10 +3,9 @@
 ## Status
 
 Accepted — 2026-07-10. Builds on [ADR-0031](0031-text-identity-anchor-lineage-architecture.md) and
-follows **Reading-text row construction lineage v1 (Phase 1)**, expected as ADR-0032 — if that PR
-merges first as planned, this stays ADR-0033; if numbering collides at merge time, renumber this one
-(the same situation ADR-0031 itself documents having hit). Delivers Phase 2 of the sequence
-recommended in
+follows [ADR-0032](0032-reading-text-row-construction-lineage-v1.md) (**Reading-text row
+construction lineage v1, Phase 1**), which merged first as planned, so no numbering collision
+occurred. Delivers Phase 2 of the sequence recommended in
 [`text-anchor-architecture-feasibility-audit.md`](../engine/text-anchor-architecture-feasibility-audit.md#phase-2--pii-binding-quality-suite).
 
 ## Context

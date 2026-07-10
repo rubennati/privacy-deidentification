@@ -130,11 +130,27 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   SQLite-ready now, **no DB built**. Staged Phases A–I; underpins **PII L17** (stable entity model
   with lineage). Introduces no migration/OCR extraction/pseudonymization/reconstruction/runtime
   change. (Requested as "0030"; renumbered to 0031 because 0030 was taken.)
-- [ADR-0033](../docs/adr/0033-pii-binding-quality-suite.md) — **PII binding quality suite (Phase 2;
-  numbered 0033 to follow the expected Phase 1 ADR-0032 — renumber on a merge-order collision, as
-  ADR-0031 itself documents doing).** `PiiAnchorBindingSummary` gains additive
-  `anchor_bound_ratio`/`exact_bound_ratio` coverage metrics (both Python summary builders + the
-  frontend TS type). A new synthetic regression corpus
+- [ADR-0032](../docs/adr/0032-reading-text-row-construction-lineage-v1.md) — **Reading-text row
+  construction lineage v1 (Phase 1, partial).** The first genuinely builder-emitted (not post-render)
+  raw↔canonical lineage: `ReadingRow` gains an optional page-local `source_range`, attached once at
+  collection time (exact from persisted L10 geometry; via a global-uniqueness row-text match against
+  the page's own raw lines for the primary pypdf-visitor path) and threaded only through the
+  plain-paragraph/body rendering path (`_join_continuations_with_flags`), merging via union only when
+  every contributing row has a range and raw order stays non-decreasing. Canonical offsets are
+  computed by walking the same block/line join arithmetic the text was assembled with
+  (`_join_blocks_with_lineage`), never by searching the finished string. New
+  `ReadingTextRowLineageMap` (`lineage_source: row_construction`) is preferred over
+  `geometry_projection` over `fallback_text_match` in `DocumentTextPackageLineageSummary` and the
+  Text Anchor Graph's per-token projection. Deliberately partial: party columns, tables,
+  multi-column reconstruction, metadata, and post-table rendering always decline (no row-construction
+  lineage), and any document with repeated-page-margin filtering loses all row lineage rather than
+  risk stale offsets — those spans keep falling back to the pre-existing mechanisms, unchanged. No
+  detection, active-PII-input, routing, schema-breaking, pseudonymization, redaction, export, or
+  dependency change; `reading_text` bytes are unchanged (proven byte-identical across the full
+  existing regression suite).
+- [ADR-0033](../docs/adr/0033-pii-binding-quality-suite.md) — **PII binding quality suite (Phase
+  2).** `PiiAnchorBindingSummary` gains additive `anchor_bound_ratio`/`exact_bound_ratio` coverage
+  metrics (both Python summary builders + the frontend TS type). A new synthetic regression corpus
   (`backend/tests/test_pii_binding_quality_suite.py`) covers the audit's remaining named hard cases:
   adjacent same-line date+phone tokenizer fusion (a **real, previously-untested edge case** found
   while scoping this — the phone pattern's character class accepts spaces, so a date directly

@@ -686,6 +686,8 @@ def test_text_package_endpoint_degrades_gracefully_for_legacy_artifact(
         "reading_text_map",
         "reading_text_geometry_projection_map_version",
         "reading_text_geometry_projection_map",
+        "reading_text_row_lineage_map_version",
+        "reading_text_row_lineage_map",
         "layout_text_result",
         "layout_blocks_version",
         "layout_blocks",

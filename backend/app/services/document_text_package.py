@@ -105,6 +105,7 @@ def build_document_text_package(artifact: TextArtifact) -> DocumentTextPackageV1
         quality_evidence=content.quality_evidence,
         reading_text_map=list(content.reading_text_map),
         reading_text_geometry_projection_map=content.reading_text_geometry_projection_map,
+        reading_text_row_lineage_map=content.reading_text_row_lineage_map,
         lineage_summary=_build_lineage_summary(content, text_sources),
         contract_validation_summary=_build_validation_summary(evaluation, text_sources),
     )
@@ -295,17 +296,23 @@ def _build_lineage_summary(
 ) -> DocumentTextPackageLineageSummary:
     """Name the preferred raw↔canonical lineage mechanism available for this package.
 
-    ``geometry_projection`` (a geometry-backed, post-render exact-line projection — stronger than
-    the token-level fallback, but NOT builder-emitted construction identity) is preferred over the
-    post-hoc unique-token ``reading_text_map`` (``fallback_text_match``); ``unavailable`` when there
-    is no canonical text or no lineage at all. Genuine construction-time lineage remains open.
-    Text-free: booleans, counts, and a coverage ratio only.
+    ``row_construction`` (sparse, builder-emitted, construction-time row lineage — real, but only
+    covering the plain-paragraph/body rendering path) is preferred over ``geometry_projection`` (a
+    geometry-backed, post-render exact-line projection with fuller coverage but not construction
+    identity), which is in turn preferred over the post-hoc unique-token ``reading_text_map``
+    (``fallback_text_match``); ``unavailable`` when there is no canonical text or no lineage at all.
+    Preferring ``row_construction`` never means it alone covers the whole document. Text-free:
+    booleans, counts, and coverage ratios only.
     """
     canonical_available = _canonical_source_available(text_sources)
+    row_lineage_map = content.reading_text_row_lineage_map
+    row_construction_available = row_lineage_map is not None
     projection_map = content.reading_text_geometry_projection_map
     projection_available = projection_map is not None
     reading_text_map_available = bool(content.reading_text_map)
-    if projection_available:
+    if row_construction_available:
+        lineage_source = "row_construction"
+    elif projection_available:
         lineage_source = "geometry_projection"
     elif reading_text_map_available:
         lineage_source = "fallback_text_match"
@@ -313,9 +320,16 @@ def _build_lineage_summary(
         lineage_source = "unavailable"
     return DocumentTextPackageLineageSummary(
         canonical_available=canonical_available,
+        row_construction_available=row_construction_available,
         geometry_projection_available=projection_available,
         reading_text_map_available=reading_text_map_available,
         lineage_source=lineage_source,
+        row_construction_segment_count=(
+            row_lineage_map.summary.total_segments if row_lineage_map is not None else 0
+        ),
+        row_construction_coverage_ratio=(
+            row_lineage_map.summary.coverage_ratio if row_lineage_map is not None else 0.0
+        ),
         geometry_projection_segment_count=(
             projection_map.summary.mapped_segments if projection_map is not None else 0
         ),

@@ -559,7 +559,9 @@ CanonicalTextSegmentRole = Literal[
     "body",
     "derived",
 ]
-CanonicalTextLineageSource = Literal["geometry_projection", "fallback_text_match", "unavailable"]
+CanonicalTextLineageSource = Literal[
+    "row_construction", "geometry_projection", "fallback_text_match", "unavailable"
+]
 
 
 class CanonicalTextSourceRange(BaseModel):
@@ -670,21 +672,80 @@ class ReadingTextGeometryProjectionMap(BaseModel):
         return self
 
 
+class ReadingTextRowLineageSummary(BaseModel):
+    """Text-free coverage summary for a :class:`ReadingTextRowLineageMap`."""
+
+    lineage_source: CanonicalTextLineageSource = "row_construction"
+    total_segments: int = Field(default=0, ge=0)
+    canonical_char_count: int = Field(default=0, ge=0)
+    mapped_canonical_char_count: int = Field(default=0, ge=0)
+    coverage_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class ReadingTextRowLineageMap(BaseModel):
+    """Builder-emitted, construction-time row lineage (not a post-render search).
+
+    Unlike :class:`ReadingTextGeometryProjectionMap` and the legacy ``reading_text_map``, a segment
+    here is never derived by scanning the finished canonical string for a match: its raw range was
+    already known and attached to the contributing ``ReadingRow`` at collection time, before its
+    line was ever rendered, and its canonical range is computed purely by walking the same
+    block/line join arithmetic the text was assembled with. Every segment's ``mapping_status`` is
+    ``"exact"`` with ``confidence=1.0`` — there is no ``ambiguous``/``inserted`` state here, because
+    an uncertain or reordering rendering path simply contributes no segment rather than a weaker
+    claim.
+
+    This map is intentionally **sparse**, unlike the geometry projection's full-coverage model: it
+    only ever covers the plain-paragraph/body rendering path (``reading_text.py``'s
+    ``_join_continuations_with_flags``). Party columns, tables, multi-column reconstruction,
+    metadata, and post-table rendering redistribute or reformat cells and are never attributed here
+    — those canonical ranges simply have no segment, and downstream consumers should keep falling
+    back to :class:`ReadingTextGeometryProjectionMap`/``reading_text_map`` for them.
+    """
+
+    map_version: Literal["1"] = "1"
+    lineage_source: Literal["row_construction"] = "row_construction"
+    segments: list[CanonicalTextSegmentV1] = Field(default_factory=list)
+    summary: ReadingTextRowLineageSummary
+
+    @model_validator(mode="after")
+    def _validate_map(self) -> ReadingTextRowLineageMap:
+        previous_canonical_end = 0
+        raw_ranges: list[tuple[int, int]] = []
+        for segment in self.segments:
+            if segment.mapping_status != "exact" or segment.source_range is None:
+                raise ValueError("row lineage segments must be exact with a source range")
+            if segment.canonical_start < previous_canonical_end:
+                raise ValueError("row lineage segments must be ordered and non-overlapping")
+            previous_canonical_end = segment.canonical_end
+            start, end = segment.source_range.start, segment.source_range.end
+            if any(
+                start < other_end and other_start < end for other_start, other_end in raw_ranges
+            ):
+                raise ValueError("row lineage source ranges must not overlap")
+            raw_ranges.append((start, end))
+        return self
+
+
 class DocumentTextPackageLineageSummary(BaseModel):
     """Compact, text-free summary of which mechanism connects raw↔canonical for a package.
 
-    ``lineage_source`` names the preferred available mechanism: ``geometry_projection`` (a
-    geometry-backed, post-render exact-line projection — not construction-time lineage),
+    ``lineage_source`` names the preferred available mechanism, in preference order:
+    ``row_construction`` (sparse, builder-emitted, construction-time row lineage — real, but only
+    covers the plain-paragraph/body rendering path), ``geometry_projection`` (a geometry-backed,
+    post-render exact-line projection covering more of the document but not construction-time),
     ``fallback_text_match`` (the post-hoc unique-token ``reading_text_map`` only), or
-    ``unavailable`` (no canonical text / no lineage at all). Neither available mechanism is
-    authoritative construction identity; genuine builder-emitted construction-time lineage
-    (`anchor-first-text-package-v2`) remains open.
+    ``unavailable`` (no canonical text / no lineage at all). ``row_construction`` being preferred
+    does not mean it covers the whole document — a consumer that needs full coverage should still
+    consult ``geometry_projection``/``reading_text_map`` for the spans it leaves unattributed.
     """
 
     canonical_available: bool = False
+    row_construction_available: bool = False
     geometry_projection_available: bool = False
     reading_text_map_available: bool = False
     lineage_source: CanonicalTextLineageSource = "unavailable"
+    row_construction_segment_count: int = Field(default=0, ge=0)
+    row_construction_coverage_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
     geometry_projection_segment_count: int = Field(default=0, ge=0)
     geometry_projection_ambiguous_count: int = Field(default=0, ge=0)
     reading_text_map_segment_count: int = Field(default=0, ge=0)
@@ -927,6 +988,15 @@ class TextContent(BaseModel):
     # Optional/defaulted so artifacts written before this layer remain valid.
     reading_text_geometry_projection_map_version: Literal["1"] | None = None
     reading_text_geometry_projection_map: ReadingTextGeometryProjectionMap | None = None
+    # Additive, sparse, builder-emitted construction-time row lineage (OCR/Text stabilization step
+    # after L15). Unlike the geometry projection above, segments here are never derived by searching
+    # the finished ``reading_text`` string: each one traces back to a raw offset range already known
+    # on the contributing row before its line was rendered. It only covers the plain-paragraph/body
+    # rendering path — see ``ReadingTextRowLineageMap`` — so it is preferred but never a substitute
+    # for the geometry projection/``reading_text_map`` fallbacks on spans it leaves unattributed.
+    # Optional/defaulted so artifacts written before this layer remain valid.
+    reading_text_row_lineage_map_version: Literal["1"] | None = None
+    reading_text_row_lineage_map: ReadingTextRowLineageMap | None = None
     # Additive, optional human-readable layout reconstruction (OCR L9). It never feeds PII and is
     # not the raw offset text: ``text`` above stays the offset-stable coordinate source. ``None``
     # when no layout was reconstructed (e.g. DOCX, image, or all-OCR documents), so legacy artifacts
@@ -1069,6 +1139,24 @@ class TextContent(BaseModel):
                 raise ValueError("projection map canonical offsets exceed reading text length")
             if segment.source_range is not None and segment.source_range.end > raw_length:
                 raise ValueError("projection map source offsets exceed technical raw text length")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_reading_text_row_lineage_map(self) -> TextContent:
+        row_lineage_map = self.reading_text_row_lineage_map
+        if (row_lineage_map is not None) != (self.reading_text_row_lineage_map_version == "1"):
+            raise ValueError("reading text row lineage map and version must be present together")
+        if row_lineage_map is None:
+            return self
+        if self.reading_text is None:
+            raise ValueError("reading text row lineage map requires reading text")
+        reading_length = len(self.reading_text)
+        raw_length = len(self.text)
+        for segment in row_lineage_map.segments:
+            if segment.canonical_end > reading_length:
+                raise ValueError("row lineage canonical offsets exceed reading text length")
+            if segment.source_range is not None and segment.source_range.end > raw_length:
+                raise ValueError("row lineage source offsets exceed technical raw text length")
         return self
 
     @model_validator(mode="after")
@@ -1394,8 +1482,12 @@ class DocumentTextPackageV1(BaseModel):
     reading_text_map: list[ReadingTextMapSegment] = Field(default_factory=list)
     # Geometry-backed reading projection (post-render; NOT construction-time lineage), preferred
     # over ``reading_text_map`` by the Text Anchor Graph when it can resolve a line unambiguously;
-    # ``None`` for legacy/minimal artifacts. Genuine construction-time lineage remains open.
+    # ``None`` for legacy/minimal artifacts.
     reading_text_geometry_projection_map: ReadingTextGeometryProjectionMap | None = None
+    # Sparse, builder-emitted construction-time row lineage, preferred over the geometry projection
+    # above by the Text Anchor Graph when it covers a token; ``None`` for legacy/minimal artifacts
+    # or when no plain-paragraph row could be attributed.
+    reading_text_row_lineage_map: ReadingTextRowLineageMap | None = None
     lineage_summary: DocumentTextPackageLineageSummary | None = None
     contract_validation_summary: DocumentTextPackageValidationSummary
 
@@ -1596,9 +1688,11 @@ class DocumentTextAnchorGraphSummary(BaseModel):
     layout_unmapped_count: int = Field(default=0, ge=0)
     repeated_token_ambiguity_count: int = Field(ge=0)
     evidence_only_possible_count: int = Field(default=0, ge=0)
-    # Which mechanism attached each raw anchor's canonical range: the geometry-backed, post-render
-    # exact-line projection (stronger, but not construction-time/builder-emitted) vs. the post-hoc
-    # unique-token reading_text_map fallback. Neither is authoritative construction identity.
+    # Which mechanism attached each raw anchor's canonical range, in preference order:
+    # builder-emitted row construction lineage (real construction-time identity, but sparse), the
+    # geometry-backed post-render exact-line projection (fuller coverage but not
+    # construction-time/builder-emitted), or the post-hoc unique-token reading_text_map fallback.
+    canonical_row_construction_count: int = Field(default=0, ge=0)
     canonical_geometry_projection_count: int = Field(default=0, ge=0)
     canonical_fallback_count: int = Field(default=0, ge=0)
     raw_to_canonical_coverage_ratio: float = Field(ge=0.0, le=1.0)
@@ -1741,6 +1835,9 @@ class DocumentTextAnchorGraphV1(BaseModel):
             ),
             repeated_token_ambiguity_count=self.summary.repeated_token_ambiguity_count,
             evidence_only_possible_count=anchors_without_raw,
+            canonical_row_construction_count=sum(
+                "canonical_row_construction" in anchor.flags for anchor in self.anchors
+            ),
             canonical_geometry_projection_count=sum(
                 "canonical_geometry_projection" in anchor.flags for anchor in self.anchors
             ),

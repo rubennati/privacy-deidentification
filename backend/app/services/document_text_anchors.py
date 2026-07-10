@@ -41,6 +41,7 @@ from app.schemas import (
     DocumentTextSourceV1,
     ReadingTextGeometryProjectionMap,
     ReadingTextMapSegment,
+    ReadingTextRowLineageMap,
 )
 
 _GRAPH_VERSION = "1.0"
@@ -134,6 +135,7 @@ class TextAnchorLineageBuilder:
         geometry_projection_segments = _geometry_projection_segments(
             package.reading_text_geometry_projection_map
         )
+        row_lineage_segments = _row_lineage_segments(package.reading_text_row_lineage_map)
 
         for token in raw_tokens:
             anchor, canonical_range = self._raw_anchor(
@@ -141,6 +143,7 @@ class TextAnchorLineageBuilder:
                 token,
                 package.reading_text_map,
                 geometry_projection_segments,
+                row_lineage_segments,
                 canonical_available=canonical_available,
                 layout_byte_aligned=layout_byte_aligned,
                 raw_value_count=raw_value_counts[token.value],
@@ -238,6 +241,7 @@ class TextAnchorLineageBuilder:
         token: _TokenSpan,
         reading_text_map: Sequence[ReadingTextMapSegment],
         geometry_projection_segments: Sequence[ReadingTextMapSegment],
+        row_lineage_segments: Sequence[ReadingTextMapSegment],
         *,
         canonical_available: bool,
         layout_byte_aligned: bool,
@@ -261,13 +265,13 @@ class TextAnchorLineageBuilder:
 
         canonical_range = None
         if canonical_available:
-            # Prefer the geometry-backed post-render projection (stronger: full-line granularity,
-            # declines ambiguous/duplicate values rather than guessing) over the post-hoc
-            # unique-token reading_text_map, only when the projection covers this token safely.
-            # Neither mechanism is builder-emitted construction identity; the per-anchor flag
-            # records which mechanism won so nothing is silently upgraded into stable identity.
+            # Prefer builder-emitted row lineage (real construction-time identity, but sparse) when
+            # it covers this token, then the geometry-backed post-render projection (stronger than
+            # the token fallback but still re-derived from the finished text), then the post-hoc
+            # unique-token reading_text_map. The per-anchor flag records which mechanism won so
+            # nothing is silently upgraded into stronger identity than it actually is.
             projection, lineage_flag = _project_canonical_range(
-                token, geometry_projection_segments, reading_text_map
+                token, row_lineage_segments, geometry_projection_segments, reading_text_map
             )
             if projection is not None:
                 canonical_range = DocumentTextAnchorRange(
@@ -467,6 +471,31 @@ def _normalized_shape(kind: DocumentTextAnchorKind, value: str) -> str:
     return "mixed"
 
 
+def _row_lineage_segments(
+    row_lineage_map: ReadingTextRowLineageMap | None,
+) -> list[ReadingTextMapSegment]:
+    """Adapt builder-emitted row lineage segments to the offset projection shape.
+
+    Every segment here already carries ``mapping_status == "exact"`` and a source range by the
+    schema's own construction -- there is no ambiguous/inserted state to filter out, unlike the
+    geometry projection below.
+    """
+    if row_lineage_map is None:
+        return []
+    return [
+        ReadingTextMapSegment(
+            reading_start=segment.canonical_start,
+            reading_end=segment.canonical_end,
+            raw_start=segment.source_range.start,
+            raw_end=segment.source_range.end,
+            page_number=segment.page_number,
+            mapping_status="exact",
+        )
+        for segment in row_lineage_map.segments
+        if segment.source_range is not None
+    ]
+
+
 def _geometry_projection_segments(
     projection_map: ReadingTextGeometryProjectionMap | None,
 ) -> list[ReadingTextMapSegment]:
@@ -500,14 +529,21 @@ def _geometry_projection_segments(
 
 def _project_canonical_range(
     token: _TokenSpan,
+    row_lineage_segments: Sequence[ReadingTextMapSegment],
     geometry_projection_segments: Sequence[ReadingTextMapSegment],
     reading_text_map: Sequence[ReadingTextMapSegment],
 ) -> tuple[_CanonicalProjection | None, str]:
-    """Project a raw token to canonical, preferring the geometry projection over the fallback map.
+    """Project a raw token to canonical, preferring stronger evidence when several are available.
 
-    Neither mechanism is builder-emitted construction identity; this only chooses which post-hoc
-    mechanism is stronger evidence when both are available.
+    Builder-emitted row lineage (real construction-time identity, but sparse -- only the
+    plain-paragraph/body path) wins when it covers this token; otherwise the geometry-backed
+    post-render projection (fuller coverage, but re-derived by searching the finished text); finally
+    the post-hoc unique-token fallback map.
     """
+    if row_lineage_segments:
+        projection = _project_raw_token(token, row_lineage_segments)
+        if projection is not None:
+            return projection, "canonical_row_construction"
     if geometry_projection_segments:
         projection = _project_raw_token(token, geometry_projection_segments)
         if projection is not None:
@@ -752,6 +788,9 @@ def _summary(
     )
     ambiguous_count = sum(anchor.anchor_status == "ambiguous" for anchor in anchors)
     single_source_count = sum(anchor.anchor_status == "single_source" for anchor in anchors)
+    canonical_row_construction_count = sum(
+        "canonical_row_construction" in anchor.flags for anchor in anchors
+    )
     canonical_geometry_projection_count = sum(
         "canonical_geometry_projection" in anchor.flags for anchor in anchors
     )
@@ -786,6 +825,7 @@ def _summary(
         evidence_only_possible_count=sum(
             not _anchor_has_source(anchor, "technical_raw_text") for anchor in anchors
         ),
+        canonical_row_construction_count=canonical_row_construction_count,
         canonical_geometry_projection_count=canonical_geometry_projection_count,
         canonical_fallback_count=canonical_fallback_count,
         raw_to_canonical_coverage_ratio=_ratio(raw_with_canonical, raw_count),
