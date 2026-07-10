@@ -37,6 +37,7 @@ import {
 import { PiiEntityList } from "../components/pii/PiiEntityList";
 import { PiiReviewGroupList } from "../components/pii/PiiReviewGroupList";
 import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
+import { PiiValidationTransparency } from "../components/pii/PiiValidationTransparency";
 import {
   ReviewTextViewer,
   type ReviewTextMode,
@@ -496,6 +497,7 @@ export default function DocumentDetailPage() {
               artifactSettings={pii?.content.engine_settings ?? null}
               onProfileChange={setSelectedPiiProfile}
             />
+            {isDevView && pii && <PiiValidationTransparency validation={pii.content.validation} />}
           </StationPanel>
         </div>
         )}
