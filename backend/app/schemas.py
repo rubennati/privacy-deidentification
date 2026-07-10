@@ -2284,6 +2284,14 @@ class PiiReviewDecisionRecord(BaseModel):
     recorded_at: str
     document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    text_artifact_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{32}$",
+        description=(
+            "Exact text_result consumed by the referenced PII artifact. Optional only for "
+            "legacy decision lines written before direct Review L9 text lineage."
+        ),
+    )
     target_type: PiiReviewDecisionScope
     target_id: str = Field(min_length=1, max_length=64)
     decision: PiiReviewDecisionValue
@@ -2354,6 +2362,11 @@ class PiiReviewResult(BaseModel):
 
     document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_text_artifact_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{32}$",
+        description="Exact text_result consumed by this reviewable PII run; None on legacy views.",
+    )
     groups: list[PiiEntityGroupReview] = Field(default_factory=list)
     occurrences: list[PiiReviewOccurrence] = Field(default_factory=list)
     # Review L8 (ADR-0034): a decision is only ever matched against the exact ``pii_result``
@@ -2394,6 +2407,11 @@ class PiiReviewResultArtifact(BaseModel):
     artifact_type: Literal["pii_review_result"] = "pii_review_result"
     station: Literal["pii_review"] = "pii_review"
     input_pii_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    input_text_artifact_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{32}$",
+        description="Exact text_result consumed by the review snapshot's PII artifact.",
+    )
     media_type: Literal["application/json"] = "application/json"
     created_at: str
     content: PiiReviewResult
@@ -2404,6 +2422,8 @@ class PiiReviewResultArtifact(BaseModel):
             raise ValueError("review result content belongs to a different document")
         if self.content.artifact_id != self.input_pii_artifact_id:
             raise ValueError("review result content references a different PII artifact")
+        if self.content.input_text_artifact_id != self.input_text_artifact_id:
+            raise ValueError("review result content references a different text artifact")
         return self
 
 

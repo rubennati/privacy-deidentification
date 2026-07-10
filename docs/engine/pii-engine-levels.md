@@ -27,7 +27,7 @@ protection class (P0–P5), and the fitting detection strategy — is modelled i
 [`entity-taxonomy.md`](entity-taxonomy.md). This ladder is the *maturity* axis; the taxonomy is the
 *coverage/sensitivity* axis.
 
-**Current standing:** **L12 done (L0–L9, L11–L12); L10 partial (dev-only human feedback capture).**
+**Current standing:** **L13 done (L0–L9, L11–L13); L10 partial (dev-only human feedback capture).**
 Structured + AT/DE + insurance/legal recognizers, named profiles, benchmark, candidate validation,
 context hardening, address/contact-line coverage, and reproducible artifact `engine_settings` are
 all shipped. A **dev-only** per-entity feedback-capture side-channel exists (behind
@@ -296,14 +296,16 @@ stage that runs after detection**. This stage is a first-class part of the engin
   [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md).
 - **Boundary to L13:** L12 makes the machine's entity set clean; L13 makes a human's decision binding.
 
-## Level 13 — Review confirm / reject  ⛔ *open*
+## Level 13 — Review confirm / reject  ✅ *done*
 
 - **Description:** let a reviewer confirm or reject a candidate, bindingly.
-- **Artifacts:** a `review_result` overlay keyed to `pii_result.id` + `text_result.id`; the
-  `pii_result` stays immutable. Owned jointly with the
-  [Review engine](review-feedback-levels.md#level-9--confirm--reject---open).
-- **Acceptance:** a confirm/reject persists against the exact lineage and re-renders on reload;
-  re-extraction marks it stale rather than reapplying it.
+- **Artifacts:** a `review_result` overlay carries direct `pii_result.id` + `text_result.id`
+  lineage; the append-only decision record and immutable snapshot both store the consumed text
+  artifact id. The `pii_result` stays immutable. Owned jointly with the
+  [Review engine](review-feedback-levels.md#level-9--confirm--reject---done).
+- **Acceptance:** met. The pseudonymize-by-default binding action (`pseudonymize`/`keep`/
+  `false_positive`) persists at group or occurrence scope, re-renders on reload, and a later PII
+  run marks it stale rather than reapplying it.
 - **Boundary to L14:** L13 acts on machine candidates; L14 lets a human add what the machine missed.
 
 ## Level 14 — Manual add / missed entities  ⛔ *open*

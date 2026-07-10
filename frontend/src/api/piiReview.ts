@@ -72,6 +72,9 @@ export interface PiiReviewOccurrence {
 export interface PiiReviewResult {
   document_id: string;
   artifact_id: string;
+  // Additive direct lineage to the text_result consumed by this PII run. Legacy review responses
+  // may omit it, but newly written Review L9 decisions and snapshots always provide it.
+  input_text_artifact_id?: string | null;
   groups: PiiEntityGroupReview[];
   occurrences: PiiReviewOccurrence[];
   // Review L8 (ADR-0034): decisions recorded against a since-superseded PII result were already

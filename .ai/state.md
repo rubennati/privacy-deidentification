@@ -152,7 +152,7 @@
     dictionary/lexicon, second OCR engine, or local LLM is used. `details` remains
     `dict[str, int]`; no raw token text is stored. See
     [ADR-0026](../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md).
-- **PII/Sensitive-Data: L12 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
+- **PII/Sensitive-Data: L13 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
   entity grouping (L11) is delivered as a derived view (`pii_grouping.py`) over `pii_result`, paired
   with a lineage-bound review-decision overlay: every detected entity defaults to `pseudonymize`
   (no separate "pending" state), and a reviewer opts an entity out via `keep` or `false_positive` —
@@ -169,12 +169,12 @@
   when binding is exact or partial, evidence-only when binding is missing/ambiguous/not applicable;
   `source_observations` carry detector evidence; raw + optional canonical ranges remain
   view-specific display/evidence; provenance and review state are preserved; metadata stays
-  text-free. Review L8's formal immutable `review_result` snapshot is delivered separately;
-  binding confirm/reject remains partially covered toward PII L13.
-- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6–L8 done; L9 partial.** Grouped
+  text-free. Review decisions now carry direct PII + Text artifact lineage in both new JSONL records
+  and immutable snapshots, completing binding confirm/reject at PII L13.
+- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6–L9 done.** Grouped
   occurrences and the lineage-bound JSONL decision log now produce an immutable `review_result`
   snapshot after every decision. Superseded decisions are explicitly surfaced as stale and never
-  reapplied; confirm/reject semantics remain partial toward Review L9/PII L13.
+  reapplied; direct text-artifact lineage completes confirm/reject semantics at Review L9/PII L13.
 - **Benchmark/Regression: L10 done.** L9 compares the newest available immutable PII artifact for
   every configured profile in one read-only invocation and reports missing profile coverage;
   the previously delivered OCR confidence/coverage columns complete cumulative L10.
@@ -761,6 +761,14 @@ post-table prose still decline rather than guess. Canonical reading-text bytes, 
 PII input, artifacts, APIs, dependencies, detection, review, pseudonymization, redaction, and export
 are unchanged. The 0–19 OCR/Text level remains L15; next is the prerequisite checkpoint before PII
 L13/Review L9 completion.
+
+**Latest checkpoint (PII L13 / Review L9 direct decision lineage):** PII/Sensitive-Data advances
+from L12 to **L13 done** and Review from L8 to **L9 done**. New decision-log records and immutable
+`review_result` snapshots carry the direct `text_result` id alongside the exact PII artifact id;
+the review API exposes that additive link. Legacy records remain readable. Existing stale behavior
+is unchanged: decisions never silently reapply across a new PII artifact, and the stale count stays
+explicit. No detection, active input, anchors, SQLite, dependency, pseudonymization, redaction, or
+export change. Next: PII L14 / Review L10 manual add of missed entities remains checkpoint-gated.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

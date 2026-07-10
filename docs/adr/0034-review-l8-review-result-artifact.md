@@ -60,6 +60,11 @@ invalidated by a re-run.
   of those latest-per-target records target a now-superseded `pii_result` artifact id. This changes
   no resolution behavior — a stale decision still never reapplies — it only surfaces what was
   previously silent. Both `GET …/pii/review` and the persisted snapshot carry these fields.
+- **Direct text lineage (additive follow-up):** New decision records and immutable snapshots also
+  carry the exact `input_text_artifact_id` consumed by their referenced PII artifact; the review
+  response exposes the same field. Existing JSONL lines/snapshots without it remain readable as
+  legacy data. The exact PII artifact id remains the reapplication boundary, so this field makes
+  lineage explicit without changing stale-decision resolution or introducing automatic reuse.
 - **Frontend**: `PiiReviewResult`'s TS type gains the two fields; `DocumentDetailPage.tsx` shows a
   `StatusNotice` ("N Überprüfungsentscheidung(en) aus einem vorherigen PII-Lauf … bitte erneut
   prüfen") when `has_stale_decisions` is true for the current PII run.

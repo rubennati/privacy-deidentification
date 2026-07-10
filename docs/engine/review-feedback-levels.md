@@ -17,17 +17,16 @@ mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
 **Current standing:** **L2 solid in production; L3–L5 delivered as dev-only capabilities behind
-`ENABLE_DEV_ENGINE_SETTINGS`; L6 delivered.** The detail page renders text, lists candidates with
+`ENABLE_DEV_ENGINE_SETTINGS`; L6–L9 delivered.** The detail page renders text, lists candidates with
 lineage-safe highlights, offers clickable offsets + a legend, exposes a gated per-run
 engine-settings override, and captures **per-entity dev feedback** (analysis input, not learning).
 Grouped occurrences (L6, mirroring [PII L11](pii-engine-levels.md#level-11--entity-grouping--repeated-occurrences---done))
 are now delivered, paired with a lineage-bound review-decision overlay (every entity defaults to
 `pseudonymize`; a reviewer opts one out via `keep` or `false_positive`, at group or occurrence
-scope) that covers much of the *practical* intent of L8/L9 without yet being the formal
-`review_result` artifact model — see
-[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md) for the exact scope and what
-remains open (stale-review detection L7, the formal artifact model L8, actor/reason metadata L11,
-suppression rules L12, manual add L10, and reusable cross-run decisions L13).
+scope), immutable `review_result` snapshots, direct PII/text lineage for new decisions, and an
+explicit stale indicator. See [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)
+and [ADR-0034](../adr/0034-review-l8-review-result-artifact.md). Manual add L10, actor/reason
+metadata L11, suppression rules L12, and reusable cross-run decisions L13 remain open.
 
 > **File note.** The 0–19 review/feedback ladder lives in this file (`review-feedback-levels.md`).
 > It is the successor to the previous 0–10 review ladder; there is no separate
@@ -160,23 +159,21 @@ suppression rules L12, manual add L10, and reusable cross-run decisions L13).
   jump-to-text; grouping never drops or invents a detection.
 - **Boundary to L7:** L6 groups mentions; L7 makes a recorded decision lineage-aware and stale-safe.
 
-## Level 7 — Stale review detection  ⏳ *partially covered*
+## Level 7 — Stale review detection  ✅ *done*
 
 - **Human can:** trust that any recorded feedback/decision is bound to the exact
   `pii_result`/`text_result` it acted on; re-extraction surfaces it as **stale**, never silently
   reapplied.
 - **Persisted:** lineage keys on every decision; a stale flag when the input artifact changes.
-- **Delivered:** every review decision line records the `pii_result.id` it was made against, and
-  `GET …/pii/review` only ever considers decisions matching the **current** PII artifact — so a
-  re-run's new artifact id makes prior decisions simply not apply, satisfying "never silently
-  reapplied." **Not yet delivered:** an explicit stale indicator — a decision made against a
-  superseded artifact is silently absent rather than surfaced as "stale" in the UI, and there is no
-  `text_result.id` lineage key (decisions are scoped to the PII artifact only).
+- **Delivered:** every new decision line records the exact `pii_result.id` and `text_result.id` it
+  was made against. `GET …/pii/review` only considers decisions matching the current PII artifact,
+  while explicit stale-decision counts surface superseded decisions in the API and UI; no decision
+  is ever reapplied automatically. Legacy lines without a direct text id remain readable.
 - **Acceptance:** re-running OCR/PII marks prior decisions stale and shows it in the UI; nothing is
   reapplied automatically.
 - **Boundary to L8:** L7 protects lineage; L8 introduces the persisted decision overlay itself.
 
-## Level 8 — `review_result` artifact model  ⏳ *partially covered*
+## Level 8 — `review_result` artifact model  ✅ *done*
 
 - **Human can:** have decisions persisted as an overlay (still read-only actions at this level:
   the model + endpoints exist).
@@ -185,15 +182,14 @@ suppression rules L12, manual add L10, and reusable cross-run decisions L13).
   [target-architecture](target-architecture.md#database-considerations)).
 - **Delivered:** a file-based, lineage-bound decision overlay exists
   (`document-store/<id>/review/pii_review_decisions.jsonl`, an append-only log collapsed to the
-  latest decision per target on read) and `pii_result` is never mutated. **Not yet delivered:** the
-  formal single-artifact-per-run model this level describes (with its own id/version, "the first
-  place a database becomes genuinely useful") — this reuses the existing feedback-archive JSONL
-  pattern instead, per [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
+  latest decision per target on read), and an immutable, versioned `review_result` snapshot is
+  persisted after every decision. `pii_result` is never mutated; JSONL remains the append-only
+  write model while snapshots are the durable read model (ADR-0034).
 - **Acceptance:** a `review_result` can be created, stored immutably, referenced by lineage, and
   re-rendered on reload. This is the first place a **database** becomes genuinely useful.
 - **Boundary to L9:** L8 is the storage model; L9 adds the first binding action (confirm/reject).
 
-## Level 9 — Confirm / reject  ⏳ *partially covered*
+## Level 9 — Confirm / reject  ✅ *done*
 
 - **Human can:** mark a candidate **confirmed** or **rejected**.
 - **Delivered:** `POST …/pii/review/decisions` lets a reviewer set a binding decision
@@ -201,9 +197,10 @@ suppression rules L12, manual add L10, and reusable cross-run decisions L13).
   a reviewer opts an entity *out* of pseudonymization) at group or occurrence scope; it persists,
   restores on reload, and resolves to a coarse `accepted/kept/rejected` status. See
   [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
-- **Persisted:** per-candidate decisions in `review_result`. Mirrors
-  [PII L13](pii-engine-levels.md#level-13--review-confirm--reject---open).
-- **Acceptance:** a decision persists against the exact lineage and re-renders on reload;
+- **Persisted:** per-candidate decisions in `review_result`, with direct `pii_result.id` +
+  `text_result.id` lineage on new decision lines and immutable snapshots. Mirrors
+  [PII L13](pii-engine-levels.md#level-13--review-confirm--reject---done).
+- **Acceptance:** met. A decision persists against exact lineage and re-renders on reload;
   re-extraction marks it stale rather than reapplying it.
 - **Boundary to L10:** L9 judges machine candidates; L10 lets a human add a missed one.
 
@@ -330,9 +327,9 @@ Design constraints (not features) for L8+:
 | 4 Dev engine settings surface | ✅ done (gated) | `GET /api/config` PII defaults + `ENABLE_DEV_ENGINE_SETTINGS` per-run profile override |
 | 5 Per-entity dev feedback capture | ⏳ partial (dev-only) | append-only JSONL, latest-verdict restore + lock; analysis-only |
 | 6 Grouped occurrences | ✅ done | `PiiReviewGroupList` + derived `pii_grouping.py` ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
-| 7 Stale review detection | ⏳ partially covered | decisions scoped to the exact PII artifact id (never silently reapplied); no explicit "stale" UI flag |
-| 8 `review_result` model | ⏳ partially covered | JSONL decision overlay delivered; not the formal single-artifact-per-run model |
-| 9 Confirm / reject | ⏳ partially covered | pseudonymize-by-default `pseudonymize/keep/false_positive` decisions delivered at group/occurrence scope |
+| 7 Stale review detection | ✅ done | direct PII/text lineage for new decisions, explicit stale API/UI state, never automatic reapply |
+| 8 `review_result` model | ✅ done | immutable, versioned snapshot after every decision; JSONL remains append-only write model |
+| 9 Confirm / reject | ✅ done | pseudonymize-by-default `pseudonymize/keep/false_positive` decisions at group/occurrence scope |
 | 10 Manual add | ⛔ open | — |
 | 11 Reason / comment | ⛔ open | — |
 | 12 Suppression rules | ⛔ open | — |
@@ -344,13 +341,8 @@ Design constraints (not features) for L8+:
 | 18 Multi-user workflow | ⛔ open | — |
 | 19 Auditable workflow | ⛔ open | — |
 
-**What is missing for the next real step:** entity **grouping** (L6) and a lineage-bound decision
-overlay covering much of L8/L9's practical intent are now delivered (see
-[ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)). Still open: an explicit
-**stale** indicator when a decision's PII artifact is superseded (L7), the formal single-artifact
-`review_result` model this level originally described (L8) — this is still the first place a
-**database** becomes genuinely useful — manual add (L10), actor/reason metadata (L11), scoped
-suppression rules (L12), and reusable cross-run decisions (L13); see the
+**What is missing for the next real step:** manual add (L10), then actor/reason metadata (L11),
+scoped suppression rules (L12), and reusable cross-run decisions (L13); see the
 [later engine work](roadmap.md#later-engine-work) in the roadmap.
 
 ---
