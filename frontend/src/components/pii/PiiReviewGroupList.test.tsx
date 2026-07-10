@@ -55,6 +55,8 @@ function baseReview(overrides: Partial<PiiReviewResult> = {}): PiiReviewResult {
         decision_scope: null,
       },
     ],
+    stale_decision_count: 0,
+    has_stale_decisions: false,
     ...overrides,
   };
 }

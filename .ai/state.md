@@ -24,7 +24,8 @@
   private-corpus fixture is introduced. Frontend PII highlights now consume that server entity
   contract as their source of truth and derive raw/canonical/layout view ranges from the same
   anchor-bound entity identity; missing canonical/layout ranges remain visible reason-coded states,
-  never frontend guesses. Next: formal Review L8 `review_result`.
+  never frontend guesses. Formal Review L8 `review_result` is now delivered (ADR-0034, see the
+  "Latest checkpoint" entries below); re-run the checkpoint loop for the next engine priority.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -715,6 +716,25 @@ indistinguishably from "no PII yet." No recognizer, detection, tokenizer, active
 binding-algorithm change. See [ADR-0033](../docs/adr/0033-pii-binding-quality-suite.md). Next:
 **`review-result-v1`** (Phase 3, Review L8) is the last of the feasibility audit's three
 recommended branches.
+
+**Latest checkpoint (Review L8 `review_result` artifact — Phase 3, final audit branch):** Not an
+engine level change. Delivers the feasibility audit's Phase 3: a new immutable
+`PiiReviewResultArtifact` (same envelope/persistence pattern as `PiiArtifact`/`TextArtifact`),
+keyed occurrence-id-primary (never on anchor-derived identity, per the audit's guardrail and
+ADR-0033's drift finding). `set_pii_review_decision` still appends its JSONL record exactly as
+before, then persists a fresh immutable snapshot after every decision; new
+`GET …/pii/review-result` returns the latest one. `PiiReviewResult` gains additive
+`stale_decision_count`/`has_stale_decisions`: decisions recorded against a since-superseded
+`pii_result` were already never silently reapplied (unchanged) — this makes that fact explicit
+instead of looking identical to "nothing was ever reviewed," surfaced in `GET …/pii/review` and a
+new `DocumentDetailPage.tsx` notice. The JSONL log remains the append-only write-time source of
+truth (migration path documented in the ADR, not executed); no SQLite introduced, no
+detection/`pii_result`-schema/active-PII-input/pseudonymization/redaction/export change; existing
+`GET …/pii/review`/`POST …/pii/review/decisions` behavior is unchanged except for the two additive
+fields. See [ADR-0034](../docs/adr/0034-review-l8-review-result-artifact.md). This was the last of
+the feasibility audit's three recommended branches (Phases 1–3); the next engine priority should
+re-run the checkpoint loop against this file's current-sequence section rather than continuing that
+specific audit's list.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

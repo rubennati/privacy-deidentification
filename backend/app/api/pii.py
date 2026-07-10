@@ -15,6 +15,7 @@ from app.schemas import (
     PiiReviewDecisionAck,
     PiiReviewDecisionRequest,
     PiiReviewResult,
+    PiiReviewResultArtifact,
     PiiRunRequest,
 )
 from app.services.feedback_service import record_pii_feedback, summarize_pii_feedback
@@ -22,7 +23,11 @@ from app.services.job_models import JobContext, JobKind
 from app.services.job_runner import SyncJobRunner, provide_job_runner
 from app.services.pii_adapters import PiiAnalyzer, get_pii_analyzer
 from app.services.pii_entity_contract import build_pii_entity_contract
-from app.services.pii_review_service import get_pii_review_result, set_pii_review_decision
+from app.services.pii_review_service import (
+    get_pii_review_result,
+    get_pii_review_result_artifact,
+    set_pii_review_decision,
+)
 from app.services.pii_service import create_pii_artifact, get_latest_pii
 
 router = APIRouter(prefix="/documents", tags=["pii"])
@@ -131,6 +136,25 @@ def get_document_pii_review(
 ) -> PiiReviewResult:
     """Return reviewable entity groups and occurrences for the document's latest PII result."""
     return get_pii_review_result(settings, document_id)
+
+
+@router.get(
+    "/{document_id}/pii/review-result",
+    response_model=PiiReviewResultArtifact,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_document_pii_review_result_artifact(
+    document_id: str, settings: Settings = Depends(get_settings)
+) -> PiiReviewResultArtifact:
+    """Return the newest persisted review-result snapshot artifact (Review L8, ADR-0034).
+
+    Additive alongside ``GET …/pii/review``: that endpoint recomputes the reviewable view fresh on
+    every call, while this one returns the durable, immutable-per-run artifact written after each
+    recorded decision — the same file-based artifact model as ``original``/``audit``/``text``/
+    ``pii``. Raises a clean 404 when no decision has ever been recorded for this document yet
+    (distinct from "no PII result exists").
+    """
+    return get_pii_review_result_artifact(settings, document_id)
 
 
 @router.get(

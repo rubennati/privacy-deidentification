@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -36,9 +37,14 @@ from app.schemas import (
     PiiReviewDecisionValue,
     PiiReviewOccurrence,
     PiiReviewResult,
+    PiiReviewResultArtifact,
     PiiReviewStatus,
 )
-from app.services.artifact_service import get_latest_pii_artifact
+from app.services.artifact_service import (
+    get_latest_pii_artifact,
+    get_latest_pii_review_result_artifact,
+    save_pii_review_result_artifact,
+)
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.pii_grouping import group_pii_entities
 
@@ -86,6 +92,13 @@ class PiiReviewTargetNotFoundError(ApiError):
         )
 
 
+class PiiReviewResultArtifactNotFoundError(ApiError):
+    """Raised when no review-result snapshot has been persisted for a document yet."""
+
+    def __init__(self) -> None:
+        super().__init__("No review result snapshot found for this document yet.", 404)
+
+
 def get_pii_review_result(settings: Settings, document_id: str) -> PiiReviewResult:
     """Return the reviewable groups/occurrences for a document's latest PII result."""
     if get_document_record(settings, document_id) is None:
@@ -97,7 +110,26 @@ def get_pii_review_result(settings: Settings, document_id: str) -> PiiReviewResu
     entities = artifact.content.entities
     groups = group_pii_entities(entities)
     decisions = _load_latest_decisions(settings, document_id, artifact.id)
-    return _build_review_result(document_id, artifact.id, entities, groups, decisions)
+    stale_count = _count_stale_decisions(settings, document_id, artifact.id)
+    return _build_review_result(
+        document_id, artifact.id, entities, groups, decisions, stale_count
+    )
+
+
+def get_pii_review_result_artifact(
+    settings: Settings, document_id: str
+) -> PiiReviewResultArtifact:
+    """Return the newest persisted review-result snapshot (Review L8, ADR-0034).
+
+    Distinct from :func:`get_pii_review_result`: this is the durable, immutable-per-run artifact
+    written after each recorded decision, not a value recomputed on every call.
+    """
+    if get_document_record(settings, document_id) is None:
+        raise DocumentNotFoundError
+    artifact = get_latest_pii_review_result_artifact(settings, document_id)
+    if artifact is None:
+        raise PiiReviewResultArtifactNotFoundError
+    return artifact
 
 
 def set_pii_review_decision(
@@ -127,6 +159,7 @@ def set_pii_review_decision(
         source="user",
     )
     _append_decision_line(settings, document_id, record)
+    _persist_review_result_snapshot(settings, document_id, artifact.id, entities, groups)
     return PiiReviewDecisionAck(
         recorded=True,
         target_type=record.target_type,
@@ -135,6 +168,34 @@ def set_pii_review_decision(
         review_status=_DECISION_TO_STATUS[record.decision],
         updated_at=record.recorded_at,
     )
+
+
+def _persist_review_result_snapshot(
+    settings: Settings,
+    document_id: str,
+    artifact_id: str,
+    entities: list[PiiEntity],
+    groups: list[PiiEntityGroup],
+) -> None:
+    """Save an immutable snapshot of the fully-resolved review state (Review L8, ADR-0034).
+
+    Reads back the just-written decision (via ``_load_latest_decisions``, unchanged) so the
+    snapshot reflects exactly what a subsequent ``GET …/pii/review`` would compute -- this function
+    never resolves decisions itself, only persists the same resolution as a durable artifact.
+    """
+    decisions = _load_latest_decisions(settings, document_id, artifact_id)
+    stale_count = _count_stale_decisions(settings, document_id, artifact_id)
+    content = _build_review_result(
+        document_id, artifact_id, entities, groups, decisions, stale_count
+    )
+    snapshot = PiiReviewResultArtifact(
+        id=uuid4().hex,
+        document_id=document_id,
+        input_pii_artifact_id=artifact_id,
+        created_at=_now_utc_iso(),
+        content=content,
+    )
+    save_pii_review_result_artifact(settings, snapshot)
 
 
 def _target_exists(
@@ -154,6 +215,7 @@ def _build_review_result(
     entities: list[PiiEntity],
     groups: list[PiiEntityGroup],
     decisions: dict[tuple[str, str], PiiReviewDecisionRecord],
+    stale_decision_count: int,
 ) -> PiiReviewResult:
     group_id_by_occurrence = {
         occurrence_id: group.entity_group_id
@@ -217,6 +279,8 @@ def _build_review_result(
         artifact_id=artifact_id,
         groups=review_groups,
         occurrences=review_occurrences,
+        stale_decision_count=stale_decision_count,
+        has_stale_decisions=stale_decision_count > 0,
     )
 
 
@@ -238,6 +302,32 @@ def _load_latest_decisions(
             continue
         latest[(record.target_type, record.target_id)] = record
     return latest
+
+
+def _count_stale_decisions(settings: Settings, document_id: str, current_artifact_id: str) -> int:
+    """Count decisions that exist but no longer apply because the PII result was re-run since.
+
+    Mirrors ``_load_latest_decisions``'s latest-line-per-target collapse, but across *every*
+    artifact id ever recorded for this document (not filtered to ``current_artifact_id``), then
+    counts how many of those latest-per-target records target a different artifact id. This never
+    changes which decision applies (that stays exactly the existing current-artifact-only match) --
+    it only makes visible what was previously silent: a decision existed, but a later PII re-run
+    superseded it.
+    """
+    path = _decisions_path(settings, document_id)
+    if not path.is_file():
+        return 0
+    latest_by_target: dict[tuple[str, str], PiiReviewDecisionRecord] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        record = _parse_record(line)
+        if record is None:
+            continue
+        latest_by_target[(record.target_type, record.target_id)] = record
+    return sum(
+        1
+        for record in latest_by_target.values()
+        if record.artifact_id != current_artifact_id
+    )
 
 
 def _parse_record(line: str) -> PiiReviewDecisionRecord | None:

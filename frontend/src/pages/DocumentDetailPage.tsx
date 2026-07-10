@@ -522,6 +522,12 @@ export default function DocumentDetailPage() {
               message="Die PII-Hervorhebungen konnten nicht geladen werden. Der erkannte Text ist weiterhin sichtbar, aber ohne Markierungen. Bitte laden Sie die Seite neu."
             />
           )}
+          {piiStatus === "current" && reviewResult && reviewResult.has_stale_decisions && (
+            <StatusNotice
+              status="error"
+              message={`Es liegen ${reviewResult.stale_decision_count} Überprüfungsentscheidung(en) aus einem vorherigen PII-Lauf vor, die für das aktuelle Ergebnis nicht mehr gelten. Bitte prüfen Sie die betroffenen Einträge erneut.`}
+            />
+          )}
           {/* User view gets a single product-facing analysis action; dev view keeps its separate
               per-station controls above and never renders this panel. */}
           {!isDevView && (

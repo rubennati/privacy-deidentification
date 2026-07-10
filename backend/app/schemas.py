@@ -2356,6 +2356,55 @@ class PiiReviewResult(BaseModel):
     artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     groups: list[PiiEntityGroupReview] = Field(default_factory=list)
     occurrences: list[PiiReviewOccurrence] = Field(default_factory=list)
+    # Review L8 (ADR-0034): a decision is only ever matched against the exact ``pii_result``
+    # artifact it was recorded for, so a re-run (new artifact id) already never silently reapplies
+    # an old decision -- but previously that fell back to "no decision recorded" indistinguishably
+    # from a genuinely fresh entity. These two additive fields make that explicit: how many
+    # previously-recorded decisions exist for this document but target an artifact id other than
+    # ``artifact_id`` above (superseded by a later PII run), never counted more than once per
+    # (target_type, target_id).
+    stale_decision_count: int = Field(default=0, ge=0)
+    has_stale_decisions: bool = False
+
+    @model_validator(mode="after")
+    def _validate_staleness(self) -> PiiReviewResult:
+        if self.has_stale_decisions != (self.stale_decision_count > 0):
+            raise ValueError("has_stale_decisions must match stale_decision_count > 0")
+        return self
+
+
+class PiiReviewResultArtifact(BaseModel):
+    """Immutable, versioned per-run snapshot of the review overlay (Review L8, ADR-0034).
+
+    Wraps the same :class:`PiiReviewResult` shape ``GET …/pii/review`` already computes on demand,
+    but persisted through the same file-based artifact model as every other station (``original``/
+    ``audit``/``text``/``pii``): one immutable JSON file per snapshot, newest-wins on read. A fresh
+    snapshot is saved every time a review decision is recorded, so the durable review state is a
+    proper artifact-history entry rather than only reconstructible by replaying the JSONL decision
+    log. The JSONL log (``pii_review_decisions.jsonl``) remains the append-only write-time source of
+    truth this snapshot is built from; this artifact is the durable *read* model. Keys primarily on
+    occurrence ids (``PiiReviewOccurrence.occurrence_id``); any anchor-derived identity from the
+    entity contract (ADR-0031 Phase C) is deliberately not used as a key here, per the
+    occurrence-id-primary rule (anchor ids are only stable per text-artifact-bytes x graph-builder
+    version, not yet suitable as a persisted primary key).
+    """
+
+    id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_type: Literal["pii_review_result"] = "pii_review_result"
+    station: Literal["pii_review"] = "pii_review"
+    input_pii_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    media_type: Literal["application/json"] = "application/json"
+    created_at: str
+    content: PiiReviewResult
+
+    @model_validator(mode="after")
+    def _validate_content_identity(self) -> PiiReviewResultArtifact:
+        if self.content.document_id != self.document_id:
+            raise ValueError("review result content belongs to a different document")
+        if self.content.artifact_id != self.input_pii_artifact_id:
+            raise ValueError("review result content references a different PII artifact")
+        return self
 
 
 # --- Review-ready PII entity contract v1 (ADR-0029) ----------------------------------------------

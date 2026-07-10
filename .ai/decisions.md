@@ -166,3 +166,18 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   `T | null`, so `DocumentDetailPage.tsx` can show a distinct "PII highlights could not be loaded"
   notice instead of silently rendering an unhighlighted document indistinguishably from "no PII
   yet." No recognizer, detection, tokenizer, active-PII-input, or binding-algorithm change.
+- [ADR-0034](../docs/adr/0034-review-l8-review-result-artifact.md) — **Review L8 `review_result`
+  artifact (Phase 3, the last of the feasibility audit's three recommended branches).** New
+  immutable `PiiReviewResultArtifact` (same envelope/persistence pattern as
+  `PiiArtifact`/`TextArtifact`, sharing the per-document `artifacts/` directory), keyed
+  occurrence-id-primary (never on anchor-derived identity, per the audit's guardrail and ADR-0033's
+  drift finding). `set_pii_review_decision` still appends its JSONL record unchanged, then persists
+  a fresh immutable snapshot after every decision; new `GET …/pii/review-result` returns the latest
+  one. `PiiReviewResult` gains additive `stale_decision_count`/`has_stale_decisions`: decisions
+  recorded against a since-superseded `pii_result` were already never silently reapplied — this
+  makes that fact explicit (surfaced in `GET …/pii/review` and a `DocumentDetailPage.tsx` notice)
+  instead of looking identical to "nothing was ever reviewed." The JSONL log remains the
+  append-only write-time source of truth (migration path documented, not executed); no SQLite
+  introduced. No detection, `pii_result` schema, active-PII-input, pseudonymization, redaction, or
+  export change; existing `GET …/pii/review`/`POST …/pii/review/decisions` behavior is unchanged
+  except for the two additive fields.

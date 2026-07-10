@@ -74,6 +74,11 @@ export interface PiiReviewResult {
   artifact_id: string;
   groups: PiiEntityGroupReview[];
   occurrences: PiiReviewOccurrence[];
+  // Review L8 (ADR-0034): decisions recorded against a since-superseded PII result were already
+  // never silently reapplied; these additive fields make that explicit instead of looking
+  // identical to "no decision recorded".
+  stale_decision_count: number;
+  has_stale_decisions: boolean;
 }
 
 export interface PiiReviewDecisionRequest {

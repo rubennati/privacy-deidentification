@@ -497,6 +497,18 @@ persistence.
 - **Do not:** introduce SQLite in the same PR, bind decisions to anchor ids without a pinned graph,
   or build replacement planning into the review artifact.
 
+> **Status update (2026-07-10).** Delivered — see
+> [ADR-0034](../adr/0034-review-l8-review-result-artifact.md). The immutable-per-run artifact,
+> occurrence-id-primary keying, explicit `stale_decision_count`/`has_stale_decisions` signal, and
+> documented (not executed) JSONL-to-artifact migration path are all in place, with no SQLite
+> introduced. **Not delivered from the literal goal text:** "anchor-derived `entity_id` as secondary
+> linkage" — `pii_review_service.py` has no dependency on the anchor-binding pipeline
+> (`pii_anchor_binding.py`/`pii_entity_contract.py`) today, and wiring one in to attach a secondary,
+> best-effort anchor-derived reference per occurrence was judged a real architectural addition, not
+> a same-PR-sized omission; occurrence ids alone (the primary key the acceptance criteria actually
+> requires) are sufficient for decisions to survive reload/re-runs correctly. Left open for a future
+> PR if a consumer needs it.
+
 *(Geometry-backed anchors — word/row boxes as anchor provenance — remain the right Phase 4: after
 construction-time lineage, geometry's marginal value concentrates on OCR-page word grain and
 redaction-readiness rather than on canonical mapping, and Phase 1 already reuses the geometry the
