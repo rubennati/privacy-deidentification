@@ -149,6 +149,11 @@ export interface PiiAnchorBindingSummary {
   missing_layout_range_count: number;
   binding_reason_counts: Record<string, number>;
   warning_codes: string[];
+  // Metrics-only coverage ratios (pii-binding-quality-suite, ADR-0033): the fraction of entities
+  // that received any anchor binding (exact or partial) vs. purely exact. `0` when there are no
+  // entities.
+  anchor_bound_ratio: number;
+  exact_bound_ratio: number;
 }
 
 export interface PiiEntityMappingSummary {
@@ -193,21 +198,31 @@ export function resolveHighlightRange(entity: ReviewReadyAnchorBoundPiiEntity): 
   return { source: "technical_raw_text", range: entity.display.raw_highlight_range };
 }
 
-/** Fetch the review-ready entity contract for a document. Returns null on any failure (missing PII
- *  result, network error, legacy/unreachable server) so the UI degrades to "no contract data"
- *  instead of breaking. */
+/** Outcome of fetching the entity contract: `not_found` (no PII result yet, a normal 404 product
+ *  state, never shown as an error) is kept distinct from `error` (an unexpected network/server
+ *  failure — the contract-fetch-failure notice) so the UI never renders both the same way. */
+export type PiiEntityContractFetchResult =
+  | { status: "ok"; contract: PiiEntityContractV1 }
+  | { status: "not_found" }
+  | { status: "error" };
+
+/** Fetch the review-ready entity contract for a document. Never throws. */
 export async function fetchPiiEntityContract(
   documentId: string,
-): Promise<PiiEntityContractV1 | null> {
+): Promise<PiiEntityContractFetchResult> {
   try {
     const response = await fetch(
       `/api/documents/${encodeURIComponent(documentId)}/pii/entity-contract`,
     );
-    if (!response.ok) {
-      return null;
+    if (response.status === 404) {
+      return { status: "not_found" };
     }
-    return (await response.json()) as PiiEntityContractV1;
+    if (!response.ok) {
+      return { status: "error" };
+    }
+    const contract = (await response.json()) as PiiEntityContractV1;
+    return { status: "ok", contract };
   } catch {
-    return null;
+    return { status: "error" };
   }
 }

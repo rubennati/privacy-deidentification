@@ -157,6 +157,8 @@ function contract(entities: ReviewReadyAnchorBoundPiiEntity[]): PiiEntityContrac
       ).length,
       binding_reason_counts: {},
       warning_codes: [],
+      anchor_bound_ratio: 0,
+      exact_bound_ratio: 0,
     },
     mapping_summary: {
       exact: entities.filter((item) => item.mapping_status === "exact").length,

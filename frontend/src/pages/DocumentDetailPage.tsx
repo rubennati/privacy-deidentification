@@ -80,6 +80,7 @@ export default function DocumentDetailPage() {
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
   const [reviewResult, setReviewResult] = useState<PiiReviewResult | null>(null);
   const [piiEntityContract, setPiiEntityContract] = useState<PiiEntityContractV1 | null>(null);
+  const [piiEntityContractError, setPiiEntityContractError] = useState(false);
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
   const [analysisStep, setAnalysisStep] = useState<AnalysisStep>("idle");
@@ -180,14 +181,16 @@ export default function DocumentDetailPage() {
     if (!documentId || !piiArtifactId) {
       setReviewResult(null);
       setPiiEntityContract(null);
+      setPiiEntityContractError(false);
       return;
     }
     let active = true;
     void Promise.all([fetchPiiReview(documentId), fetchPiiEntityContract(documentId)]).then(
-      ([review, contract]) => {
+      ([review, contractResult]) => {
         if (!active) return;
         setReviewResult(review);
-        setPiiEntityContract(contract);
+        setPiiEntityContract(contractResult.status === "ok" ? contractResult.contract : null);
+        setPiiEntityContractError(contractResult.status === "error");
       },
     );
     return () => {
@@ -199,9 +202,12 @@ export default function DocumentDetailPage() {
     setReviewResult(review);
     if (!documentId || !piiArtifactId) {
       setPiiEntityContract(null);
+      setPiiEntityContractError(false);
       return;
     }
-    setPiiEntityContract(await fetchPiiEntityContract(documentId));
+    const contractResult = await fetchPiiEntityContract(documentId);
+    setPiiEntityContract(contractResult.status === "ok" ? contractResult.contract : null);
+    setPiiEntityContractError(contractResult.status === "error");
   };
 
   // Reload recovery: rehydrate any tracked OCR job for this document and resume polling it (a
@@ -508,6 +514,12 @@ export default function DocumentDetailPage() {
             <StatusNotice
               status="error"
               message="Die Texterkennung wurde abgeschlossen, das Ergebnis konnte aber nicht geladen werden. Bitte laden Sie die Seite neu."
+            />
+          )}
+          {piiStatus === "current" && piiEntityContractError && (
+            <StatusNotice
+              status="error"
+              message="Die PII-Hervorhebungen konnten nicht geladen werden. Der erkannte Text ist weiterhin sichtbar, aber ohne Markierungen. Bitte laden Sie die Seite neu."
             />
           )}
           {/* User view gets a single product-facing analysis action; dev view keeps its separate

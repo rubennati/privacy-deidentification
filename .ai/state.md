@@ -694,6 +694,28 @@ Next: extend real coverage to more rendering paths (re-scoped explicitly, not as
 feasibility audit's remaining two recommended branches, **`pii-binding-quality-suite`** and
 **`review-result-v1`**.
 
+**Latest checkpoint (PII binding quality suite — Phase 2):** Not an engine level change. Delivers
+the feasibility audit's Phase 2: `PiiAnchorBindingSummary` gains additive
+`anchor_bound_ratio`/`exact_bound_ratio` coverage metrics; a new synthetic regression corpus
+(`backend/tests/test_pii_binding_quality_suite.py`) covers the audit's previously-untested hard
+cases (adjacent same-line date+phone tokenizer fusion, a punctuation/character-swallowing
+recognizer span, table-column canonical-range cross-contamination, a DOCX/no-geometry document)
+plus a coverage-ratio floor gate. Scoping the fusion case found a **real, previously-untested
+tokenizer edge case** — `document_text_anchors.py`'s phone pattern fuses a date directly adjacent to
+a phone number into one raw anchor — intentionally left unfixed (per this phase's "do not tune
+recognizers" guardrail) and instead regression-locked as an honest `partial` degrade, never a false
+`exact` or a lost/merged entity. A builder-version identity-drift test proves the audit's stated
+safety property directly: the anchor-derived `entity_id` is free to drift with the graph builder,
+while the underlying occurrence id durable review decisions key on never does, plus a guard test
+that neither durable JSONL-writing module (`pii_review_service.py`, `feedback_service.py`)
+references an anchor id today. The frontend `fetchPiiEntityContract` now returns a discriminated
+`ok`/`not_found`/`error` result instead of `T | null`, so `DocumentDetailPage.tsx` shows a distinct
+"PII highlights could not be loaded" notice on a genuine fetch failure instead of rendering
+indistinguishably from "no PII yet." No recognizer, detection, tokenizer, active-PII-input, or
+binding-algorithm change. See [ADR-0033](../docs/adr/0033-pii-binding-quality-suite.md). Next:
+**`review-result-v1`** (Phase 3, Review L8) is the last of the feasibility audit's three
+recommended branches.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
