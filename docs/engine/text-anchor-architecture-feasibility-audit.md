@@ -452,6 +452,20 @@ persistence.
   ("never silent", "reason-coded") plus coverage floors, not exact segment layouts.
 - **Do not:** tune recognizers, add detection features, or use private corpus files as fixtures.
 
+> **Status update (2026-07-10).** Delivered — see
+> [ADR-0033](../adr/0033-pii-binding-quality-suite.md). Mixed-uniqueness entities and header/footer
+> repeats were already covered by `test_anchor_bound_pii_e2e_conformance.py`; the new
+> `test_pii_binding_quality_suite.py` adds the remaining named cases (tokenizer fusion,
+> punctuation-swallowing partial binding, table columns, DOCX/no-geometry), a builder-version
+> identity-drift test, and additive `anchor_bound_ratio`/`exact_bound_ratio` coverage-floor metrics
+> on `PiiAnchorBindingSummary`. Scoping the fusion case surfaced a real, previously-untested
+> tokenizer edge case (a date directly adjacent to a phone number, no separator, fuses into one raw
+> anchor) — left unfixed per the "do not tune recognizers" guardrail and regression-locked instead
+> as an honest `partial` degrade. The frontend contract-fetch-failure notice is delivered:
+> `fetchPiiEntityContract` returns a discriminated `ok`/`not_found`/`error` result, and
+> `DocumentDetailPage.tsx` shows a visible notice on `error` (never on the normal `not_found` 404).
+> No recognizer, detection, tokenizer, or binding-algorithm change.
+
 ### Phase 3 — `review-result-v1` (Review L8)
 
 - **Goal:** the formal single-artifact-per-run `review_result` over stable entity identity, keyed

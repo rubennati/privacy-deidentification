@@ -636,7 +636,15 @@ def _summary(entities: Sequence[AnchorBoundPiiEntityV1]) -> PiiAnchorBindingSumm
         missing_layout_range_count=total - layout_count,
         binding_reason_counts=_binding_reason_counts(entities),
         warning_codes=_warning_codes(entities),
+        anchor_bound_ratio=_ratio(anchor_bound, total),
+        exact_bound_ratio=_ratio(exact, total),
     )
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    if denominator == 0:
+        return 0.0
+    return round(numerator / denominator, 6)
 
 
 def _has_display_ref(

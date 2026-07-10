@@ -93,6 +93,8 @@ function makeContract(entities: ReviewReadyAnchorBoundPiiEntity[]): PiiEntityCon
       missing_layout_range_count: 1,
       binding_reason_counts: { anchor_missing: 1, detection_evidence_only: 1 },
       warning_codes: ["anchor_missing", "detection_evidence_only"],
+      anchor_bound_ratio: 0,
+      exact_bound_ratio: 0,
     },
     mapping_summary: { exact: 0, projected: 0, partial: 0, missing: 1, ambiguous: 0, not_applicable: 0 },
     needs_review_count: 1,
@@ -113,17 +115,22 @@ describe("fetchPiiEntityContract", () => {
     const result = await fetchPiiEntityContract("doc-1");
 
     expect(fetchMock).toHaveBeenCalledWith("/api/documents/doc-1/pii/entity-contract");
-    expect(result).toEqual(contract);
+    expect(result).toEqual({ status: "ok", contract });
   });
 
-  it("returns null when there is no PII result yet (404)", async () => {
+  it("returns not_found when there is no PII result yet (404) -- never treated as an error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 404 }));
-    expect(await fetchPiiEntityContract("doc-1")).toBeNull();
+    expect(await fetchPiiEntityContract("doc-1")).toEqual({ status: "not_found" });
   });
 
-  it("returns null on a network failure instead of throwing", async () => {
+  it("returns error on an unexpected server failure (5xx) instead of throwing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 500 }));
+    expect(await fetchPiiEntityContract("doc-1")).toEqual({ status: "error" });
+  });
+
+  it("returns error on a network failure instead of throwing", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
-    expect(await fetchPiiEntityContract("doc-1")).toBeNull();
+    expect(await fetchPiiEntityContract("doc-1")).toEqual({ status: "error" });
   });
 });
 

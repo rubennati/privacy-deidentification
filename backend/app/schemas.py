@@ -2489,12 +2489,19 @@ class PiiAnchorBindingSummary(BaseModel):
     missing_layout_range_count: int = Field(default=0, ge=0)
     binding_reason_counts: dict[str, int] = Field(default_factory=dict)
     warning_codes: list[str] = Field(default_factory=list)
+    # Metrics-only coverage ratios for the pii-binding-quality-suite gate (ADR-0033): the fraction
+    # of entities that received *any* anchor binding (exact or partial) vs. purely `exact`. `0.0`
+    # when there are no entities (vacuous, never a false claim of full coverage). Derived from the
+    # counts above; never an independent source of truth.
+    anchor_bound_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    exact_bound_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _validate(self) -> PiiAnchorBindingSummary:
         _validate_binding_status_counts(self)
         _validate_binding_alias_counts(self)
         _validate_binding_range_counts(self)
+        _validate_binding_ratios(self)
         return self
 
 
@@ -2537,6 +2544,13 @@ def _validate_binding_range_counts(summary: PiiAnchorBindingSummary) -> None:
         raise ValueError("canonical range counts must cover every entity")
     if summary.entities_with_layout_range + summary.missing_layout_range_count != summary.total:
         raise ValueError("layout range counts must cover every entity")
+
+
+def _validate_binding_ratios(summary: PiiAnchorBindingSummary) -> None:
+    if summary.anchor_bound_ratio != _pii_binding_ratio(summary.anchor_bound, summary.total):
+        raise ValueError("anchor_bound_ratio must match anchor_bound / total")
+    if summary.exact_bound_ratio != _pii_binding_ratio(summary.exact, summary.total):
+        raise ValueError("exact_bound_ratio must match exact / total")
 
 
 class AnchorBoundPiiEntityV1(BaseModel):
@@ -2704,6 +2718,13 @@ class PiiEntityContractV1(BaseModel):
             ),
             binding_reason_counts=_pii_binding_reason_counts(self.entities),
             warning_codes=_pii_binding_warning_codes(self.entities),
+            anchor_bound_ratio=_pii_binding_ratio(
+                sum(e.identity_basis in ("anchor_exact", "anchor_partial") for e in self.entities),
+                len(self.entities),
+            ),
+            exact_bound_ratio=_pii_binding_ratio(
+                sum(e.binding_status == "exact" for e in self.entities), len(self.entities)
+            ),
         )
         if self.binding_summary != expected_binding:
             raise ValueError("binding summary does not match entities")
@@ -2729,6 +2750,12 @@ def _entity_has_anchor_ref_source(
         ref.source_name == source_name and ref.source_range is not None
         for ref in entity.anchor_refs
     )
+
+
+def _pii_binding_ratio(numerator: int, denominator: int) -> float:
+    if denominator == 0:
+        return 0.0
+    return round(numerator / denominator, 6)
 
 
 def _pii_binding_reason_counts(

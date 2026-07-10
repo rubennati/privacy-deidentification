@@ -130,3 +130,23 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   SQLite-ready now, **no DB built**. Staged Phases A–I; underpins **PII L17** (stable entity model
   with lineage). Introduces no migration/OCR extraction/pseudonymization/reconstruction/runtime
   change. (Requested as "0030"; renumbered to 0031 because 0030 was taken.)
+- [ADR-0033](../docs/adr/0033-pii-binding-quality-suite.md) — **PII binding quality suite (Phase 2;
+  numbered 0033 to follow the expected Phase 1 ADR-0032 — renumber on a merge-order collision, as
+  ADR-0031 itself documents doing).** `PiiAnchorBindingSummary` gains additive
+  `anchor_bound_ratio`/`exact_bound_ratio` coverage metrics (both Python summary builders + the
+  frontend TS type). A new synthetic regression corpus
+  (`backend/tests/test_pii_binding_quality_suite.py`) covers the audit's remaining named hard cases:
+  adjacent same-line date+phone tokenizer fusion (a **real, previously-untested edge case** found
+  while scoping this — the phone pattern's character class accepts spaces, so a date directly
+  adjacent to a phone number fuses into one anchor; intentionally left unfixed per the phase's "do
+  not tune recognizers" guardrail, only regression-locked as an honest `partial` degrade, never a
+  false `exact` or a lost/merged entity), a punctuation/character-swallowing recognizer span, table-
+  column canonical-range cross-contamination, a DOCX/no-geometry document, plus a documented
+  coverage-ratio floor gate. A builder-version identity-drift test proves the audit's stated safety
+  property directly: an anchor-derived `entity_id` is free to drift with the graph builder, while
+  the underlying occurrence id durable review decisions actually key on never does — plus a guard
+  test that neither durable JSONL-writing module references an anchor id at all today. The frontend
+  `fetchPiiEntityContract` now returns a discriminated `ok`/`not_found`/`error` result instead of
+  `T | null`, so `DocumentDetailPage.tsx` can show a distinct "PII highlights could not be loaded"
+  notice instead of silently rendering an unhighlighted document indistinguishably from "no PII
+  yet." No recognizer, detection, tokenizer, active-PII-input, or binding-algorithm change.
