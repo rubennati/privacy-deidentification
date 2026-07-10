@@ -33,9 +33,15 @@ from app.schemas import (
     PiiValidationSummary,
     TextArtifact,
     TextContent,
+    TextGeometry,
+    TextGeometryPage,
+    TextLineGeometry,
     TextPageResult,
 )
 from app.services.artifact_service import save_pii_artifact, save_text_artifact
+from app.services.reading_text_geometry_projection import (
+    build_reading_text_geometry_projection_map,
+)
 from app.services.reading_text_projection import (
     build_reading_text_map,
     project_pii_entities_to_reading_text,
@@ -475,3 +481,171 @@ def test_no_private_value_leaks_into_binding_metadata(
         ):
             assert value not in json.dumps(entity.get(field)), f"{value} leaked into {field}"
     assert _RAW.split("\n", 1)[0] not in json.dumps(body["binding_summary"])
+
+
+# --- 6. Geometry-backed projection propagates a repeated-suffix (mixed-uniqueness) entity ---------
+# Two DISTINCT company names sharing only the "GmbH" suffix token, in a reordered document. The
+# post-hoc unique-token map drops the repeated "GmbH", which used to strip the whole entity's
+# canonical range. The geometry-backed, post-render exact-line projection places each company from
+# its own source line, so both keep a canonical highlight — proved here through the real HTTP
+# contract endpoint. This is a stronger *post-hoc* mechanism (full-line granularity, declines
+# genuinely ambiguous/duplicate values rather than guessing), not builder-emitted construction-time
+# lineage; genuine construction-time lineage remains a separate, unimplemented future step.
+_MIX_RAW = "Muster Handels GmbH\nBeispiel Bau GmbH\noffice@muster.at\n"
+_MIX_READING = "office@muster.at\nMuster Handels GmbH\nBeispiel Bau GmbH\n"
+
+
+def _line_spans(raw: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    for line in raw.split("\n"):
+        if line:
+            spans.append((offset, offset + len(line)))
+        offset += len(line) + 1
+    return spans
+
+
+def _single_page_geometry(raw: str) -> TextGeometry:
+    lines = [
+        TextLineGeometry(
+            line_index=index,
+            canonical_start=start,
+            canonical_end=end,
+            page_start=start,
+            page_end=end,
+            x0=0.0,
+            y0=float(index),
+            x1=1.0,
+            y1=float(index) + 0.5,
+            source="pdf_text_layer",
+        )
+        for index, (start, end) in enumerate(_line_spans(raw), start=1)
+    ]
+    return TextGeometry(
+        pages=[
+            TextGeometryPage(
+                page_number=1,
+                page_width=10.0,
+                page_height=float(len(lines)) + 2.0,
+                coordinate_unit="pdf_points",
+                source="pdf_text_layer",
+                status="complete",
+                lines=lines,
+            )
+        ],
+        coverage=1.0,
+    )
+
+
+def _save_with_geometry_projection(
+    settings: Settings, document_id: str, raw: str, reading: str, entities: list[PiiEntity]
+) -> None:
+    pages = [
+        TextPageResult(
+            page_number=1,
+            source="pdf_text_layer",
+            has_text_layer=True,
+            ocr_used=False,
+            text=raw,
+            text_char_count=len(raw),
+        )
+    ]
+    reading_map = build_reading_text_map(raw, reading, pages)
+    projection_map = build_reading_text_geometry_projection_map(
+        document_id=document_id,
+        reading_text=reading,
+        raw_text=raw,
+        pages=pages,
+        text_geometry=_single_page_geometry(raw),
+    )
+    assert projection_map is not None
+    text_id = uuid4().hex
+    save_text_artifact(
+        settings,
+        TextArtifact(
+            id=text_id,
+            document_id=document_id,
+            input_artifact_id="c" * 32,
+            input_audit_artifact_id="d" * 32,
+            created_at="2026-07-10T09:00:00.000000Z",
+            content=TextContent(
+                document_id=document_id,
+                input_artifact_id="c" * 32,
+                input_audit_artifact_id="d" * 32,
+                source="pdf_text_layer",
+                text=raw,
+                text_char_count=len(raw),
+                pages=pages,
+                tool_versions={"test": "1"},
+                flags=[],
+                reading_text_version="1",
+                reading_text=reading,
+                reading_text_status="heuristic",
+                reading_text_map_version="1",
+                reading_text_map=reading_map,
+                reading_text_geometry_projection_map_version="1",
+                reading_text_geometry_projection_map=projection_map,
+            ),
+        ),
+    )
+    projected = _sorted_entities(
+        project_pii_entities_to_reading_text(entities, reading_map, reading_text=reading)
+    )
+    counts: dict[str, int] = {}
+    for entity in projected:
+        counts[entity.entity_type] = counts.get(entity.entity_type, 0) + 1
+    save_pii_artifact(
+        settings,
+        PiiArtifact(
+            id=uuid4().hex,
+            document_id=document_id,
+            input_text_artifact_id=text_id,
+            created_at="2026-07-10T10:00:00.000000Z",
+            content=PiiContent(
+                document_id=document_id,
+                input_text_artifact_id=text_id,
+                profile="custom",
+                language="de",
+                score_threshold=0.5,
+                text_char_count=len(raw),
+                reading_text_char_count=len(reading),
+                configured_entity_types=sorted(counts),
+                entities=projected,
+                entity_counts=dict(sorted(counts.items())),
+                tool_versions={},
+                flags=[],
+                validation=PiiValidationSummary(
+                    enabled=True, kept=len(projected), dropped=0, score_down=0
+                ),
+            ),
+        ),
+    )
+
+
+def test_geometry_projection_propagates_repeated_suffix_entities(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    entities = [
+        _entity(_MIX_RAW, "ORG", "Muster Handels GmbH"),
+        _entity(_MIX_RAW, "ORG", "Beispiel Bau GmbH"),
+        _entity(_MIX_RAW, "EMAIL_ADDRESS", "office@muster.at"),
+    ]
+    _save_with_geometry_projection(settings, document_id, _MIX_RAW, _MIX_READING, entities)
+
+    body = _get_contract(client, document_id)
+    assert body["anchor_graph_available"] is True
+
+    for value in ("Muster Handels GmbH", "Beispiel Bau GmbH"):
+        org = _by_value(body, value)
+        assert org["binding_status"] == "exact", value
+        assert org["identity_basis"] == "anchor_exact", value
+        canonical_range = org["display"]["canonical_highlight_range"]
+        assert canonical_range is not None, f"{value} lost its canonical highlight"
+        assert _MIX_READING[canonical_range["start"] : canonical_range["end"]] == value
+        assert "canonical_range_missing" not in org["binding_reasons"], value
+        assert "repeated_token_ambiguity" not in org["binding_reasons"], value
+
+    summary = body["binding_summary"]
+    assert summary["entities_with_canonical_range"] == 3
+    assert summary["missing_canonical_range_count"] == 0

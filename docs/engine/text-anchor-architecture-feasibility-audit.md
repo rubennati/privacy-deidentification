@@ -246,7 +246,7 @@ Scored against ADR-0031's invariants and the `.ai/quality-gates.md` anchor gates
 | 8 | No DB before the model is proven | **Conforms** | everything derived or file-based |
 | 9 | Frontend renders only server ranges; no independent entity derivation; no string search | **Conforms with two footnotes** | (a) legacy `buildHighlightSegments` is dead in production paths but still exported and test-maintained — remove or quarantine; (b) a failed contract fetch yields an *empty* highlight model with no user-visible notice (§9) |
 | 10 | One stable anchor identity per unit, stable across re-runs | **Partial** | stable only per (bytes × builder version); acceptable now because nothing durable references anchor ids — must be resolved before Phase F (§10) |
-| 11 | Views are projections of shared units (construction-level) | **Not yet** | lineage is post-hoc unique-token string alignment; this is the v1→v2 gap, not a defect against the staged plan |
+| 11 | Views are projections of shared units (construction-level) | **Not yet** | A first attempt at `anchor-first-text-package-v2` was found, by a contradiction audit, to be a *post-render* projection (it runs after `reading_text.py` already returns a finished string and re-derives correspondence via exact search over that string) rather than builder-emitted lineage — `reading_text.py` itself is unchanged. That mechanism was reclassified and hardened as **Geometry-backed Reading Projection v1** (`ReadingTextGeometryProjectionMap`, `lineage_source: geometry_projection`), a stronger *post-hoc* mechanism preferred over the older `reading_text_map`, with a fixed duplicate-value identity defect (see §8.3 update). Genuine construction-level lineage remains open |
 
 ### 8.3 The two-mechanism wart
 
@@ -261,6 +261,23 @@ claimed via anchors while another entity's `projected` came from a string search
 keep the fallback for v1 coverage, but (a) surface a distinct reason code when display came from
 `text_match`, and (b) plan its retirement when construction-time lineage lands (v2), at which point
 the unique-value fallback should become unnecessary.
+
+> **Update (Geometry-backed Reading Projection v1).** A stronger *post-hoc* mechanism now lands as
+> the preferred one ahead of `reading_text_map`: the anchor graph consults
+> `ReadingTextGeometryProjectionMap` segments — built by searching the *already-completed* canonical
+> text for an exact, line-bounded occurrence of each raw geometry line — before the older unique-token
+> map, and both the package `lineage_summary` and per-anchor flags (`canonical_geometry_projection` /
+> `canonical_map_lineage`) make the source explicit. **This is not construction-time lineage**: a
+> contradiction audit of the first attempt found it ran entirely after `reading_text.py` returns and
+> reproduced a duplicate-value identity defect (two identical full lines could be bound to inverted
+> canonical occurrences, both confidently labeled `exact`, depending only on processing order); the
+> hardening pass fixed that by requiring global uniqueness (exact text occurs exactly once among
+> source lines *and* exactly once, line-bounded, in canonical text) before ever claiming `exact`,
+> declining to an explicit `ambiguous` state otherwise. `reading_text_map` and the ADR-0029
+> `text_match` projection remain as labelled fallbacks for legacy/minimal artifacts and for lines the
+> geometry projection declines (non-verbatim, no geometry, or genuinely ambiguous). Genuine
+> builder-emitted construction-time lineage — the actual retirement condition for `text_match` — is
+> still unimplemented.
 
 ## 9. Test coverage scorecard
 
@@ -365,7 +382,39 @@ Grounded in the audit's findings — the biggest structural gap is construction-
 biggest safety gap is untested hard cases, and the most-requested product step is review
 persistence.
 
-### Phase 1 — `anchor-first-text-package-v2` (construction-time lineage)
+### Phase 1 — `anchor-first-text-package-v2` (construction-time lineage) — **not complete**
+
+> **Status update.** Not delivered — a first attempt on branch `anchor-first-text-package-v2` was
+> found by a contradiction audit to be a *post-render projection*, not construction-time lineage:
+> `reading_text.py` (the actual builder) was provably unchanged, and the new mechanism ran strictly
+> after `build_reading_text(...)` already returned a finished string, re-deriving correspondence via
+> exact search over that completed string (`str.find`) — architecturally the same category of
+> operation as the pre-existing post-hoc `reading_text_map`, just at full-line granularity instead of
+> unique-token granularity. The audit also reproduced a concrete identity defect: two textually
+> identical full raw lines could be bound to *inverted* canonical occurrences (both labeled `exact`,
+> `confidence=1.0`) depending only on the order geometry lines were processed in — determinism, not
+> proof of identity.
+>
+> The mechanism was **reclassified and hardened, not discarded**, as **Geometry-backed Reading
+> Projection v1** (`reading_text_geometry_projection.py`, `ReadingTextGeometryProjectionMap`,
+> `lineage_source: geometry_projection`): a source line may now be claimed `exact` only when its
+> exact text occurs exactly once among the collected verbatim source lines **and** exactly once,
+> line-bounded, in the canonical text; every other candidate occurrence of a non-unique value becomes
+> an explicit `ambiguous` segment (no source range, no `confidence=1.0`, reason-coded — never the
+> duplicated value itself) instead of being picked by processing order. Verified: the same
+> raw/canonical text projected with reversed geometry-line encounter order now yields identical,
+> still-ambiguous output rather than two mutually-inverted `exact` claims. The useful case survives —
+> two distinct company names sharing a repeated `GmbH` suffix still keep their canonical range,
+> because each full line is globally unique — while a genuinely duplicated full-line/label value (or
+> the same value repeated across pages) is declined end-to-end through anchor binding, never guessed.
+>
+> **This remains a stronger *post-hoc* mechanism, preferred over `reading_text_map` when it resolves a
+> line unambiguously — it is explicitly not builder-emitted and not authoritative construction
+> identity.** `reading_text.py` still discards its own per-fragment source knowledge
+> (`ReadingRow`/`ReadingCell` carry no raw offsets). Genuine construction-time lineage — the reading-
+> text builder itself emitting `(raw_span → reading_span)` while rendering — remains unimplemented;
+> Phase 1 as originally scoped is **not complete**, and a real `anchor-first-text-package-v2` is a
+> separate, future branch. No reading-text byte change, no detection change, no DB.
 
 - **Goal:** the reading-text builder emits `(raw_span → reading_span)` segments *while rendering*
   each fragment (it already holds the source rows/geometry), replacing dependence on post-hoc

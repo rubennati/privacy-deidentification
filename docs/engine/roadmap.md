@@ -338,8 +338,11 @@ benchmark maturity remains L8 until L9 lands.
 anchor** identity layer: raw/canonical/layout/structured are *views* of one document, married by an
 OCR/Text-owned anchor graph (`text_lineage_map` made concrete). Phase B is now implemented
 additively as Text Anchor Graph v1 (`document_text_anchors.py`, `GET …/text-anchors`): raw anchors
-are primary, canonical ranges attach through `reading_text_map`, layout ranges attach only when
-safely byte-aligned in v1, and missing/partial/ambiguous states are explicit. Phase C is now
+are primary, canonical ranges attach through the geometry-backed, post-render reading projection
+first and the post-hoc `reading_text_map` as a labelled fallback (per-anchor and graph
+`lineage_summary` reporting) — neither is builder-emitted construction identity — layout ranges
+attach only when safely byte-aligned in v1, and missing/partial/ambiguous
+states are explicit. Phase C is now
 implemented additively as PII anchor binding (`pii_anchor_binding.py`,
 `GET …/pii/entity-contract`): detections bind to anchors where available, otherwise degrade to
 explicit evidence-only identity. Anchor and entity-contract summaries expose text-free counts and
@@ -351,11 +354,24 @@ detection input. Pseudonymization and reconstruction remain later phases.
 
 A full feasibility and conformance audit of this approach —
 [`text-anchor-architecture-feasibility-audit.md`](text-anchor-architecture-feasibility-audit.md) —
-classifies v1 as a sound **anchor-derived** transitional layer (not yet anchor-first: identity is
-offset-minted, canonical lineage is the post-hoc unique-token map) and recommends
+classified v1 as a sound **anchor-derived** transitional layer (not yet anchor-first: identity is
+offset-minted, canonical lineage was the post-hoc unique-token map) and recommended
 `anchor-first-text-package-v2` (construction-time lineage from the reading-text builder),
 `pii-binding-quality-suite`, then `review-result-v1` as the next three phases, with anchor-id
-persistence pinned to the graph builder version before any durable state references anchor ids.
+persistence pinned to the graph builder version before any durable state references anchor ids. **A
+first attempt at `anchor-first-text-package-v2` was found by a contradiction audit to be a
+post-render projection, not construction-time lineage** (the reading-text builder itself was
+unchanged; the mechanism searched the already-completed canonical text) and reclassified/hardened as
+**Geometry-backed Reading Projection v1**: `reading_text_geometry_projection_map` (canonical span →
+raw span, offset-only), preferred over the post-hoc map by the package and anchor graph only when it
+resolves a line unambiguously, so repeated-*suffix* multi-token entities keep their canonical range
+while a genuinely duplicated full-line/label value is explicitly declined (never guessed by
+processing order — a reproduced identity defect from the first attempt is now fixed). It stays
+line-level and geometry-gated (text-layer PDFs), verbatim-only, and declines rather than guesses
+elsewhere. **Genuine construction-time lineage remains unimplemented**; a real
+`anchor-first-text-package-v2` (the reading-text builder itself emitting correspondence while
+rendering), word-level/OCR-page geometry, and `text_match` retirement remain later work. Next:
+`pii-binding-quality-suite`, then `review-result-v1`.
 
 ### Redaction remains blocked
 

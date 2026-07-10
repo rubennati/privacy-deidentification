@@ -591,6 +591,53 @@ three branches: `anchor-first-text-package-v2` (builder-emitted construction-tim
 `pii-binding-quality-suite` (hard-case regression corpus + frontend contract-failure notice), then
 `review-result-v1` (occurrence-id-primary keys). No code, detection, schema, or runtime change.
 
+**Latest checkpoint (Geometry-backed reading projection v1 — post-render, NOT construction-time
+lineage):** A contradiction audit of an initial `anchor-first-text-package-v2` attempt found it did
+**not** implement construction-time lineage despite its naming: `reading_text.py` (the actual
+reading-text builder) was provably unchanged (0 diff), the new mechanism was called strictly *after*
+`build_reading_text(...)` already returned a finished string, and its core operation was `str.find`
+over that completed string — a post-hoc reconstruction, exactly like the pre-existing unique-token
+`reading_text_map`, just at full-line granularity. Worse, the audit reproduced a concrete
+duplicate-value identity defect: two textually-identical full raw lines could be bound to *inverted*
+canonical occurrences (both confidently labeled `exact`, `confidence=1.0`) depending only on the
+order geometry lines happened to be processed in — determinism, not identity proof. This checkpoint
+is the corrective hardening pass, reclassified as **Geometry-backed Reading Projection v1**.
+Renamed throughout: `ReadingTextConstructionMap`→`ReadingTextGeometryProjectionMap`,
+`ReadingTextConstructionSummary`→`ReadingTextGeometryProjectionSummary`,
+`reading_text_construction_map[_version]`→`reading_text_geometry_projection_map[_version]`,
+anchor flag `canonical_construction_lineage`→`canonical_geometry_projection`, summary field
+`canonical_construction_count`→`canonical_geometry_projection_count`, lineage-source literal
+`construction`→`geometry_projection`; the module moved from `reading_text_lineage.py` to
+`reading_text_geometry_projection.py` (`build_reading_text_geometry_projection_map`). The identity
+defect is fixed with a global-uniqueness + line-boundary discipline: a source line may be projected
+as `exact` only when its exact text occurs exactly once among the collected verbatim source lines
+**and** exactly once (delimited by `\n`/string edges, so a short line like `"Wien"` cannot falsely
+match inside a longer line like `"1010 Wien"`) in the canonical text; every other candidate
+occurrence of a non-unique value becomes an explicit `ambiguous` segment (`source_range=None`,
+`confidence=None`, reason codes `duplicate_source_value`/`multiple_canonical_candidates`/
+`identity_ambiguous`/`relative_order_not_identity_proof` — never the duplicated value itself).
+Verified by construction: the same raw/canonical text projected with reversed geometry-line encounter
+order now yields *identical* (still-ambiguous) output instead of two mutually-inverted `exact`
+claims. `DocumentTextPackageV1`'s `lineage_summary` now names `geometry_projection` /
+`fallback_text_match` / `unavailable` and carries a `geometry_projection_ambiguous_count`; the Text
+Anchor Graph prefers geometry-projection segments over the older `reading_text_map` only when they
+resolve a raw token unambiguously, and flags which post-hoc mechanism won per anchor — **neither is
+authoritative construction identity**. The useful case survives: two genuinely distinct company
+names sharing a repeated `GmbH` suffix in a reordered document still keep their full canonical
+highlight, because each is a globally-unique whole line; a genuinely duplicated full-line/label value
+(same value twice, or the same value repeated across pages) is now explicitly declined end-to-end
+through anchor binding (`canonical_range_missing` + `repeated_token_ambiguity`), never silently
+guessed. **`reading_text.py` (the actual reading-text builder) is unchanged and still discards its
+own per-fragment source knowledge** (`ReadingRow`/`ReadingCell` carry no raw offsets); genuine
+builder-emitted construction-time lineage remains **unimplemented** — Phase 1 of the feasibility
+audit's recommendation is **not** complete, and a real `anchor-first-text-package-v2` remains a
+separate, future branch. No change to PII detection semantics/input, recognizers, reading-text
+output bytes, runtime, or the DB. Metadata stays text-free (leak-tested, including reason codes).
+Covered by `backend/tests/test_reading_text_geometry_projection.py` (renamed from
+`test_anchor_first_text_package_v2.py`) plus updated anchor-graph, package, and E2E-conformance
+suites. Next: thread real raw offsets through `reading_text.py`'s own `ReadingRow`/`ReadingCell` path
+for genuine construction-time lineage, then `pii-binding-quality-suite`, then `review-result-v1`.
+
 **Latest checkpoint (Runtime Job UX / in-app notifications v1):** Cross-cutting runtime/UX step, not
 an engine level change. On top of ADR-0023's job model/status API, the product-facing presentation
 layer is delivered: `JobStatusResponse` gains one additive `is_terminal: bool` field

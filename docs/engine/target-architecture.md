@@ -81,9 +81,15 @@ candidates deterministically (`pii_overlap`, PII L12) with reason-code/count/id 
 Text identity now has its first concrete OCR/Text-owned layer:
 `GET /api/documents/{document_id}/text-anchors` derives **Text Anchor Graph v1** from the same
 `DocumentTextPackageV1`. It emits anchor ids, raw/canonical/layout ranges, counts, statuses, token
-classes/shapes, and warning codes only — no copied text. In v1, canonical ranges attach through the
-existing `reading_text_map`, layout ranges attach only when byte-aligned with raw, and PII consumes
-the matching graph for anchor-bound entity identity without changing the active raw-text input.
+classes/shapes, and warning codes only — no copied text. Canonical ranges attach through the
+geometry-backed, post-render reading projection first (`reading_text_geometry_projection_map` —
+*not* builder-emitted; it searches the already-completed canonical text for an exact, line-bounded
+occurrence of each raw geometry line) and the post-hoc unique-token `reading_text_map` as a labelled
+fallback, so a repeated *sub-token* inside an otherwise-unique multi-token value keeps its canonical
+range, while a genuinely duplicated full-line/label value is declined (marked `ambiguous`) rather
+than guessed by processing order; layout ranges attach only when byte-aligned with raw; and PII
+consumes the matching graph for anchor-bound entity identity without changing the active raw-text
+input.
 
 On top of that, the **anchor-bound entity contract v1**
 ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md),
@@ -102,8 +108,17 @@ raw/canonical/layout highlight sets; view-specific ranges are used only when the
 them, and missing/partial/ambiguous mappings remain visible states. An end-to-end feasibility audit
 of the anchor layer ([`text-anchor-architecture-feasibility-audit.md`](text-anchor-architecture-feasibility-audit.md))
 confirms this consumption discipline, classifies the current graph as anchor-*derived* (identity
-offset-minted; canonical lineage via the post-hoc unique-token `reading_text_map`), and stages
-construction-time lineage as the next structural step toward true anchor-first.
+offset-minted), and staged construction-time lineage as the next structural step toward true
+anchor-first. A first attempt at that step (`anchor-first-text-package-v2`) was found by a
+contradiction audit to be a *post-render projection*, not construction-time lineage — the reading-text
+builder itself was unchanged, and the mechanism searched the already-completed canonical text. It was
+reclassified and hardened as **Geometry-backed Reading Projection v1**: a stronger post-hoc mechanism
+(full-line granularity, global-uniqueness discipline, declines genuinely ambiguous/duplicate values
+rather than guessing) the graph prefers over the older `reading_text_map` when it can resolve a line
+unambiguously. **Genuine construction-time lineage — the reading-text builder itself emitting
+canonical↔raw correspondence while rendering — remains unimplemented**; the anchor-*derived* →
+anchor-*first* gap is not yet closed, and a real `anchor-first-text-package-v2` is a separate, future
+step.
 
 ## Runtime job contract
 

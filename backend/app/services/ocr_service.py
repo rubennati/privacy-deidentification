@@ -51,6 +51,9 @@ from app.services.reading_text import (
     build_reading_text,
     collect_pdf_reading_rows,
 )
+from app.services.reading_text_geometry_projection import (
+    build_reading_text_geometry_projection_map,
+)
 from app.services.reading_text_projection import build_reading_text_map
 from app.services.structured_content import build_structured_content
 from app.services.text_geometry import (
@@ -472,6 +475,17 @@ def _text_content(
     reading_map = (
         build_reading_text_map(text, reading.text, pages) if reading is not None else []
     )
+    geometry_projection_map = (
+        build_reading_text_geometry_projection_map(
+            document_id=document_id,
+            reading_text=reading.text,
+            raw_text=text,
+            pages=pages,
+            text_geometry=text_geometry,
+        )
+        if reading is not None
+        else None
+    )
     quality_evidence = build_quality_evidence(
         source=source,
         text=text,
@@ -498,6 +512,10 @@ def _text_content(
         reading_text_flags=list(reading.flags) if reading is not None else [],
         reading_text_map_version="1" if reading is not None else None,
         reading_text_map=reading_map,
+        reading_text_geometry_projection_map_version=(
+            "1" if geometry_projection_map is not None else None
+        ),
+        reading_text_geometry_projection_map=geometry_projection_map,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
         layout_blocks_version="1" if blocks else None,
