@@ -578,6 +578,19 @@ recognizer, `pii_result` schema, active-input, frontend guessing, pseudonymizati
 change; frontend still renders only contract-supplied ranges. See the anchor gates in
 [`quality-gates.md`](quality-gates.md).
 
+**Latest checkpoint (Text anchor architecture feasibility audit — docs only):** A deep architecture
+and conformance audit of the anchor approach is recorded in
+[`docs/engine/text-anchor-architecture-feasibility-audit.md`](../docs/engine/text-anchor-architecture-feasibility-audit.md).
+Verdict: keep the architecture; current v1 is a sound **anchor-derived** transitional layer
+(consumption is contract-enforced and honest), not yet anchor-first — anchor ids are offset-minted
+and canonical lineage rests on the post-hoc unique-token `reading_text_map`. Key constraints it
+adds: anchor ids are stable only per (text-artifact bytes × graph-builder version), so no durable
+state may store anchor ids before the graph (or a builder version pin) is persisted with them; the
+`text_match` display fallback should retire once construction-time lineage lands. Recommended next
+three branches: `anchor-first-text-package-v2` (builder-emitted construction-time lineage),
+`pii-binding-quality-suite` (hard-case regression corpus + frontend contract-failure notice), then
+`review-result-v1` (occurrence-id-primary keys). No code, detection, schema, or runtime change.
+
 **Latest checkpoint (Runtime Job UX / in-app notifications v1):** Cross-cutting runtime/UX step, not
 an engine level change. On top of ADR-0023's job model/status API, the product-facing presentation
 layer is delivered: `JobStatusResponse` gains one additive `is_terminal: bool` field
