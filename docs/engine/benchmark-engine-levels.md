@@ -17,12 +17,12 @@ Hard constraints:
 Level numbers are cumulative and **not** comparable to the other ladders. This engine uses the
 **0–19 maturity scale** ([why 0–19](README.md#maturity-scale)).
 
-**Current standing:** **L8 done (L0–L8); L9 next, with an out-of-order L10 slice.** The stdlib-only runner
+**Current standing:** **L10 done (L0–L10).** The stdlib-only runner
 ([ADR-0010](../adr/0010-private-benchmark-runner.md), `scripts/benchmark/`,
 `make benchmark-private`) delivers corpus matching, OCR/text routing correctness, PII P/R/F1 per
 doc/type/group/global, privacy-guarded and deterministic reports, candidate-validation counts, and
-lineage-matched OCR confidence/coverage columns with legacy fallback. Per-profile runs in one
-invocation, OCR runtime columns, trend/history, and a CI gate are open.
+lineage-matched OCR confidence/coverage columns with legacy fallback, and read-only per-profile
+comparison in one invocation. OCR runtime columns, trend/history, and a CI gate are open.
 
 ---
 
@@ -104,19 +104,21 @@ invocation, OCR runtime columns, trend/history, and a CI gate are open.
   text.
 - **Boundary to L9:** L8 covers one profile per invocation; L9 runs all profiles in one.
 
-## Level 9 — Per-profile PII metrics in one invocation  ⛔ *open (next)*
+## Level 9 — Per-profile PII metrics in one invocation  ✅ *done*
 
-- **Description:** run every configured profile and compare P/R/F1 side by side in one command.
-- **Acceptance:** one invocation emits per-profile metrics; today this requires a rerun per configured
-  profile. Completes the PII L2/L9 "per-profile validation posture" reporting.
+- **Description:** compare the newest available immutable result for every configured profile side
+  by side in one read-only command. Missing profile artifacts remain explicit coverage gaps; the
+  benchmark never generates them.
+- **Acceptance:** met in JSON, Markdown, console output, and `benchmark_profiles.csv`; P/R/F1 and
+  validation aggregates are emitted per profile without private values or processing side effects.
 - **Boundary to L10:** L9 broadens PII coverage; L10 adds OCR quality columns.
 
-## Level 10 — OCR confidence / coverage columns  ⏳ *delivered out of order*
+## Level 10 — OCR confidence / coverage columns  ✅ *done*
 
 - **Description:** add per-document OCR confidence and coverage to the report (needs OCR L6–L7).
 - **Acceptance:** met for L7 artifacts: confidence and pages-without-text coverage appear in JSON,
   markdown, and CSV summaries; lineage mismatches fall back to legacy audit/text metrics. The
-  cumulative benchmark level remains L8 until L9 is delivered.
+  cumulative benchmark level is L10 now that L9 is delivered.
 - **Boundary to L11:** L10 measures OCR quality; L11 measures OCR cost.
 
 ## Level 11 — OCR runtime / memory / performance columns  ⛔ *open*
@@ -191,8 +193,8 @@ invocation, OCR runtime columns, trend/history, and a CI gate are open.
 | 6 Privacy-guarded | ✅ done | `privacy_guard.py` + `make benchmark-test` |
 | 7 Deterministic | ✅ done | identical reports across runs |
 | 8 Validation-aware | ✅ done | kept/dropped/score_down + reason codes |
-| 9 Per-profile in one run | ⛔ next | today: rerun per configured profile |
-| 10 OCR confidence columns | ⛔ open | needs OCR L6–L7 |
+| 9 Per-profile in one run | ✅ done | newest immutable result per configured profile; missing coverage explicit |
+| 10 OCR confidence columns | ✅ done | L7 quality report with legacy fallback |
 | 11 OCR runtime/memory | ⛔ open | needs OCR L17 |
 | 12 Multi-engine comparison | ⛔ open | single OCR engine |
 | 13 Run history / trend | ⛔ open | single snapshot |
@@ -203,9 +205,8 @@ invocation, OCR runtime columns, trend/history, and a CI gate are open.
 | 18 Redaction completeness | ⛔ open | no redaction engine yet |
 | 19 Production suite | ⛔ open | — |
 
-**Next:** per-profile PII metrics in one invocation (L9), then OCR confidence/coverage columns (L10)
-once OCR L6–L7 land. See [`roadmap.md`](roadmap.md) (Engine-1 done; trend/CI folded into Engine-2 +
-a later CI task).
+**Next:** OCR runtime/memory columns (L11) once OCR L17 supplies trustworthy measurements. See
+[`roadmap.md`](roadmap.md) (Engine-1 done; trend/CI folded into Engine-2 + a later CI task).
 
 ---
 

@@ -16,12 +16,14 @@ extracted PII to the repository.
    entity — **no unmasked values**).
 
 It matches local documents to benchmark/ground-truth entries by filename, computes OCR/text
-routing metrics and PII precision/recall/F1 against the candidate ground truth, and writes a
+routing metrics and PII precision/recall/F1 against the candidate ground truth, compares the
+newest available immutable result for every configured PII profile side by side, and writes a
 markdown + JSON report that contains **only counts, statuses, types, and offsets** — never
 extracted text, never a masked or unmasked PII value.
 
 It **never** triggers audit/OCR/PII processing, calls the API, or modifies/deletes a document.
-Missing artifacts are reported as `missing`, not generated.
+Missing artifacts — including profile-specific PII results — are reported as `missing`, not
+generated. Run the desired profiles through the product before benchmarking them.
 
 ## Where private inputs and outputs live
 
@@ -35,7 +37,8 @@ volumes/benchmark/
     └── <timestamp>/
         ├── benchmark_report.md
         ├── benchmark_report.json
-        └── benchmark_summary.csv
+        ├── benchmark_summary.csv
+        └── benchmark_profiles.csv
 ```
 
 Everything under `volumes/` (including `volumes/benchmark/`) is covered by the repo's

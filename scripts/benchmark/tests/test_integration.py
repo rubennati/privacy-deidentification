@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from privacy_guard import assert_report_is_safe, assert_text_is_safe
-from private_benchmark import run
+from private_benchmark import _write_profile_csv, run
 from report_builder import render_markdown
 
 _SECRET_EMAIL = "secret.person@example.com"
@@ -144,6 +144,8 @@ def _build_synthetic_corpus(tmp_path: Path) -> SimpleNamespace:
             "artifact_type": "pii_result",
             "created_at": "2026-07-01T10:03:00Z",
             "content": {
+                "profile": "structured-only",
+                "engine_settings": {"pii_profile": "structured-only"},
                 "language": "de",
                 "score_threshold": 0.5,
                 "text_char_count": 50,
@@ -267,6 +269,17 @@ def test_end_to_end_report_matches_and_scores(tmp_path: Path) -> None:
     assert validation["total_kept"] == 1
     assert validation["total_dropped"] == 1
     assert validation["dropped_by_reason"] == {"STOPWORD_ONLY": 1}
+    profiles = report["pii_benchmark"]["by_profile"]
+    assert list(profiles) == [
+        "structured-only",
+        "insurance-at-de",
+        "broad-review",
+        "review-heavy",
+    ]
+    assert profiles["structured-only"]["documents_with_artifact"] == 1
+    assert profiles["structured-only"]["global"]["total_tp"] == 1
+    assert profiles["insurance-at-de"]["documents_with_artifact"] == 0
+    assert profiles["insurance-at-de"]["global"]["total_tp"] == 0
     assert report["documents"][0]["ocr_text_metrics"]["quality_report_used"] is True
 
 
@@ -296,3 +309,18 @@ def test_end_to_end_markdown_report_contains_no_raw_or_masked_values(tmp_path: P
     assert "Readable contact" not in markdown
     assert "AT611904300234573201" not in markdown
     assert "# Private OCR/PII Benchmark Report" in markdown
+    assert "### Per-profile comparison (Benchmark L9)" in markdown
+    assert "| structured-only | 1 | 1 | 1 | 0 | 0 | 1.0 | 1.0 | 1.0 |" in markdown
+    assert "| insurance-at-de | 0 | 0 | 0 | 0 | 0 | 0.0 | 0.0 | 0.0 |" in markdown
+
+
+def test_profile_csv_contains_all_profiles_without_private_values(tmp_path: Path) -> None:
+    report = run(_build_synthetic_corpus(tmp_path))
+    csv_path = tmp_path / "profiles.csv"
+    _write_profile_csv(csv_path, report)
+
+    csv_text = csv_path.read_text(encoding="utf-8")
+    assert "structured-only,1,1,1,1,1,0,0,1.0,1.0,1.0" in csv_text
+    assert "insurance-at-de,0,0,0,0,0,0,0,0.0,0.0,0.0" in csv_text
+    assert _SECRET_EMAIL not in csv_text
+    assert _SECRET_MASKED_VALUE not in csv_text

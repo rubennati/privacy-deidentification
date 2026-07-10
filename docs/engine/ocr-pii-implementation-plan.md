@@ -44,7 +44,7 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 | OCR / Text | **L15 done (built on the L10.5 contract step)** | scoped construction-lineage coverage |
 | PII / Sensitive-Data | **L12 done; L10 partial** (dev-only feedback capture) | checkpoint before L13 completion |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L8 done; L9 partial** | complete confirm/reject semantics |
-| Benchmark / Regression | **L8 done; L10 slice out of order** | L9 per-profile metrics |
+| Benchmark / Regression | **L10 done** | L11 OCR runtime/memory |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 
 OCR/Text (L12, built on the L10.5 contract step) is currently ahead of the *binding* PII/review
