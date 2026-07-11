@@ -3,6 +3,15 @@
 > If this file conflicts with the current branch or commits, trust git.
 
 - Current phase: **Text Identity Phase C — Anchor-bound PII Entity Model v1**.
+- User-view review UX v1 is implemented on `user-view-review-ux-v1` (frontend only, no engine or
+  API change): the user view is single-column (no decision sidebar) with a count/legend summary
+  bar; decisions happen in place via a click popover on a highlight that offers exactly the two
+  alternative decisions; `kept` renders as a solid frame without fill and `false_positive` as a
+  dashed ghost (both stay clickable/revisable — rejected entities are no longer dropped from the
+  highlight model, only from its warning summary); technical binding/contract hints, enum tooltips,
+  and the layout view stay dev-view-only; the user-view analysis button hides while the analysis
+  is current; plain German entity-type labels (`entityTypeLabels.ts`) cover user-facing tooltips
+  and the popover. Dev view behavior is unchanged.
 - Artifact/document lifecycle integrity v1 is implemented on `artifact-lifecycle-integrity-v1`
   (ADR-0038): new current results are selected through an atomic authority map and job-backed entries
   activate only after the exact producing job is durably succeeded; OCR text + quality publish as

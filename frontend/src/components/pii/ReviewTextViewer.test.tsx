@@ -116,7 +116,15 @@ const keptHighlightModel: AnchorBoundPiiHighlightModel = {
 
 const rejectedHighlightModel: AnchorBoundPiiHighlightModel = {
   ...highlightModel,
-  byView: { technical_raw_text: [], canonical_reading_text: [], layout_text: [] },
+  byView: {
+    technical_raw_text: [
+      { ...highlightModel.byView.technical_raw_text[0], review_state: "rejected" },
+    ],
+    canonical_reading_text: [
+      { ...highlightModel.byView.canonical_reading_text[0], review_state: "rejected" },
+    ],
+    layout_text: [],
+  },
 };
 
 const layoutHighlightModel: AnchorBoundPiiHighlightModel = {
@@ -232,12 +240,13 @@ describe("ReviewTextViewer", () => {
     expect(html).toContain('title="LOCATION');
   });
 
-  it("suppresses the entity hover title when meta is hidden (user view)", () => {
+  it("replaces the technical hover title with a plain-language one when meta is hidden (user view)", () => {
     const html = render("raw", null, false);
 
-    // The highlight itself remains; only the technical hover metadata is gone.
+    // The highlight itself remains; the technical enum/score tooltip becomes a readable label.
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
     expect(html).not.toContain('title="LOCATION');
+    expect(html).toContain('title="Ort · Wird pseudonymisiert"');
   });
 
   it("shows layout text as plain text with an explicit missing-layout notice", () => {
@@ -276,9 +285,31 @@ describe("ReviewTextViewer", () => {
 
     expect(html).toContain("Lesefreundliches ");
     expect(html).toContain(">Wien</mark>");
-    expect(html).toContain("Kanonischer Lesetext");
-    expect(html).toContain("Technischer Rohtext");
+    // User view uses plain toggle labels; the technical names stay dev-view-only.
+    expect(html).toContain("Lesetext");
+    expect(html).toContain("Technische Ansicht");
+    expect(html).not.toContain("Kanonischer Lesetext");
+    expect(html).not.toContain("Technischer Rohtext");
     expect(html).not.toContain("Layout-Text</button>");
+  });
+
+  it("hides the technical diagnostics hints in user view", () => {
+    const html = render(
+      "reading",
+      null,
+      false,
+      "Lesefreundliches Wien",
+      false,
+      evidenceOnlyHighlightModel,
+    );
+
+    expect(html).not.toContain("anchor-gebundenen Entity-Vertrag");
+    expect(html).not.toContain("lesefreundliche Hauptansicht");
+    expect(html).not.toContain("Anchor-Bindung");
+    expect(html).not.toContain("Evidence-only Fallback");
+    expect(html).not.toContain("Kanonische Ranges fehlen");
+    // The one reader-relevant fact stays, in plain language: some marks exist only in raw view.
+    expect(html).toContain("nur in der technischen Ansicht sichtbar");
   });
 
   it("does not highlight unmapped entities and shows the raw-only notice", () => {
@@ -350,38 +381,46 @@ describe("ReviewTextViewer review-decision awareness", () => {
     );
   }
 
-  it("does not highlight a rejected (false-positive) entity in raw mode", () => {
+  it("renders a rejected (false-positive) entity as a dismissed ghost in raw mode", () => {
+    // The decision stays visible and revisable in place: no fill, dashed frame, still a mark.
     const html = renderWithReview("raw", rejectedHighlightModel);
-    expect(html).not.toContain("<mark");
+    expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
+    expect(html).toContain('data-review-state="rejected"');
+    expect(html).toContain("bg-transparent");
+    expect(html).not.toContain("bg-emerald-200");
   });
 
-  it("does not highlight a rejected (false-positive) entity in reading mode either", () => {
+  it("renders a rejected (false-positive) entity as a dismissed ghost in reading mode too", () => {
     const html = renderWithReview("reading", rejectedHighlightModel);
-    expect(html).not.toContain("<mark");
+    expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
+    expect(html).toContain('data-review-state="rejected"');
+    expect(html).not.toContain("bg-emerald-200");
   });
 
   it("keeps highlighting a kept entity distinguishably in both modes", () => {
+    // "kept" (not pseudonymized): no fill, solid frame — still visible, still clickable.
     const raw = renderWithReview("raw", keptHighlightModel);
     const reading = renderWithReview("reading", keptHighlightModel);
     expect(raw).toContain(`<mark id="pii-mark-${occurrenceId}"`);
     expect(reading).toContain(`<mark id="pii-mark-${occurrenceId}"`);
-    expect(raw).toContain("opacity-60");
-    expect(reading).toContain("opacity-60");
+    expect(raw).toContain("ring-slate-400");
+    expect(reading).toContain("ring-slate-400");
+    expect(raw).not.toContain("bg-emerald-200");
   });
 
   it("renders exactly as before when no review data has loaded (legacy/missing)", () => {
     const withoutMap = renderWithReview("raw", highlightModel);
     expect(withoutMap).toContain(`<mark id="pii-mark-${occurrenceId}"`);
-    expect(withoutMap).not.toContain("opacity-60");
+    expect(withoutMap).not.toContain("bg-transparent");
   });
 
-  it("renders the default accepted (pseudonymize) status with no special modifier", () => {
+  it("renders the default accepted (pseudonymize) status as a plain colored highlight", () => {
     // "accepted" is the assumed default for every detected entity, so it must look like a plain
-    // highlight — only "kept" gets a distinguishing style.
+    // highlight — only "kept"/"rejected" get a distinguishing style.
     const html = renderWithReview("raw", highlightModel);
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
-    expect(html).not.toContain("opacity-60");
-    expect(html).not.toContain("ring-emerald");
+    expect(html).toContain("bg-emerald-200");
+    expect(html).not.toContain("bg-transparent");
   });
 
   it("makes a highlight clickable only when a selection handler is provided", () => {
@@ -464,7 +503,7 @@ describe("ReviewTextViewer review-decision awareness", () => {
     expect(unmapped).not.toContain(`pii-mark-${"d".repeat(32)}`);
   });
 
-  it("never shows a rejected manual addition as a highlight", () => {
+  it("shows a rejected manual addition as a dismissed ghost, not a colored highlight", () => {
     const html = render(
       "reading",
       null,
@@ -475,6 +514,10 @@ describe("ReviewTextViewer review-decision awareness", () => {
       [manualAddition({ review_status: "rejected" })],
     );
 
-    expect(html).not.toContain(`pii-mark-${"d".repeat(32)}`);
+    expect(html).toContain(`pii-mark-${"d".repeat(32)}`);
+    expect(html).toContain('data-review-state="rejected"');
+    // The manual-origin ring marks a pending pseudonymize-bound addition; a decided one uses the
+    // shared state look instead.
+    expect(html).not.toContain("ring-sky-500");
   });
 });

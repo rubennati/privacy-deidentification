@@ -458,6 +458,34 @@ describe("buildAnchorBoundPiiHighlights", () => {
     expect(metadata).not.toContain("Secret Value");
     expect(metadata).not.toContain("Wien");
   });
+
+  it("keeps a rejected entity renderable as a dismissed ghost but out of the summary", () => {
+    const model = buildAnchorBoundPiiHighlights(
+      contract([
+        anchorEntity({
+          review_state: "rejected",
+          binding_status: "missing",
+          mapping_status: "missing",
+          identity_basis: "evidence_only",
+          binding_reasons: ["anchor_binding_missing"],
+          display: {
+            ...anchorEntity().display,
+            canonical_highlight_range: null,
+          },
+        }),
+      ]),
+    );
+
+    // Still renderable in the raw view so the decision stays visible and revisable in place …
+    expect(model.byView.technical_raw_text).toHaveLength(1);
+    expect(model.byView.technical_raw_text[0].review_state).toBe("rejected");
+    // … but the warning/coverage summary describes only active entities.
+    expect(model.summary.missing_binding_count).toBe(0);
+    expect(model.summary.missing_canonical_count).toBe(0);
+    expect(model.summary.evidence_only_count).toBe(0);
+    expect(model.summary.missing_layout_count).toBe(0);
+    expect(model.summary.warning_codes).toEqual([]);
+  });
 });
 
 describe("buildManualAdditionHighlights", () => {
@@ -491,13 +519,13 @@ describe("buildManualAdditionHighlights", () => {
     expect(unmapped.raw).toHaveLength(0);
   });
 
-  it("excludes a rejected manual addition entirely", () => {
-    const { canonical, raw } = buildManualAdditionHighlights([
+  it("keeps a rejected manual addition renderable as a dismissed ghost", () => {
+    const { canonical } = buildManualAdditionHighlights([
       manualAddition({ review_status: "rejected" }),
     ]);
 
-    expect(canonical).toHaveLength(0);
-    expect(raw).toHaveLength(0);
+    expect(canonical).toHaveLength(1);
+    expect(canonical[0].review_state).toBe("rejected");
   });
 
   it("carries the resolved review status onto the highlight", () => {

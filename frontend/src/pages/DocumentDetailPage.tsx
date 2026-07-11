@@ -35,8 +35,13 @@ import {
   type PiiEntityContractV1,
 } from "../api/piiEntityContract";
 import { AddPiiManualEntity } from "../components/pii/AddPiiManualEntity";
+import {
+  PiiDecisionPopover,
+  type PiiDecisionTarget,
+} from "../components/pii/PiiDecisionPopover";
 import { PiiEntityList } from "../components/pii/PiiEntityList";
 import { PiiReviewGroupList } from "../components/pii/PiiReviewGroupList";
+import { ReviewSummaryBar } from "../components/pii/ReviewSummaryBar";
 import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
 import { PiiValidationTransparency } from "../components/pii/PiiValidationTransparency";
 import {
@@ -86,6 +91,13 @@ export default function DocumentDetailPage() {
     | { status: "ok"; contract: PiiEntityContractV1 }
   >({ status: "idle" });
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
+  // User-view in-place decision: which highlight was clicked and where its mark sits on screen.
+  // The decidable target itself is re-resolved from the current review result on every render, so
+  // a decision or re-run can never leave a stale popover open against outdated data.
+  const [decisionAnchor, setDecisionAnchor] = useState<{
+    entityId: string;
+    rect: { top: number; bottom: number; left: number; width: number };
+  } | null>(null);
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
   const [selectedTextRange, setSelectedTextRange] = useState<{
     start: number;
@@ -132,6 +144,7 @@ export default function DocumentDetailPage() {
     setText(null);
     setPii(null);
     setReviewResult(null);
+    setDecisionAnchor(null);
     setPiiEntityContractState({ status: "idle" });
     setLoading(true);
     setReviewTextMode("reading");
@@ -368,10 +381,66 @@ export default function DocumentDetailPage() {
   // else the user view is the sole, default experience.
   const effectiveViewMode: ViewMode = devGateEnabled ? viewMode : "user";
   const isDevView = effectiveViewMode === "dev";
-  // The review-decision panel is not dev-gated on the backend, so it shows in both views once
-  // there is something current to review; only the per-station Dev View entity list stays dev-only.
-  const showReviewColumn = piiStatus === "current";
-  const showSecondColumn = isDevView || showReviewColumn;
+  // Review interactions (decisions, jump targets) are only offered against a current PII result.
+  // The dev view keeps its second column (entity list + group cards); the user view reviews
+  // directly in the text via the decision popover, so it stays single-column.
+  const reviewInteractive = piiStatus === "current";
+  const showSecondColumn = isDevView;
+
+  // Resolve the clicked highlight against the *current* review result: a manual addition decides
+  // itself; an occurrence with an individual override decides that occurrence; everything else
+  // decides its whole entity group (same value everywhere in the document).
+  const decisionTarget: PiiDecisionTarget | null = (() => {
+    if (!decisionAnchor || !reviewResult) {
+      return null;
+    }
+    const addition = reviewResult.manual_additions.find(
+      (candidate) => candidate.addition_id === decisionAnchor.entityId,
+    );
+    if (addition) {
+      if (addition.artifact_currency === "stale") {
+        return null;
+      }
+      return {
+        scope: "manual_addition",
+        targetId: addition.addition_id,
+        entityType: addition.entity_type,
+        occurrenceCount: 1,
+        reviewStatus: addition.review_status,
+        currentDecision: addition.review_decision ?? "pseudonymize",
+      };
+    }
+    const occurrence = reviewResult.occurrences.find(
+      (candidate) => candidate.occurrence_id === decisionAnchor.entityId,
+    );
+    if (!occurrence) {
+      return null;
+    }
+    if (occurrence.decision_scope === "occurrence") {
+      return {
+        scope: "occurrence",
+        targetId: occurrence.occurrence_id,
+        entityType: occurrence.entity_type,
+        occurrenceCount: 1,
+        reviewStatus: occurrence.review_status,
+        currentDecision: occurrence.review_decision ?? "pseudonymize",
+      };
+    }
+    const group = reviewResult.groups.find(
+      (candidate) => candidate.entity_group_id === occurrence.entity_group_id,
+    );
+    if (!group) {
+      return null;
+    }
+    return {
+      scope: "entity_group",
+      targetId: group.entity_group_id,
+      entityType: group.entity_type,
+      occurrenceCount: group.occurrence_count,
+      reviewStatus: group.review_status,
+      currentDecision: group.review_decision ?? "pseudonymize",
+    };
+  })();
   const piiRunRequest: PiiRunRequest | undefined =
     devPiiSettingsEnabled && selectedPiiProfile !== ""
       ? { pii_profile: selectedPiiProfile }
@@ -439,6 +508,7 @@ export default function DocumentDetailPage() {
               mode={viewMode}
               onChange={(mode) => {
                 setViewMode(mode);
+                setDecisionAnchor(null);
                 if (mode === "user") setReviewTextMode("reading");
               }}
             />
@@ -574,8 +644,15 @@ export default function DocumentDetailPage() {
             />
           )}
           {/* User view gets a single product-facing analysis action; dev view keeps its separate
-              per-station controls above and never renders this panel. */}
-          {!isDevView && (
+              per-station controls above and never renders this panel. Once a current analysis
+              exists there is nothing a re-run would change for the reader, so the action
+              disappears instead of inviting a pointless (re-)run — it comes back by itself as
+              soon as any upstream artifact makes the analysis stale. */}
+          {!isDevView &&
+            (ocrStatus !== "current" ||
+              piiStatus !== "current" ||
+              isAnalysisRunning(analysisStep) ||
+              analysisError !== null) && (
             <div className="mb-5">
               <DocumentAnalysisPanel
                 step={analysisStep}
@@ -611,6 +688,11 @@ export default function DocumentDetailPage() {
               }
             >
               <div>
+                {/* User view: the former sidebar collapses into one quiet summary line; every
+                    decision happens directly on the highlight via the popover below. */}
+                {!isDevView && reviewInteractive && reviewResult && (
+                  <ReviewSummaryBar review={reviewResult} />
+                )}
                 <ReviewTextViewer
                   rawText={text.content.text}
                   readingText={text.content.reading_text}
@@ -620,11 +702,21 @@ export default function DocumentDetailPage() {
                   onModeChange={setReviewTextMode}
                   devMode={isDevView}
                   showEntityMeta={isDevView}
-                  onSelectEntity={showReviewColumn ? setSelectedOccurrenceId : undefined}
+                  onSelectEntity={
+                    !reviewInteractive
+                      ? undefined
+                      : isDevView
+                        ? (entityId) => setSelectedOccurrenceId(entityId)
+                        : (entityId, element) =>
+                            setDecisionAnchor({
+                              entityId,
+                              rect: element.getBoundingClientRect(),
+                            })
+                  }
                   manualAdditions={reviewResult?.manual_additions ?? []}
-                  onTextSelected={showReviewColumn ? setSelectedTextRange : undefined}
+                  onTextSelected={reviewInteractive ? setSelectedTextRange : undefined}
                 />
-                {showReviewColumn && text.content.reading_text && (
+                {reviewInteractive && text.content.reading_text && (
                   <AddPiiManualEntity
                     documentId={documentId}
                     entityTypes={pii?.content.configured_entity_types ?? []}
@@ -640,8 +732,8 @@ export default function DocumentDetailPage() {
                   <p className="mt-3 text-xs text-muted">PII-Erkennung noch nicht ausgeführt.</p>
                 )}
               </div>
-              {isDevView ? (
-                pii ? (
+              {isDevView &&
+                (pii ? (
                   <div className="max-h-[70vh] overflow-auto">
                     <PiiEntityList
                       entities={pii.content.entities}
@@ -654,7 +746,7 @@ export default function DocumentDetailPage() {
                       onReviewChanged={(review) => void refreshPiiReviewAndContract(review)}
                       selectedOccurrenceId={selectedOccurrenceId}
                     />
-                    {showReviewColumn && (
+                    {reviewInteractive && (
                       <PiiReviewGroupList
                         documentId={documentId}
                         review={reviewResult}
@@ -669,23 +761,26 @@ export default function DocumentDetailPage() {
                     <h2 className="font-semibold text-ink">Erkannte Entities</h2>
                     <p className="mt-4 text-sm text-muted">PII-Erkennung noch nicht ausgeführt.</p>
                   </section>
-                )
-              ) : (
-                showReviewColumn && (
-                  <div className="max-h-[70vh] overflow-auto">
-                    <PiiReviewGroupList
-                      documentId={documentId}
-                      review={reviewResult}
-                      onReviewChanged={(review) => void refreshPiiReviewAndContract(review)}
-                      selectedOccurrenceId={selectedOccurrenceId}
-                      showTechnicalDetails={false}
-                    />
-                  </div>
-                )
-              )}
+                ))}
             </div>
           )}
         </section>
+
+        {!isDevView && decisionAnchor && decisionTarget && (
+          <PiiDecisionPopover
+            documentId={documentId}
+            target={decisionTarget}
+            anchorRect={decisionAnchor.rect}
+            onClose={() => setDecisionAnchor(null)}
+            onReviewChanged={(review) => void refreshPiiReviewAndContract(review)}
+          />
+        )}
+
+        {/* A quiet page ending instead of an abrupt white cut-off below the last card. */}
+        <footer className="mt-12 border-t border-card-border pb-2 pt-5 text-center text-xs text-muted">
+          Alle Analysen laufen lokal auf diesem Server. Inhalte werden angezeigt, aber nie
+          verändert.
+        </footer>
       </div>
     </main>
   );
