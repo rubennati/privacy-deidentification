@@ -476,9 +476,11 @@ def _row_lineage_segments(
 ) -> list[ReadingTextMapSegment]:
     """Adapt builder-emitted row lineage segments to the offset projection shape.
 
-    Every segment here already carries ``mapping_status == "exact"`` and a source range by the
-    schema's own construction -- there is no ambiguous/inserted state to filter out, unlike the
-    geometry projection below.
+    A segment's own ``mapping_status`` (``exact``/``normalized``/``merged``) is honestly carried
+    through as exact-vs-normalized here, matching the same convention the geometry-projection
+    adapter below uses (``ReadingTextMapSegment`` has no separate "merged" state). An ``inserted``
+    synthetic-heading segment carries no source range and is excluded here exactly like an
+    ``ambiguous`` geometry-projection segment -- it was never a raw-token candidate.
     """
     if row_lineage_map is None:
         return []
@@ -489,7 +491,7 @@ def _row_lineage_segments(
             raw_start=segment.source_range.start,
             raw_end=segment.source_range.end,
             page_number=segment.page_number,
-            mapping_status="exact",
+            mapping_status="exact" if segment.mapping_status == "exact" else "normalized",
         )
         for segment in row_lineage_map.segments
         if segment.source_range is not None

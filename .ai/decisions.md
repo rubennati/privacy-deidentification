@@ -203,3 +203,23 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   `buildManualAdditionHighlights`, `AddPiiManualEntity.tsx`), verified with a full backend/frontend
   test suite plus a live end-to-end browser session confirming `pii_result`/the entity contract stay
   byte-identical.
+- [ADR-0036](../docs/adr/0036-reading-text-row-construction-lineage-v2.md) — **Reading-text row
+  construction lineage v2 (Phase 2).** Re-scopes and delivers ADR-0032's own "Next" section:
+  builder-emitted lineage extends from the plain-paragraph/body path alone to party/two-column
+  reordering (whole-row reorder preserved; a row split across both sides still declines), keyword-
+  header and generic geometric tables (row-granularity per rendered table line via a shared
+  `_extend_aligned_table_rows`; a fused header still declines), and metadata/offer-field rows (a
+  fused multi-field row still declines). `RowLineageSegment` gains a `status:
+  "exact"|"normalized"|"merged"` computed purely from already-known lengths, never text content;
+  `ReadingTextRowLineageMap`'s validator now accepts `exact`/`normalized`/`merged`/`inserted`
+  (previously only `exact`). Synthetic headings (`"ANGEBOT"`/`"LEISTUNGEN"`/`"SUMMEN"` — a closed,
+  code-owned vocabulary, not a text search) are now recognized as explicit `"inserted"` segments
+  instead of silent gaps. Fixed a latent bug in `document_text_anchors.py`'s row-lineage adapter
+  that hardcoded `mapping_status="exact"` regardless of a segment's real status. Multi-column prose
+  reconstruction and in-row label/value splitting remain deliberately fallback-only (a single source
+  row's cells can land in different synthesized columns, or a sub-row split point is genuinely
+  unknowable) and are now documented as such. An unexpected consequence: a fully attributed,
+  exact-length row now resolves a repeated-interior-token multi-word entity via simple arithmetic
+  projection, without needing the boundary-bridging fallback added for the post-hoc mechanisms at
+  all. No detection, active-PII-input, routing, schema-breaking, pseudonymization, redaction,
+  export, or dependency change; `reading_text` bytes remain byte-identical (907 tests passing).

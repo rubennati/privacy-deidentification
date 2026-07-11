@@ -689,17 +689,22 @@ class ReadingTextRowLineageMap(BaseModel):
     here is never derived by scanning the finished canonical string for a match: its raw range was
     already known and attached to the contributing ``ReadingRow`` at collection time, before its
     line was ever rendered, and its canonical range is computed purely by walking the same
-    block/line join arithmetic the text was assembled with. Every segment's ``mapping_status`` is
-    ``"exact"`` with ``confidence=1.0`` — there is no ``ambiguous``/``inserted`` state here, because
-    an uncertain or reordering rendering path simply contributes no segment rather than a weaker
-    claim.
+    block/line join arithmetic the text was assembled with.
 
-    This map is intentionally **sparse**, unlike the geometry projection's full-coverage model: it
-    only ever covers the plain-paragraph/body rendering path (``reading_text.py``'s
-    ``_join_continuations_with_flags``). Party columns, tables, multi-column reconstruction,
-    metadata, and post-table rendering redistribute or reformat cells and are never attributed here
-    — those canonical ranges simply have no segment, and downstream consumers should keep falling
-    back to :class:`ReadingTextGeometryProjectionMap`/``reading_text_map`` for them.
+    A segment's ``mapping_status`` is one of ``"exact"`` (the rendered line is byte-identical to its
+    raw span), ``"normalized"`` (same row, but whitespace/formatting changed length — e.g. a
+    reformatted table row or a party-column line), ``"merged"`` (a wrap continuation or adjacent
+    label/value pairing unioned *more than one* row's own ranges), or ``"inserted"`` (a synthetic
+    heading this builder itself inserted — e.g. ``ANGEBOT``/``LEISTUNGEN``/``SUMMEN`` — carrying no
+    source range because none exists). There is still no ``ambiguous`` state here: an uncertain or
+    reordering rendering path this step cannot attribute simply contributes no segment (a canonical
+    gap) rather than a weaker claim.
+
+    Coverage remains **partial**, unlike the geometry projection's full-coverage model: rendering
+    paths that redistribute or reformat cells beyond what this step can safely attribute (e.g.
+    multi-column prose reconstruction, in-row label/value splitting, fused table headers) still
+    contribute no segment for those spans, and downstream consumers should keep falling back to
+    :class:`ReadingTextGeometryProjectionMap`/``reading_text_map`` for them.
     """
 
     map_version: Literal["1"] = "1"
@@ -712,17 +717,28 @@ class ReadingTextRowLineageMap(BaseModel):
         previous_canonical_end = 0
         raw_ranges: list[tuple[int, int]] = []
         for segment in self.segments:
-            if segment.mapping_status != "exact" or segment.source_range is None:
-                raise ValueError("row lineage segments must be exact with a source range")
+            if segment.mapping_status not in ("exact", "normalized", "merged", "inserted"):
+                raise ValueError(
+                    "row lineage segments must be exact, normalized, merged, or inserted"
+                )
+            if segment.mapping_status == "inserted":
+                if segment.source_range is not None:
+                    raise ValueError(
+                        "an inserted row lineage segment must not carry a source range"
+                    )
+            elif segment.source_range is None:
+                raise ValueError("an attributed row lineage segment requires a source range")
             if segment.canonical_start < previous_canonical_end:
                 raise ValueError("row lineage segments must be ordered and non-overlapping")
             previous_canonical_end = segment.canonical_end
-            start, end = segment.source_range.start, segment.source_range.end
-            if any(
-                start < other_end and other_start < end for other_start, other_end in raw_ranges
-            ):
-                raise ValueError("row lineage source ranges must not overlap")
-            raw_ranges.append((start, end))
+            if segment.source_range is not None:
+                start, end = segment.source_range.start, segment.source_range.end
+                if any(
+                    start < other_end and other_start < end
+                    for other_start, other_end in raw_ranges
+                ):
+                    raise ValueError("row lineage source ranges must not overlap")
+                raw_ranges.append((start, end))
         return self
 
 

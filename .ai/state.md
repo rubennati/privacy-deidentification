@@ -858,6 +858,32 @@ unchanged in User View, while Dev View retains a separate section only for human
 that have no detector card. No backend, artifact, detection, review semantics, manual-addition,
 dependency, or privacy-boundary change.
 
+**Latest checkpoint (Reading-text row construction lineage v2 — Phase 2):** No engine level change.
+Re-scopes and delivers ADR-0032's own "Next" section: builder-emitted, construction-time row
+lineage now extends beyond the plain-paragraph/body path to party/two-column heading grouping (a
+row wholly on one side keeps its own range through the reorder; a row split across both sides still
+declines), keyword-header and generic geometric tables (row-granularity lineage per rendered table
+line, shared between both table renderers; a fused 1–2-cell header still declines), and
+metadata/offer-field rows (a single untouched row is attributed; a row fused into several
+`"Label: value"` fields still declines). `RowLineageSegment` gains a `status:
+"exact"|"normalized"|"merged"` computed purely from already-known lengths; the synthetic
+`"ANGEBOT"`/`"LEISTUNGEN"`/`"SUMMEN"` headings this module inserts are now recognized as explicit
+`"inserted"` segments (checked against a closed, code-owned vocabulary, never a text search) instead
+of silent gaps. Fixed a latent adapter bug in `document_text_anchors.py` that hardcoded
+`mapping_status="exact"` regardless of a row-lineage segment's real status. Multi-column prose
+reconstruction and in-row label/value splitting remain deliberately fallback-only — documented and
+regression-tested as explicit, not silently missing. A notable consequence: a fully attributed,
+exact-length row now resolves a repeated-interior-token multi-word entity (the recently-fixed
+cross-view highlight case) via simple arithmetic projection, without needing the boundary-bridging
+fallback added for the post-hoc mechanisms at all — proven end to end through the real entity
+contract with `reading_text_map` deliberately empty and no geometry projection map present. Genuine
+duplicate entities at distinct raw positions each resolve their own correct, distinct canonical
+range from position alone, never guessed. No detection, active-PII-input, routing, schema-breaking,
+pseudonymization, redaction, export, or dependency change; `reading_text` bytes are unchanged (907
+backend tests passing, full suite green). See
+[ADR-0036](../docs/adr/0036-reading-text-row-construction-lineage-v2.md). Cell-level granularity and
+multi-column prose lineage remain open, re-scoped explicitly for a future PR rather than assumed.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
