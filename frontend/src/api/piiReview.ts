@@ -4,7 +4,7 @@
 
 import { WorkstationApiError } from "./workstations";
 
-export type PiiReviewDecisionScope = "entity_group" | "occurrence";
+export type PiiReviewDecisionScope = "entity_group" | "occurrence" | "manual_addition";
 // A freshly detected entity is assumed "pseudonymize" by default — there is no separate "pending"
 // value. A reviewer only has to act to opt an entity *out* of pseudonymization: "keep" it as-is,
 // or mark it a "false_positive" (not PII at all).
@@ -69,6 +69,24 @@ export interface PiiReviewOccurrence {
   decision_scope: PiiReviewDecisionScope | null;
 }
 
+// PII L14 / Review L10 (ADR-0035): a reviewer-added span the engine missed. Parallel to, and never
+// merged into, `groups`/`occurrences` (both detector-origin only) — see `manual_additions` below.
+export interface PiiManualAddition {
+  addition_id: string;
+  entity_type: string;
+  canonical_start: number;
+  canonical_end: number;
+  text_artifact_id: string;
+  raw_start: number | null;
+  raw_end: number | null;
+  raw_projection_status: "exact" | "partial" | "unmapped";
+  origin: "human";
+  note: string | null;
+  created_at: string;
+  review_status: PiiReviewStatus;
+  review_decision: PiiReviewDecisionValue | null;
+}
+
 export interface PiiReviewResult {
   document_id: string;
   artifact_id: string;
@@ -77,9 +95,11 @@ export interface PiiReviewResult {
   input_text_artifact_id?: string | null;
   groups: PiiEntityGroupReview[];
   occurrences: PiiReviewOccurrence[];
+  manual_additions: PiiManualAddition[];
   // Review L8 (ADR-0034): decisions recorded against a since-superseded PII result were already
   // never silently reapplied; these additive fields make that explicit instead of looking
-  // identical to "no decision recorded".
+  // identical to "no decision recorded". Also covers manual additions whose text_artifact_id no
+  // longer matches the current text result (PII L14 / Review L10, ADR-0035).
   stale_decision_count: number;
   has_stale_decisions: boolean;
 }
@@ -98,6 +118,23 @@ export interface PiiReviewDecisionAck {
   decision: PiiReviewDecisionValue;
   review_status: PiiReviewStatus;
   updated_at: string;
+}
+
+export interface PiiManualAdditionRequest {
+  entity_type: string;
+  canonical_start: number;
+  canonical_end: number;
+  note?: string;
+}
+
+export interface PiiManualAdditionAck {
+  recorded: boolean;
+  addition_id: string;
+  entity_type: string;
+  canonical_start: number;
+  canonical_end: number;
+  raw_projection_status: "exact" | "partial" | "unmapped";
+  created_at: string;
 }
 
 /** Stable per-occurrence key → review status lookup, e.g. for highlight suppression. */
@@ -153,4 +190,38 @@ export async function submitPiiReviewDecision(
     throw new WorkstationApiError(detail, response.status, correlationId);
   }
   return (await response.json()) as PiiReviewDecisionAck;
+}
+
+/** Add a span the engine missed (PII L14 / Review L10, ADR-0035). Offsets are canonical-text
+ *  offsets into the currently rendered `reading_text` — never raw offsets. */
+export async function addPiiManualEntity(
+  documentId: string,
+  request: PiiManualAdditionRequest,
+): Promise<PiiManualAdditionAck> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `/api/documents/${encodeURIComponent(documentId)}/pii/review/manual-additions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+  } catch {
+    throw new WorkstationApiError("Keine Verbindung zum Server.", 0);
+  }
+  if (!response.ok) {
+    let detail = "Ergänzung konnte nicht gespeichert werden.";
+    let correlationId: string | null = null;
+    try {
+      const data = (await response.json()) as { detail?: string; correlation_id?: string | null };
+      detail = data.detail ?? detail;
+      correlationId = data.correlation_id ?? null;
+    } catch {
+      // Keep the safe fallback; error bodies must not be assumed to be JSON.
+    }
+    throw new WorkstationApiError(detail, response.status, correlationId);
+  }
+  return (await response.json()) as PiiManualAdditionAck;
 }

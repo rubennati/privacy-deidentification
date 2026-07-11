@@ -7,7 +7,7 @@ import type {
   ReviewReadyAnchorBoundPiiEntity,
 } from "../api/piiEntityContract";
 import type { PiiEntity } from "../api/workstations";
-import type { PiiReviewStatus } from "../api/piiReview";
+import type { PiiManualAddition, PiiReviewStatus } from "../api/piiReview";
 
 export type HighlightSegment =
   | { kind: "text"; text: string }
@@ -31,6 +31,9 @@ export interface AnchorBoundPiiHighlight {
   needs_review: boolean;
   reason_codes: string[];
   confidence: number;
+  /** Set only for a manually added entity (PII L14 / Review L10, ADR-0035); absent for every
+   *  detector-derived highlight, so `origin === "human"` is the render-time distinguishing check. */
+  origin?: "human";
 }
 
 export type AnchorBoundHighlightSegment =
@@ -174,6 +177,81 @@ export function buildAnchorBoundPiiHighlights(
 
 export const buildHighlightsFromAnchorBoundEntities = buildAnchorBoundPiiHighlights;
 export const buildViewHighlightsFromEntityContract = buildAnchorBoundPiiHighlights;
+
+export interface ManualAdditionHighlights {
+  canonical: AnchorBoundPiiHighlight[];
+  raw: AnchorBoundPiiHighlight[];
+}
+
+/**
+ * Display-only adapter from manual additions (PII L14 / Review L10, ADR-0035) to the same highlight
+ * shape the anchor-bound entity contract produces — a frontend-side merge only, never touching the
+ * backend contract/`pii_result`. Canonical offsets are always available (that's what was captured);
+ * the raw view is populated only when the reverse projection was `"exact"`, mirroring how detector
+ * entities already only highlight raw when their own mapping is exact, never guessed. A `rejected`
+ * addition is excluded, matching how rejected detector entities never reach this component either.
+ */
+export function buildManualAdditionHighlights(
+  manualAdditions: readonly PiiManualAddition[],
+): ManualAdditionHighlights {
+  const canonical: AnchorBoundPiiHighlight[] = [];
+  const raw: AnchorBoundPiiHighlight[] = [];
+
+  for (const addition of manualAdditions) {
+    if (addition.review_status === "rejected") {
+      continue;
+    }
+    canonical.push(
+      manualAdditionHighlight(
+        addition,
+        "canonical_reading_text",
+        addition.canonical_start,
+        addition.canonical_end,
+        "exact",
+      ),
+    );
+    if (
+      addition.raw_projection_status === "exact" &&
+      addition.raw_start != null &&
+      addition.raw_end != null
+    ) {
+      raw.push(
+        manualAdditionHighlight(addition, "technical_raw_text", addition.raw_start, addition.raw_end, "exact"),
+      );
+    }
+  }
+
+  canonical.sort(compareAnchorHighlightPosition);
+  raw.sort(compareAnchorHighlightPosition);
+  return { canonical, raw };
+}
+
+function manualAdditionHighlight(
+  addition: PiiManualAddition,
+  sourceName: PiiHighlightView,
+  start: number,
+  end: number,
+  mappingStatus: PiiEntityMappingStatus,
+): AnchorBoundPiiHighlight {
+  return {
+    entity_id: addition.addition_id,
+    entity_type: addition.entity_type,
+    identity_basis: "evidence_only",
+    source_entity_ids: [addition.addition_id],
+    primary_source_entity_id: addition.addition_id,
+    anchor_ids: [],
+    source_name: sourceName,
+    start,
+    end,
+    binding_status: "not_applicable",
+    mapping_status: mappingStatus,
+    review_state: addition.review_status,
+    needs_review: false,
+    reason_codes: ["manual_addition"],
+    confidence: 1,
+    origin: "human",
+  };
+}
 
 export function buildAnchorBoundHighlightSegments(
   text: string,

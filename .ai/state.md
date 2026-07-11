@@ -26,10 +26,10 @@
   anchor-bound entity identity; missing canonical/layout ranges remain visible reason-coded states,
   never frontend guesses. Formal Review L8 `review_result` is now delivered (ADR-0034, see the
   "Latest checkpoint" entries below). PII L14 / Review L10 (manual add of missed entities) is now
-  **scoped, not implemented** (ADR-0035, docs-only): a new `manual_addition` record layered on the
+  **delivered** (ADR-0035, `pii-l14-manual-add-v1`): a new `manual_addition` record layered on the
   existing decision log, deliberately kept out of `pii_result` and the anchor-bound entity contract
-  because both structurally assume a detector-originated span. The next engine priority is
-  implementing that design (`pii-l14-manual-add-v1`).
+  because both structurally assume a detector-originated span. Re-run the checkpoint loop for the
+  next engine priority.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
 
@@ -156,7 +156,7 @@
     dictionary/lexicon, second OCR engine, or local LLM is used. `details` remains
     `dict[str, int]`; no raw token text is stored. See
     [ADR-0026](../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md).
-- **PII/Sensitive-Data: L13 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
+- **PII/Sensitive-Data: L14 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
   entity grouping (L11) is delivered as a derived view (`pii_grouping.py`) over `pii_result`, paired
   with a lineage-bound review-decision overlay: every detected entity defaults to `pseudonymize`
   (no separate "pending" state), and a reviewer opts an entity out via `keep` or `false_positive` —
@@ -174,11 +174,19 @@
   `source_observations` carry detector evidence; raw + optional canonical ranges remain
   view-specific display/evidence; provenance and review state are preserved; metadata stays
   text-free. Review decisions now carry direct PII + Text artifact lineage in both new JSONL records
-  and immutable snapshots, completing binding confirm/reject at PII L13.
-- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6–L9 done.** Grouped
+  and immutable snapshots, completing binding confirm/reject at PII L13. **Manual add (L14)** is
+  now delivered: a reviewer adds a span the engine missed as a distinct `manual_addition`, captured
+  against canonical `reading_text` offsets with a best-effort raw-span reverse projection reusing
+  the Text Anchor Graph's existing raw↔canonical pairing — never merged into `pii_result` or the
+  anchor-bound entity contract, since both structurally assume a detector origin. See
+  [ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md).
+- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6–L10 done.** Grouped
   occurrences and the lineage-bound JSONL decision log now produce an immutable `review_result`
   snapshot after every decision. Superseded decisions are explicitly surfaced as stale and never
   reapplied; direct text-artifact lineage completes confirm/reject semantics at Review L9/PII L13.
+  **Manual add (L10)** is now delivered alongside PII L14 above — a human-added span rejects,
+  keeps, or gets pseudonymized through the existing decision endpoint, and staleness for it keys off
+  the text artifact rather than the PII artifact.
 - **Benchmark/Regression: L10 done.** L9 compares the newest available immutable PII artifact for
   every configured profile in one read-only invocation and reports missing profile coverage;
   the previously delivered OCR confidence/coverage columns complete cumulative L10.
@@ -804,6 +812,51 @@ anchor-graph, active-PII-input, pseudonymization, redaction, export, dependency,
 introduced by this checkpoint. See
 [ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md). Next: implement this design as
 the `pii-l14-manual-add-v1` branch, then re-run the checkpoint loop.
+
+**Latest checkpoint (PII L14 / Review L10 — manual add v1, implemented):** PII advances from L13 to
+**L14 done**; Review advances from L9 to **L10 done**. Implements the design scoped in the previous
+entry: `PiiManualAddition`/`PiiManualAdditionRecord`/`PiiManualAdditionRequest`/
+`PiiManualAdditionAck` in `schemas.py`; a new `pii_manual_addition.py` module whose
+`resolve_canonical_span_to_raw` filters the Text Anchor Graph's existing raw↔canonical anchor
+pairing rather than adding a new matching heuristic (no anchors overlap → `unmapped`; full
+canonical coverage with a contiguous raw span → `exact`; otherwise a raw envelope, `partial`); and
+`add_pii_manual_entity`/`POST …/pii/review/manual-additions` in `pii_review_service.py`/`api/pii.py`.
+`_load_latest_decisions`, `_count_stale_decisions`, and `_target_exists` became target-type-aware:
+entity-group/occurrence items stay scoped to the exact current `pii_result` artifact id (unchanged
+behavior), while manual-addition items scope to `text_artifact_id` instead, since a manual addition
+has no detector origin to key on — a PII re-run alone never makes one stale, only a new text
+artifact does. Manual additions are never merged into `pii_result` or `AnchorBoundPiiEntityV1`; they
+surface only through the additive `PiiReviewResult.manual_additions` list, and an addition's own
+accept/keep/reject reuses the existing decision endpoint (`target_type: "manual_addition"`) rather
+than a new action. Frontend: `getCharacterOffsetsFromSelection` (`textSelection.ts`, using the
+`Range.setEnd` + `toString().length` technique, wired only into the canonical reading-text view);
+`buildManualAdditionHighlights` (`piiHighlights.ts`, a display-only merge into the existing
+highlight-building pipeline — canonical always, raw only when the reverse projection is exact —
+never touching the backend contract); a distinguishing `ring-2 ring-sky-500` highlight plus
+"Manuell hinzugefügt" tooltip text for `origin: "human"` spans in `PiiTextViewer.tsx`; a "Manuelle
+Ergänzungen" list in `PiiReviewGroupList.tsx` reusing the exact same decision-`<select>` pattern as
+groups/occurrences; and a new `AddPiiManualEntity.tsx` panel (selection preview, an entity-type
+picker sourced from the run's own `configured_entity_types`, submit) wired into
+`DocumentDetailPage.tsx`. `make lint`/`make typecheck`/`make test` pass for both backend (mypy,
+Ruff, full pytest suite) and frontend (tsc, ESLint, full Vitest suite); a live `make up` browser
+session confirmed the full flow end to end — selecting "2019" in a synthetic DOCX's reading text,
+adding it as `DATE_TIME`, an exact raw-span resolution, the distinguishing highlight/tooltip, the
+review-list entry, a `false_positive` decision removing the highlight and flipping the status, and
+`GET …/pii` / `GET …/pii/entity-contract` staying byte-identical (7/7 entities, the manual addition
+absent from both) before and after. No dependency, recognizer, detection, `pii_result` schema,
+anchor-graph, active-PII-input, pseudonymization, redaction, or export change. See
+[ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md). Next: re-run the checkpoint
+loop against this file's current-sequence section for the next engine priority.
+
+**Latest checkpoint (Unified Dev View entity review cards):** No engine level or contract change.
+The Dev View no longer renders detector entities once in `PiiEntityList` and again in the separate
+grouped `PiiReviewGroupList`. Each detected-entity card now combines recognizer evidence, dev
+feedback, current binding status, and an occurrence-level `pseudonymize`/`keep`/`false_positive`
+decision; refreshing that decision still uses the existing review API and keeps text highlights in
+sync. Clicking a text highlight scrolls to the same unified card. The grouped review UI remains
+unchanged in User View, while Dev View retains a separate section only for human-added entities
+that have no detector card. No backend, artifact, detection, review semantics, manual-addition,
+dependency, or privacy-boundary change.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

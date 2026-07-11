@@ -1,4 +1,5 @@
-import type { AnchorBoundPiiHighlightModel } from "../../lib/piiHighlights";
+import type { PiiManualAddition } from "../../api/piiReview";
+import { buildManualAdditionHighlights, type AnchorBoundPiiHighlightModel } from "../../lib/piiHighlights";
 import { PiiTextViewer } from "./PiiTextViewer";
 
 export type ReviewTextMode = "reading" | "raw" | "layout";
@@ -15,6 +16,12 @@ interface ReviewTextViewerProps {
   showEntityMeta?: boolean;
   /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
   onSelectEntity?: (entityId: string) => void;
+  /** Reviewer-added spans (PII L14 / Review L10, ADR-0035), merged into the highlight display only
+   *  — never touching the backend anchor-bound entity contract. */
+  manualAdditions?: readonly PiiManualAddition[];
+  /** Called with character offsets on a text selection; only wired into the canonical reading-text
+   *  view (ADR-0035: canonical-text offsets only). */
+  onTextSelected?: (offsets: { start: number; end: number }) => void;
 }
 
 const MODE_BUTTON_BASE = "rounded-md px-3 py-1.5 text-xs font-medium transition-colors";
@@ -29,6 +36,8 @@ export function ReviewTextViewer({
   devMode = false,
   showEntityMeta = true,
   onSelectEntity,
+  manualAdditions = [],
+  onTextSelected,
 }: ReviewTextViewerProps) {
   const hasReadingText = readingText != null;
   const hasLayoutText = layoutText != null;
@@ -38,8 +47,12 @@ export function ReviewTextViewer({
       : mode === "reading" && hasReadingText
         ? "reading"
         : "raw";
-  const rawHighlights = highlightModel.byView.technical_raw_text;
-  const readingHighlights = highlightModel.byView.canonical_reading_text;
+  const manualAdditionHighlights = buildManualAdditionHighlights(manualAdditions);
+  const rawHighlights = [...highlightModel.byView.technical_raw_text, ...manualAdditionHighlights.raw];
+  const readingHighlights = [
+    ...highlightModel.byView.canonical_reading_text,
+    ...manualAdditionHighlights.canonical,
+  ];
   const layoutHighlights = highlightModel.byView.layout_text;
   const hasMissingCanonicalMapping =
     highlightModel.summary.missing_canonical_count > 0 ||
@@ -180,6 +193,7 @@ export function ReviewTextViewer({
                 highlights={readingHighlights}
                 showEntityMeta={showEntityMeta}
                 onSelectEntity={onSelectEntity}
+                onTextSelected={onTextSelected}
               />
             ) : (
               <p className="text-sm text-muted">Der kanonische Lesetext ist leer.</p>

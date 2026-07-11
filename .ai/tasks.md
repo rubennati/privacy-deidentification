@@ -16,7 +16,7 @@
 - [x] Benchmark L9 — report all profiles in one invocation.
 - [x] Re-scope and extend construction-time OCR lineage for unchanged post-table rows.
 - [x] Complete the prerequisite checkpoint and direct lineage for PII L13 / Review L9.
-- [ ] PII L14 / Review L10 — manual add of missed entities.
+- [x] PII L14 / Review L10 — manual add of missed entities.
 
 ## Later
 

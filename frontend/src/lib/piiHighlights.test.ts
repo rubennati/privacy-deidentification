@@ -2,11 +2,32 @@ import { describe, expect, it } from "vitest";
 
 import type { PiiEntityContractV1, ReviewReadyAnchorBoundPiiEntity } from "../api/piiEntityContract";
 import type { PiiEntity } from "../api/workstations";
+import type { PiiManualAddition } from "../api/piiReview";
 import {
   buildAnchorBoundHighlightSegments,
   buildAnchorBoundPiiHighlights,
   buildHighlightSegments,
+  buildManualAdditionHighlights,
 } from "./piiHighlights";
+
+function manualAddition(overrides: Partial<PiiManualAddition> = {}): PiiManualAddition {
+  return {
+    addition_id: "d".repeat(32),
+    entity_type: "LOCATION",
+    canonical_start: 17,
+    canonical_end: 21,
+    text_artifact_id: "e".repeat(32),
+    raw_start: 6,
+    raw_end: 10,
+    raw_projection_status: "exact",
+    origin: "human",
+    note: null,
+    created_at: "2026-07-11T10:00:00Z",
+    review_status: "accepted",
+    review_decision: null,
+    ...overrides,
+  };
+}
 
 function entity(
   id: string,
@@ -412,5 +433,52 @@ describe("buildAnchorBoundPiiHighlights", () => {
 
     expect(metadata).not.toContain("Secret Value");
     expect(metadata).not.toContain("Wien");
+  });
+});
+
+describe("buildManualAdditionHighlights", () => {
+  it("always highlights the canonical span, marked with origin=human", () => {
+    const { canonical } = buildManualAdditionHighlights([manualAddition()]);
+
+    expect(canonical).toHaveLength(1);
+    expect(canonical[0]).toMatchObject({
+      entity_id: "d".repeat(32),
+      entity_type: "LOCATION",
+      source_name: "canonical_reading_text",
+      start: 17,
+      end: 21,
+      origin: "human",
+    });
+  });
+
+  it("highlights the raw span only when the reverse projection is exact", () => {
+    const exact = buildManualAdditionHighlights([manualAddition({ raw_projection_status: "exact" })]);
+    expect(exact.raw).toHaveLength(1);
+    expect(exact.raw[0]).toMatchObject({ source_name: "technical_raw_text", start: 6, end: 10 });
+
+    const partial = buildManualAdditionHighlights([
+      manualAddition({ raw_projection_status: "partial" }),
+    ]);
+    expect(partial.raw).toHaveLength(0);
+
+    const unmapped = buildManualAdditionHighlights([
+      manualAddition({ raw_projection_status: "unmapped", raw_start: null, raw_end: null }),
+    ]);
+    expect(unmapped.raw).toHaveLength(0);
+  });
+
+  it("excludes a rejected manual addition entirely", () => {
+    const { canonical, raw } = buildManualAdditionHighlights([
+      manualAddition({ review_status: "rejected" }),
+    ]);
+
+    expect(canonical).toHaveLength(0);
+    expect(raw).toHaveLength(0);
+  });
+
+  it("carries the resolved review status onto the highlight", () => {
+    const { canonical } = buildManualAdditionHighlights([manualAddition({ review_status: "kept" })]);
+
+    expect(canonical[0].review_state).toBe("kept");
   });
 });

@@ -2244,7 +2244,7 @@ class PiiEntityGroup(BaseModel):
         return self
 
 
-PiiReviewDecisionScope = Literal["entity_group", "occurrence"]
+PiiReviewDecisionScope = Literal["entity_group", "occurrence", "manual_addition"]
 # A freshly detected entity is assumed "pseudonymize" by default — there is no separate "pending"
 # state. A reviewer only has to act to opt an entity *out* of pseudonymization, either because it
 # should be kept as-is ("keep") or because it is not PII at all ("false_positive").
@@ -2279,6 +2279,7 @@ class PiiReviewDecisionRecord(BaseModel):
     a stale decision.
     """
 
+    record_type: Literal["decision"] = "decision"
     schema_version: Literal["1"] = "1"
     app_version: str
     recorded_at: str
@@ -2308,6 +2309,114 @@ class PiiReviewDecisionAck(BaseModel):
     decision: PiiReviewDecisionValue
     review_status: PiiReviewStatus
     updated_at: str
+
+
+class PiiManualAdditionRequest(BaseModel):
+    """Request body to add a span the engine missed (PII L14 / Review L10, ADR-0035).
+
+    Offsets are canonical-text offsets (into the latest ``reading_text``), not raw offsets — the
+    reviewer selects in the canonical reading-text view, which is the human-facing default (L10.5).
+    """
+
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    canonical_start: int = Field(ge=0)
+    canonical_end: int = Field(gt=0)
+    note: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _normalize_note(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def _validate_span(self) -> PiiManualAdditionRequest:
+        if self.canonical_end <= self.canonical_start:
+            raise ValueError("canonical_end must be after canonical_start")
+        return self
+
+
+class PiiManualAdditionRecord(BaseModel):
+    """One persisted manual-addition line, appended to the same decision JSONL log (ADR-0035).
+
+    Distinguished from :class:`PiiReviewDecisionRecord` by ``record_type``. Unlike a decision, a
+    manual addition has no originating ``pii_result`` entity, so it cannot be scoped to a
+    ``pii_result`` artifact id the way decisions are — it is instead scoped to the ``text_result``
+    its canonical offsets were captured against. ``pii_artifact_id`` is informational lineage only
+    (the PII run active at add time); it is never used for staleness or target-existence checks.
+    """
+
+    record_type: Literal["manual_addition"] = "manual_addition"
+    schema_version: Literal["1"] = "1"
+    app_version: str
+    recorded_at: str
+    document_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    addition_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    pii_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    canonical_start: int = Field(ge=0)
+    canonical_end: int = Field(gt=0)
+    raw_start: int | None = Field(default=None, ge=0)
+    raw_end: int | None = Field(default=None, ge=1)
+    raw_projection_status: Literal["exact", "partial", "unmapped"]
+    note: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def _validate_spans(self) -> PiiManualAdditionRecord:
+        if self.canonical_end <= self.canonical_start:
+            raise ValueError("canonical_end must be after canonical_start")
+        if (self.raw_start is None) != (self.raw_end is None):
+            raise ValueError("raw_start and raw_end must both be set or both be None")
+        if (
+            self.raw_start is not None
+            and self.raw_end is not None
+            and self.raw_end <= self.raw_start
+        ):
+            raise ValueError("raw_end must be after raw_start")
+        if self.raw_projection_status == "unmapped" and self.raw_start is not None:
+            raise ValueError("unmapped raw_projection_status must not carry a raw span")
+        if self.raw_projection_status != "unmapped" and self.raw_start is None:
+            raise ValueError("exact/partial raw_projection_status requires a raw span")
+        return self
+
+
+class PiiManualAdditionAck(BaseModel):
+    """Confirmation returned after a manual addition is recorded."""
+
+    recorded: bool
+    addition_id: str
+    entity_type: str
+    canonical_start: int
+    canonical_end: int
+    raw_projection_status: Literal["exact", "partial", "unmapped"]
+    created_at: str
+
+
+class PiiManualAddition(BaseModel):
+    """One reviewable manual addition: a human-added span, distinct from any machine detection.
+
+    Never merged into ``occurrences``/``groups`` (both detector-origin only) and never surfaced
+    through ``pii_result`` or the anchor-bound entity contract — see ADR-0035. Defaults to
+    ``accepted`` (pseudonymize-bound), mirroring how every detected entity already defaults, so
+    there is no separate "pending" state.
+    """
+
+    addition_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    canonical_start: int = Field(ge=0)
+    canonical_end: int = Field(gt=0)
+    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    raw_start: int | None = Field(default=None, ge=0)
+    raw_end: int | None = Field(default=None, ge=1)
+    raw_projection_status: Literal["exact", "partial", "unmapped"]
+    origin: Literal["human"] = "human"
+    note: str | None = Field(default=None, max_length=1000)
+    created_at: str
+    review_status: PiiReviewStatus = "accepted"
+    review_decision: PiiReviewDecisionValue | None = None
 
 
 class PiiReviewOccurrence(BaseModel):
@@ -2369,6 +2478,9 @@ class PiiReviewResult(BaseModel):
     )
     groups: list[PiiEntityGroupReview] = Field(default_factory=list)
     occurrences: list[PiiReviewOccurrence] = Field(default_factory=list)
+    # PII L14 / Review L10 (ADR-0035): human-added spans, parallel to but never merged into
+    # ``groups``/``occurrences`` (both detector-origin only, keyed off ``PiiEntity.id``).
+    manual_additions: list[PiiManualAddition] = Field(default_factory=list)
     # Review L8 (ADR-0034): a decision is only ever matched against the exact ``pii_result``
     # artifact it was recorded for, so a re-run (new artifact id) already never silently reapplies
     # an old decision -- but previously that fell back to "no decision recorded" indistinguishably

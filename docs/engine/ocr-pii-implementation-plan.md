@@ -42,7 +42,7 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 | Engine | Current level | Next |
 | --- | --- | --- |
 | OCR / Text | **L15 done (built on the L10.5 contract step)** | scoped construction-lineage coverage |
-| PII / Sensitive-Data | **L13 done; L10 partial** (dev-only feedback capture) | L14 manual add / missed entities — design scoped ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)), not yet implemented |
+| PII / Sensitive-Data | **L14 done; L10 partial** (dev-only feedback capture) | Re-run the checkpoint loop for the next engine priority |
 | Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L9 done** | L10 manual add |
 | Benchmark / Regression | **L10 done** | L11 OCR runtime/memory |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
@@ -286,6 +286,30 @@ from `reading_text_map`/anchor projection, `text_artifact_id`-keyed staleness, a
 existing decision endpoint for an addition's own accept/keep/reject. No dependency, detection,
 `pii_result` schema, anchor-graph, active-PII-input, pseudonymization, redaction, export, or code
 change is introduced. Next: implement this design as `pii-l14-manual-add-v1`.
+
+**Latest checkpoint (PII L14 / Review L10 — manual add v1, implemented):** PII advances from L13 to
+**L14 done**; Review advances from L9 to **L10 done**. Implements the design scoped above: new
+`PiiManualAddition`/`PiiManualAdditionRecord` schemas, `pii_manual_addition.py`'s
+`resolve_canonical_span_to_raw` (a filter over the Text Anchor Graph's existing raw↔canonical
+pairing — never a new matching heuristic), and `add_pii_manual_entity`/
+`POST …/pii/review/manual-additions` in `pii_review_service.py`/`api/pii.py`. Manual additions are
+never merged into `pii_result` or `AnchorBoundPiiEntityV1`; they surface only via the additive
+`PiiReviewResult.manual_additions` list. `_load_latest_decisions`/`_count_stale_decisions`/
+`_target_exists` became target-type-aware: entity-group/occurrence items stay scoped to the exact
+current `pii_result` artifact id (unchanged), while manual-addition items scope to
+`text_artifact_id` instead, since a manual addition has no detector origin to key on — a PII re-run
+alone never makes one stale, only a new text artifact does. Frontend: `getCharacterOffsetsFromSelection`
+(`textSelection.ts`, reading-mode only), `buildManualAdditionHighlights` (a display-only merge into
+the existing highlight pipeline, never touching the backend contract), a distinguishing highlight
+ring + tooltip for `origin: "human"` spans, a "Manuelle Ergänzungen" list reusing the existing
+decision `<select>` pattern, and the `AddPiiManualEntity` add panel (entity-type picker sourced from
+the run's own `configured_entity_types`). Verified end to end in a live browser session
+(`make up`): creation → exact reverse projection → distinct highlight/tooltip → review-list entry →
+`false_positive` decision → highlight removal → confirmed `pii_result`/`GET …/pii/entity-contract`
+stay byte-identical (7/7 entities, manual addition absent from both). No dependency, recognizer,
+detection, `pii_result` schema, anchor-graph, active-PII-input, pseudonymization, redaction, or
+export change. See [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md). Next: re-run the
+checkpoint loop against `.ai/state.md`'s current-sequence priorities.
 
 ## References
 

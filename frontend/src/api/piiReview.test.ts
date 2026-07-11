@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PII_REVIEW_DECISION_OPTIONS,
+  addPiiManualEntity,
   buildReviewStatusMap,
   fetchPiiReview,
   reviewDecisionLabel,
@@ -44,6 +45,7 @@ const review: PiiReviewResult = {
       decision_scope: "entity_group",
     },
   ],
+  manual_additions: [],
   stale_decision_count: 0,
   has_stale_decisions: false,
 };
@@ -139,6 +141,62 @@ describe("submitPiiReviewDecision", () => {
         target_id: "o".repeat(32),
         decision: "keep",
       }),
+    ).rejects.toMatchObject({ status: 0 });
+  });
+});
+
+describe("addPiiManualEntity", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("POSTs the addition payload to the document's manual-additions endpoint", async () => {
+    const ack = {
+      recorded: true,
+      addition_id: "a".repeat(32),
+      entity_type: "LOCATION",
+      canonical_start: 10,
+      canonical_end: 14,
+      raw_projection_status: "exact" as const,
+      created_at: "2026-07-11T10:00:00Z",
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(ack), { status: 201 }));
+
+    const request = { entity_type: "LOCATION", canonical_start: 10, canonical_end: 14 };
+    const result = await addPiiManualEntity("doc-1", request);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/documents/doc-1/pii/review/manual-additions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    expect(result).toEqual(ack);
+  });
+
+  it("throws a WorkstationApiError on a non-ok response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "invalid entity type" }), { status: 422 }),
+    );
+
+    await expect(
+      addPiiManualEntity("doc-1", {
+        entity_type: "ORGANIZATION",
+        canonical_start: 0,
+        canonical_end: 4,
+      }),
+    ).rejects.toMatchObject({ status: 422, message: "invalid entity type" });
+  });
+
+  it("throws on a connection failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+
+    await expect(
+      addPiiManualEntity("doc-1", { entity_type: "LOCATION", canonical_start: 0, canonical_end: 4 }),
     ).rejects.toMatchObject({ status: 0 });
   });
 });

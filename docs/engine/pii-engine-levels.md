@@ -27,7 +27,7 @@ protection class (P0–P5), and the fitting detection strategy — is modelled i
 [`entity-taxonomy.md`](entity-taxonomy.md). This ladder is the *maturity* axis; the taxonomy is the
 *coverage/sensitivity* axis.
 
-**Current standing:** **L13 done (L0–L9, L11–L13); L10 partial (dev-only human feedback capture).**
+**Current standing:** **L14 done (L0–L9, L11–L14); L10 partial (dev-only human feedback capture).**
 Structured + AT/DE + insurance/legal recognizers, named profiles, benchmark, candidate validation,
 context hardening, address/contact-line coverage, and reproducible artifact `engine_settings` are
 all shipped. A **dev-only** per-entity feedback-capture side-channel exists (behind
@@ -38,7 +38,10 @@ artifact model (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisi
 precise scope). Engine-level **overlap resolution (L12)** is now delivered: PII consumes the OCR
 Output Contract v1 Document Text Package through the `pii_input` intake adapter and resolves
 duplicate/nested/overlapping candidates deterministically with provenance
-([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)).
+([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)). **Manual add (L14)** is now
+delivered: a reviewer adds a span the engine missed, layered on the existing decision overlay
+without touching `pii_result` or the anchor-bound entity contract
+([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)).
 
 The pipeline this ladder describes:
 
@@ -308,20 +311,24 @@ stage that runs after detection**. This stage is a first-class part of the engin
   run marks it stale rather than reapplying it.
 - **Boundary to L14:** L13 acts on machine candidates; L14 lets a human add what the machine missed.
 
-## Level 14 — Manual add / missed entities  ⛔ *open*
+## Level 14 — Manual add / missed entities  ✅ *done*
 
 - **Description:** let a reviewer add a span the engine missed, with a type.
 - **Artifacts:** manual additions in `review_result` with canonical-text offsets and `origin = human`.
-- **Acceptance:** a human-added span round-trips with valid offsets and is distinguishable from
+- **Acceptance:** met. A human-added span round-trips with valid offsets and is distinguishable from
   machine detections; it becomes a recall (missed-entity) signal.
-- **Design (scoped, not implemented):** [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)
-  audits why a naive implementation breaks existing invariants — `pii_result` stays
-  immutable/detector-only, and `AnchorBoundPiiEntityV1.source_observations` structurally requires a
-  detector observation — and scopes a new `manual_addition` record layered on the existing
+- **Delivered:** [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md) audits why a naive
+  implementation would break existing invariants — `pii_result` stays immutable/detector-only, and
+  `AnchorBoundPiiEntityV1.source_observations` structurally requires a detector observation — and
+  scopes/implements a new `manual_addition` record layered on the existing
   `pii_review_decisions.jsonl` log/`PiiReviewResult`, never merged into `pii_result` or the
   anchor-bound entity contract. Canonical-text offsets are captured with a best-effort raw-span
-  reverse projection reusing existing `reading_text_map`/anchor projection machinery; staleness keys
-  off `text_artifact_id`; type is constrained to the running profile's configured entity types.
+  reverse projection reusing the Text Anchor Graph's existing raw↔canonical pairing
+  (`pii_manual_addition.py`, exact/partial/unmapped, never a new matching heuristic); staleness keys
+  off `text_artifact_id`; type is constrained to the running profile's configured entity types
+  (`PiiContent.configured_entity_types`). A `false_positive`/`keep`/`pseudonymize` decision against
+  a manual addition reuses the existing `POST …/pii/review/decisions` endpoint
+  (`target_type: "manual_addition"`) rather than a new edit/delete action.
 - **Boundary to L15:** L14 records corrections; L15 turns them into regression data.
 
 ## Level 15 — Feedback-derived regression sets  ⛔ *open*
@@ -422,7 +429,7 @@ must account for that boundary explicitly.
 | 11 Entity grouping | ✅ done | derived `pii_grouping.py` view + review-decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
 | 12 Overlap / conflict resolution | ✅ done | `pii_input` adapter + deterministic `pii_overlap` resolution + anchor-bound entity diagnostics ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) |
 | 13 Review confirm / reject | ⛔ open | review UI is display + dev-feedback only |
-| 14 Manual add | ⛔ open | design scoped, not delivered ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) |
+| 14 Manual add | ✅ done | `manual_addition` record + `manual_additions` list ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) |
 | 15 Feedback-derived regression | ⛔ open | benchmark inputs hand-authored today |
 | 16 Policy / profile presets | ⛔ open | profiles exist as config, not policy |
 | 17 Stable entity model + lineage | ⛔ open | — |

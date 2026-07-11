@@ -12,6 +12,8 @@ from app.schemas import (
     PiiFeedbackAck,
     PiiFeedbackRequest,
     PiiFeedbackSummary,
+    PiiManualAdditionAck,
+    PiiManualAdditionRequest,
     PiiReviewDecisionAck,
     PiiReviewDecisionRequest,
     PiiReviewResult,
@@ -24,6 +26,7 @@ from app.services.job_runner import SyncJobRunner, provide_job_runner
 from app.services.pii_adapters import PiiAnalyzer, get_pii_analyzer
 from app.services.pii_entity_contract import build_pii_entity_contract
 from app.services.pii_review_service import (
+    add_pii_manual_entity,
     get_pii_review_result,
     get_pii_review_result_artifact,
     set_pii_review_decision,
@@ -190,5 +193,23 @@ def submit_pii_review_decision(
     request: PiiReviewDecisionRequest = Body(...),
     settings: Settings = Depends(get_settings),
 ) -> PiiReviewDecisionAck:
-    """Record a group- or occurrence-level review decision."""
+    """Record a group-, occurrence-, or manual-addition-level review decision."""
     return set_pii_review_decision(settings, document_id, request)
+
+
+@router.post(
+    "/{document_id}/pii/review/manual-additions",
+    response_model=PiiManualAdditionAck,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
+)
+def submit_pii_manual_addition(
+    document_id: str,
+    request: PiiManualAdditionRequest = Body(...),
+    settings: Settings = Depends(get_settings),
+) -> PiiManualAdditionAck:
+    """Record a reviewer-added span the engine missed (PII L14 / Review L10, ADR-0035)."""
+    return add_pii_manual_entity(settings, document_id, request)
