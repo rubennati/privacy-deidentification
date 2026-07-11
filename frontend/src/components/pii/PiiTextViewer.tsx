@@ -1,8 +1,11 @@
+import { useRef } from "react";
+
 import { reviewStatusLabel, type PiiReviewStatus } from "../../api/piiReview";
 import {
   buildAnchorBoundHighlightSegments,
   type AnchorBoundPiiHighlight,
 } from "../../lib/piiHighlights";
+import { getCharacterOffsetsFromSelection } from "../../lib/textSelection";
 
 interface PiiTextViewerProps {
   text: string;
@@ -14,6 +17,10 @@ interface PiiTextViewerProps {
   showEntityMeta?: boolean;
   /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
   onSelectEntity?: (entityId: string) => void;
+  /** Called with character offsets when the reader selects a non-empty span of this text (PII L14 /
+   *  Review L10, ADR-0035). Only meaningful in the canonical reading-text view — the caller decides
+   *  whether to wire this in for a given mode. */
+  onTextSelected?: (offsets: { start: number; end: number }) => void;
 }
 
 const ENTITY_STYLES: Record<string, string> = {
@@ -33,16 +40,40 @@ const REVIEW_STATUS_MODIFIERS: Partial<Record<PiiReviewStatus, string>> = {
   kept: "opacity-60 [text-decoration:underline] decoration-dashed",
 };
 
+// A manually added span (PII L14 / Review L10, ADR-0035) stays visually distinct from a machine
+// detection, composable with the review-status modifiers above.
+const MANUAL_ADDITION_MODIFIER = "ring-2 ring-inset ring-sky-500";
+
 export function PiiTextViewer({
   text,
   highlights,
   showEntityMeta = true,
   onSelectEntity,
+  onTextSelected,
 }: PiiTextViewerProps) {
   const segments = buildAnchorBoundHighlightSegments(text, highlights);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  function handleMouseUp() {
+    if (!onTextSelected || !containerRef.current) {
+      return;
+    }
+    const selection = window.getSelection();
+    if (!selection) {
+      return;
+    }
+    const offsets = getCharacterOffsetsFromSelection(containerRef.current, selection);
+    if (offsets) {
+      onTextSelected(offsets);
+    }
+  }
 
   return (
-    <div className="whitespace-pre-wrap break-words text-[15px] leading-8 text-ink">
+    <div
+      ref={containerRef}
+      onMouseUp={onTextSelected ? handleMouseUp : undefined}
+      className="whitespace-pre-wrap break-words text-[15px] leading-8 text-ink"
+    >
       {segments.map((segment, index) =>
         segment.kind === "text" ? (
           <span key={`text-${index}`}>{segment.text}</span>
@@ -63,11 +94,14 @@ export function PiiTextViewer({
               segment.highlight.needs_review ? "ring-1 ring-inset ring-red-400" : ""
             } ${
               REVIEW_STATUS_MODIFIERS[segment.highlight.review_state] ?? ""
+            } ${
+              segment.highlight.origin === "human" ? MANUAL_ADDITION_MODIFIER : ""
             }`}
             title={
               showEntityMeta
                 ? `${segment.highlight.entity_type} · ${(segment.highlight.confidence * 100).toFixed(0)} %` +
                   ` · ${reviewStatusLabel(segment.highlight.review_state)}` +
+                  (segment.highlight.origin === "human" ? " · Manuell hinzugefügt" : "") +
                   (segment.highlight.reason_codes.length > 0
                     ? ` · ${segment.highlight.reason_codes.join(", ")}`
                     : "")

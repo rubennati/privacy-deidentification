@@ -34,6 +34,7 @@ import {
   fetchPiiEntityContract,
   type PiiEntityContractV1,
 } from "../api/piiEntityContract";
+import { AddPiiManualEntity } from "../components/pii/AddPiiManualEntity";
 import { PiiEntityList } from "../components/pii/PiiEntityList";
 import { PiiReviewGroupList } from "../components/pii/PiiReviewGroupList";
 import { PiiEngineSettingsPanel } from "../components/pii/PiiEngineSettingsPanel";
@@ -84,6 +85,10 @@ export default function DocumentDetailPage() {
   const [piiEntityContractError, setPiiEntityContractError] = useState(false);
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
+  const [selectedTextRange, setSelectedTextRange] = useState<{
+    start: number;
+    end: number;
+  } | null>(null);
   const [analysisStep, setAnalysisStep] = useState<AnalysisStep>("idle");
   const [analysisError, setAnalysisError] = useState<UiError | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("user");
@@ -119,6 +124,7 @@ export default function DocumentDetailPage() {
     }
     setSelectedPiiProfile("");
     setReviewTextMode("reading");
+    setSelectedTextRange(null);
     setAnalysisStep("idle");
     setAnalysisError(null);
 
@@ -573,7 +579,21 @@ export default function DocumentDetailPage() {
                   devMode={isDevView}
                   showEntityMeta={isDevView}
                   onSelectEntity={showReviewColumn ? setSelectedOccurrenceId : undefined}
+                  manualAdditions={reviewResult?.manual_additions ?? []}
+                  onTextSelected={showReviewColumn ? setSelectedTextRange : undefined}
                 />
+                {showReviewColumn && text.content.reading_text && (
+                  <AddPiiManualEntity
+                    documentId={documentId}
+                    entityTypes={pii?.content.configured_entity_types ?? []}
+                    readingText={text.content.reading_text}
+                    selection={selectedTextRange}
+                    onAdded={(review) => {
+                      setSelectedTextRange(null);
+                      void refreshPiiReviewAndContract(review);
+                    }}
+                  />
+                )}
                 {isDevView && !pii && (
                   <p className="mt-3 text-xs text-muted">PII-Erkennung noch nicht ausgeführt.</p>
                 )}

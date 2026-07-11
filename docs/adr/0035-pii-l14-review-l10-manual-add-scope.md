@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted — 2026-07-10. Docs-only; scopes the next implementation PR, delivers no code. Builds on
+Accepted — 2026-07-10. Originally docs-only, scoping the implementation PR; **implemented
+2026-07-11** as `pii-l14-manual-add-v1` — PII L14 and Review L10 are both now done. Builds on
 [ADR-0021](0021-pii-entity-grouping-and-review-decisions.md) (review-decision overlay),
 [ADR-0029](0029-pii-review-ready-entity-contract.md)/[ADR-0031](0031-text-identity-anchor-lineage-architecture.md)
 (anchor-bound entity contract), [ADR-0033](0033-pii-binding-quality-suite.md) (occurrence-id-primary
@@ -128,11 +129,15 @@ mirroring ADR-0034's own precedent of declining a same-PR extension that didn't 
 - The frontend gap is real: selection capture, a type picker, and distinct rendering are net-new UI
   surface, not incidental additions — the implementation PR should budget for that explicitly rather
   than assume it is "just a new list to render."
-- This ADR does not by itself deliver PII L14/Review L10; both stay `⛔ open`. It is the design that
-  unblocks a single, focused follow-up PR.
+- ~~This ADR does not by itself deliver PII L14/Review L10; both stay `⛔ open`.~~ **Update
+  2026-07-11:** implemented as `pii-l14-manual-add-v1`; PII L14 and Review L10 are both **done**.
 
 ## Next
 
-Implement this design as `pii-l14-manual-add-v1` (or similarly named branch): the new record shape
-and endpoint, the reused-projection reverse mapping, and the three frontend primitives above. Re-run
-the checkpoint loop against `.ai/state.md`'s current-sequence priorities afterward.
+~~Implement this design as `pii-l14-manual-add-v1`~~ **Done.** The new record shape and endpoint,
+the reused-projection reverse mapping (`pii_manual_addition.py`), and the three frontend primitives
+(`textSelection.ts`, `buildManualAdditionHighlights`, `AddPiiManualEntity.tsx`) are all delivered,
+verified by a full backend/frontend test suite plus a live end-to-end browser session confirming
+`pii_result`/`GET …/pii/entity-contract` stay byte-identical. See the "PII L14 / Review L10 — manual
+add v1, implemented" checkpoint in `.ai/state.md` for the full delivery summary. Re-run the
+checkpoint loop against `.ai/state.md`'s current-sequence priorities for the next engine step.

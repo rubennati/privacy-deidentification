@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import type { PiiManualAddition } from "../../api/piiReview";
 import type { AnchorBoundPiiHighlightModel } from "../../lib/piiHighlights";
 import { ReviewTextViewer } from "./ReviewTextViewer";
 
@@ -142,6 +143,7 @@ function render(
   readingText: string | null | typeof LEGACY_READING_TEXT = "Lesefreundliches Wien",
   devMode = true,
   model: AnchorBoundPiiHighlightModel = highlightModel,
+  manualAdditions: readonly PiiManualAddition[] = [],
 ): string {
   return renderToStaticMarkup(
     <ReviewTextViewer
@@ -153,8 +155,30 @@ function render(
       onModeChange={vi.fn()}
       devMode={devMode}
       showEntityMeta={showEntityMeta}
+      manualAdditions={manualAdditions}
     />,
   );
+}
+
+function manualAddition(overrides: Partial<PiiManualAddition> = {}): PiiManualAddition {
+  // Deliberately non-overlapping with `highlightModel`'s own 6–10 (raw) / 17–21 (canonical) entity,
+  // so these tests observe the manual-addition mark in isolation from highlight overlap priority.
+  return {
+    addition_id: "d".repeat(32),
+    entity_type: "LOCATION",
+    canonical_start: 0,
+    canonical_end: 4,
+    text_artifact_id: "e".repeat(32),
+    raw_start: 0,
+    raw_end: 5,
+    raw_projection_status: "exact",
+    origin: "human",
+    note: null,
+    created_at: "2026-07-11T10:00:00Z",
+    review_status: "accepted",
+    review_decision: null,
+    ...overrides,
+  };
 }
 
 describe("ReviewTextViewer", () => {
@@ -365,5 +389,58 @@ describe("ReviewTextViewer review-decision awareness", () => {
     const withoutHandler = renderWithReview("raw", highlightModel);
     expect(withHandler).toContain("cursor-pointer");
     expect(withoutHandler).not.toContain("cursor-pointer");
+  });
+
+  it("highlights a manual addition in the canonical reading-text view (PII L14, ADR-0035)", () => {
+    const html = render(
+      "reading",
+      "Wien      Graz",
+      undefined,
+      "Lesefreundliches Wien",
+      true,
+      highlightModel,
+      [manualAddition()],
+    );
+
+    expect(html).toContain(`<mark id="pii-mark-${"d".repeat(32)}"`);
+    expect(html).toContain("ring-sky-500");
+  });
+
+  it("highlights a manual addition in raw view only when the reverse projection is exact", () => {
+    const exact = render(
+      "raw",
+      null,
+      undefined,
+      "Lesefreundliches Wien",
+      true,
+      highlightModel,
+      [manualAddition({ raw_projection_status: "exact" })],
+    );
+    expect(exact).toContain(`<mark id="pii-mark-${"d".repeat(32)}"`);
+
+    const unmapped = render(
+      "raw",
+      null,
+      undefined,
+      "Lesefreundliches Wien",
+      true,
+      highlightModel,
+      [manualAddition({ raw_projection_status: "unmapped", raw_start: null, raw_end: null })],
+    );
+    expect(unmapped).not.toContain(`pii-mark-${"d".repeat(32)}`);
+  });
+
+  it("never shows a rejected manual addition as a highlight", () => {
+    const html = render(
+      "reading",
+      null,
+      undefined,
+      "Lesefreundliches Wien",
+      true,
+      highlightModel,
+      [manualAddition({ review_status: "rejected" })],
+    );
+
+    expect(html).not.toContain(`pii-mark-${"d".repeat(32)}`);
   });
 });

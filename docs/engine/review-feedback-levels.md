@@ -17,7 +17,7 @@ mapping from the previous 0–10 ladder is in
 [Legacy scale mapping](#legacy-scale-mapping-010--019).
 
 **Current standing:** **L2 solid in production; L3–L5 delivered as dev-only capabilities behind
-`ENABLE_DEV_ENGINE_SETTINGS`; L6–L9 delivered.** The detail page renders text, lists candidates with
+`ENABLE_DEV_ENGINE_SETTINGS`; L6–L10 delivered.** The detail page renders text, lists candidates with
 lineage-safe highlights, offers clickable offsets + a legend, exposes a gated per-run
 engine-settings override, and captures **per-entity dev feedback** (analysis input, not learning).
 Grouped occurrences (L6, mirroring [PII L11](pii-engine-levels.md#level-11--entity-grouping--repeated-occurrences---done))
@@ -25,8 +25,12 @@ are now delivered, paired with a lineage-bound review-decision overlay (every en
 `pseudonymize`; a reviewer opts one out via `keep` or `false_positive`, at group or occurrence
 scope), immutable `review_result` snapshots, direct PII/text lineage for new decisions, and an
 explicit stale indicator. See [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)
-and [ADR-0034](../adr/0034-review-l8-review-result-artifact.md). Manual add L10, actor/reason
-metadata L11, suppression rules L12, and reusable cross-run decisions L13 remain open.
+and [ADR-0034](../adr/0034-review-l8-review-result-artifact.md). **Manual add (L10)** is now
+delivered: a reviewer selects a missed span in the canonical reading-text view, tags it with a
+type, and it round-trips as a distinct `origin=human` `manual_addition`, never merged into
+`pii_result` or the anchor-bound entity contract — see
+[ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md). Actor/reason metadata L11,
+suppression rules L12, and reusable cross-run decisions L13 remain open.
 
 > **File note.** The 0–19 review/feedback ladder lives in this file (`review-feedback-levels.md`).
 > It is the successor to the previous 0–10 review ladder; there is no separate
@@ -204,21 +208,27 @@ metadata L11, suppression rules L12, and reusable cross-run decisions L13 remain
   re-extraction marks it stale rather than reapplying it.
 - **Boundary to L10:** L9 judges machine candidates; L10 lets a human add a missed one.
 
-## Level 10 — Manual add  ⛔ *open*
+## Level 10 — Manual add  ✅ *done*
 
 - **Human can:** select a span the engine missed and add it as a PII entity (with a type).
 - **Persisted:** manual additions in `review_result` with canonical-text offsets and `origin = human`.
-- **Acceptance:** a human-added span round-trips with valid offsets and is distinguishable from
-  machine detections; it becomes a missed-entity (recall) signal.
-- **Design (scoped, not implemented):**
-  [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md) scopes a new `manual_addition`
-  record layered on the existing `pii_review_decisions.jsonl` log and an additive
-  `PiiReviewResult.manual_additions` list — never merged into `pii_result` or the anchor-bound
-  entity contract, since both structurally assume a detector-originated span. Once created, an
-  addition's own accept/keep/reject reuses the existing decision endpoint (`target_type:
-  "manual_addition"`) rather than a new edit/delete action. The frontend needs three primitives that
-  don't exist today: text-selection capture, an entity-type picker, and a visually distinct
-  rendering for human-added spans.
+- **Acceptance:** met. A human-added span round-trips with valid offsets and is distinguishable from
+  machine detections (visually, and via `origin: "human"`/its own `manual_additions` list); it
+  becomes a missed-entity (recall) signal.
+- **Delivered:** a new `manual_addition` record layered on the existing `pii_review_decisions.jsonl`
+  log and an additive `PiiReviewResult.manual_additions` list — never merged into `pii_result` or
+  the anchor-bound entity contract, since both structurally assume a detector-originated span
+  (`AnchorBoundPiiEntityV1.source_observations` requires ≥1 detector observation). Canonical
+  offsets are captured against `reading_text`; a best-effort reverse projection to a raw span
+  reuses the Text Anchor Graph's existing raw↔canonical pairing (`pii_manual_addition.py`,
+  exact/partial/unmapped, never a new matching heuristic). Staleness keys off `text_artifact_id`,
+  not a `pii_result` artifact id, since a manual addition has no detector origin to scope against.
+  Once created, an addition's own accept/keep/reject reuses the existing decision endpoint
+  (`target_type: "manual_addition"`) rather than a new edit/delete action. The frontend adds three
+  primitives that didn't exist before: text-selection capture (`getCharacterOffsetsFromSelection`,
+  reading-mode only), an entity-type picker sourced from the run's own
+  `configured_entity_types`, and a visually distinct highlight ring for human-added spans. See
+  [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md).
 - **Boundary to L11:** L10 records what/where; L11 records *why*.
 
 ## Level 11 — Reason / comment  ⛔ *open*
@@ -339,7 +349,7 @@ Design constraints (not features) for L8+:
 | 7 Stale review detection | ✅ done | direct PII/text lineage for new decisions, explicit stale API/UI state, never automatic reapply |
 | 8 `review_result` model | ✅ done | immutable, versioned snapshot after every decision; JSONL remains append-only write model |
 | 9 Confirm / reject | ✅ done | pseudonymize-by-default `pseudonymize/keep/false_positive` decisions at group/occurrence scope |
-| 10 Manual add | ⛔ open | design scoped, not delivered ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) |
+| 10 Manual add | ✅ done | `manual_addition` record + `manual_additions` list ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) |
 | 11 Reason / comment | ⛔ open | — |
 | 12 Suppression rules | ⛔ open | — |
 | 13 Reusable decisions | ⛔ open | — |
@@ -350,8 +360,8 @@ Design constraints (not features) for L8+:
 | 18 Multi-user workflow | ⛔ open | — |
 | 19 Auditable workflow | ⛔ open | — |
 
-**What is missing for the next real step:** manual add (L10), then actor/reason metadata (L11),
-scoped suppression rules (L12), and reusable cross-run decisions (L13); see the
+**What is missing for the next real step:** actor/reason metadata (L11), scoped suppression rules
+(L12), and reusable cross-run decisions (L13); see the
 [later engine work](roadmap.md#later-engine-work) in the roadmap.
 
 ---

@@ -182,8 +182,9 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   export change; existing `GET …/pii/review`/`POST …/pii/review/decisions` behavior is unchanged
   except for the two additive fields.
 - [ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md) — **PII L14 / Review L10
-  manual-add scope (docs-only).** Scopes, without implementing, the design for letting a reviewer add
-  a span the engine missed. Audited why a naive implementation would break existing invariants:
+  manual add.** Scoped the design (docs-only), then implemented it (`pii-l14-manual-add-v1`) for
+  letting a reviewer add a span the engine missed — both PII L14 and Review L10 are now **done**.
+  Audited why a naive implementation would break existing invariants:
   `pii_result` stays immutable/detector-only; `AnchorBoundPiiEntityV1.source_observations` structurally
   requires a detector observation; `PiiReviewResultArtifact` is occurrence-id-primary and
   `PiiReviewOccurrence.occurrence_id` *is* `PiiEntity.id`; no actor field exists anywhere yet.
@@ -196,5 +197,9 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   `pii_result`'s own `PiiContent.configured_entity_types`; and once created, an addition's own accept/keep/reject
   reuses the existing decision endpoint under a new `target_type: "manual_addition"` rather than a new
   edit/delete action. Frontend needs three net-new primitives: text-selection capture, an entity-type
-  picker, and a visually distinct rendering for human-added spans — none exist today. PII L14/Review
-  L10 remain `⛔ open`; this is the design for the follow-up implementation PR.
+  picker, and a visually distinct rendering for human-added spans — none existed before this PR.
+  Delivered: the reverse-projection filter (`pii_manual_addition.py`), the endpoint, target-type-aware
+  staleness/existence checks, and the three frontend primitives (`textSelection.ts`,
+  `buildManualAdditionHighlights`, `AddPiiManualEntity.tsx`), verified with a full backend/frontend
+  test suite plus a live end-to-end browser session confirming `pii_result`/the entity contract stay
+  byte-identical.

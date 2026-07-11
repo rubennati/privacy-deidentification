@@ -10,8 +10,8 @@ documents.
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
 | OCR / Text | **L15 (built on the required L10.5 step) + output-contract stabilization** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), L15 additive noise/token artifact evidence in the same list, and Document Text Package v1 (`contract_version = "1.0"`, `valid`/`degraded`/`invalid`) | PII L12 overlap resolution downstream; future OCR capabilities plug into the contract |
-| PII / Sensitive-Data | **L13; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation plus a Dev View transparency report, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a direct-lineage review decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **anchor-bound entity contract** (Text Anchor Graph binding where available, explicit evidence-only fallback, source observations, display model, and text-free coverage/reason diagnostics for missing canonical/layout ranges) plus frontend highlight rendering from that contract ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) | L14 manual add / missed entities — design scoped ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)), not yet implemented |
-| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L9 done** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + direct-lineage immutable `review_result` snapshots and explicit stale-decision state ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md), [ADR-0034](../adr/0034-review-l8-review-result-artifact.md)) | L10 manual add — design scoped ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)), not yet implemented |
+| PII / Sensitive-Data | **L14; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation plus a Dev View transparency report, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a direct-lineage review decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **anchor-bound entity contract** (Text Anchor Graph binding where available, explicit evidence-only fallback, source observations, display model, and text-free coverage/reason diagnostics for missing canonical/layout ranges) plus frontend highlight rendering from that contract ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)); **manual add of missed entities** ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) | Re-run the checkpoint loop for the next engine priority |
+| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L10 done** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + direct-lineage immutable `review_result` snapshots and explicit stale-decision state ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md), [ADR-0034](../adr/0034-review-l8-review-result-artifact.md)); manual add of missed entities ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) | Actor/reason metadata (L11) |
 | Benchmark / Regression | **L10** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, per-profile comparison in one read-only invocation, OCR confidence/coverage columns | L11 OCR runtime/memory |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
 
@@ -53,6 +53,14 @@ documents.
   adapter and resolves duplicate/nested/overlapping candidates deterministically, with additive
   optional provenance/summary fields on `pii_result` (no raw text). Technical raw text remains the
   active detection input. See [ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
+- PII L13 / Review L9: binding confirm/reject with direct PII + text artifact lineage on new decision
+  records and immutable `review_result` snapshots; superseded decisions surface explicitly as stale,
+  never silently reapplied.
+- PII L14 / Review L10: manual add of missed entities. A reviewer adds a span the engine missed,
+  tagged with a type, as a distinct `manual_addition` — canonical-text offsets, a best-effort raw
+  reverse projection via the Text Anchor Graph, `text_artifact_id`-keyed staleness, never merged into
+  `pii_result` or the anchor-bound entity contract. See
+  [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md).
 - Benchmark L0–L8 plus an out-of-order L10 slice: private inputs, artifact matching, routing and PII
   metrics, privacy guarding, deterministic output, validation-stage aggregates, and safe
   lineage-matched OCR confidence/coverage columns.
@@ -313,7 +321,7 @@ will build on. See [ADR-0029](../adr/0029-pii-review-ready-entity-contract.md) a
 Mirrors PII L11: the `PiiReviewGroupList` panel shows one row per entity group (type, occurrence
 count, reading-text projection coverage, current decision) with an expandable per-occurrence list.
 
-### Review L8–L9 — binding review — delivered
+### Review L8–L10 — binding review — delivered
 
 A lineage-bound, file-based decision overlay now exists (`GET/POST …/pii/review[/decisions]`,
 append-only JSONL under `document-store/<id>/review/`, scoped to the exact current `pii_result.id` so
@@ -322,10 +330,12 @@ a re-run never silently reapplies a stale decision). Every detected entity defau
 via `keep` or `false_positive`, at group or occurrence scope with occurrence-level override. This is
 a lighter persistence shape than the
 formal single-artifact `review_result` model L8, direct PII/text lineage for new decisions, and an
-explicit stale-decision indicator (L7) are now delivered. Manual add (L10) and reason/comment
-metadata (L11) remain open; L10's design is scoped, not implemented, in
-[ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md).
-Dev feedback JSONL remains a separate, dev-gated analysis input. See
+explicit stale-decision indicator (L7) are now delivered. **Manual add (L10)** is now delivered
+too: a reviewer adds a span the engine missed as a distinct `manual_addition`, never merged into
+`pii_result` or the anchor-bound entity contract, staleness keyed off `text_artifact_id`, decisions
+on it reusing the same endpoint — see
+[ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md). Reason/comment metadata (L11)
+remains open. Dev feedback JSONL remains a separate, dev-gated analysis input. See
 [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 
 ### Benchmark L9–L10 — delivered
