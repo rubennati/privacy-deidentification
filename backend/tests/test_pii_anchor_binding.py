@@ -24,10 +24,12 @@ from app.schemas import (
     ReadingTextMapSegment,
     TextArtifact,
     TextContent,
+    TextPageResult,
 )
 from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.pii_anchor_binding import bind_pii_entities_to_anchors
+from app.services.reading_text_projection import build_reading_text_map
 
 
 def _hex(label: str) -> str:
@@ -288,6 +290,168 @@ def test_partial_binding_does_not_emit_whole_anchor_display_refs() -> None:
     ] == []
     assert "canonical_range_missing" in entity.binding_reasons
     assert "layout_range_missing" in entity.binding_reasons
+
+
+# --- trailing non-semantic slack / boundary bridging --------------------------------------------
+
+
+def test_trailing_newline_in_detection_span_stays_exact_with_canonical_display() -> None:
+    # A detector may report a span that runs one character past the last word into whitespace the
+    # tokenizer never anchors (e.g. a trailing line break). That slack must not turn a complete
+    # multi-token binding into a partial one, nor block its canonical display range.
+    raw = "Max Mustermann\n"
+    reading = "Max Mustermann"
+    graph = _graph_from_raw(
+        raw, reading=reading, reading_map=[_segment(0, len(reading), 0, len(reading))]
+    )
+    [entity] = _bind([_entity("PERSON", raw, 0)], graph)
+
+    assert entity.binding_status == "exact"
+    assert entity.identity_basis == "anchor_exact"
+    assert entity.raw_text_range.start == 0
+    assert entity.raw_text_range.end == len(raw)
+    canonical_refs = [
+        ref
+        for ref in entity.anchor_refs
+        if ref.source_name == "canonical_reading_text" and ref.binding_role == "display_span"
+    ]
+    assert len(canonical_refs) == entity.anchor_set.count
+    assert "canonical_range_missing" not in entity.binding_reasons
+
+
+def test_genuine_mid_token_cut_still_partial() -> None:
+    # Contrast with the above: cutting through the middle of a token is a real partial overlap, not
+    # trimmable slack, and must still be classified "partial".
+    graph = _graph_from_raw("Max Mustermann")
+    [entity] = _bind([_entity("PERSON", "Max Muster", 0)], graph)
+
+    assert entity.binding_status == "partial"
+
+
+def test_repeated_interior_token_does_not_destroy_entity_canonical_range() -> None:
+    # "Perchtoldsdorf" is the middle word of the company name and also appears standalone
+    # elsewhere in the document (as part of an address line). That makes its own anchor
+    # individually ambiguous, but the company name's boundary anchors ("Sanierungsbau", "GmbH")
+    # are each unique and resolve cleanly -- strong enough evidence to bridge the whole entity's
+    # canonical range without ever resolving the interior anchor's own ambiguity.
+    raw = "Sanierungsbau Perchtoldsdorf GmbH\nHauptstrasse 5, Perchtoldsdorf\n"
+    reading = "Hauptstrasse 5, Perchtoldsdorf\nSanierungsbau Perchtoldsdorf GmbH\n"
+    pages = [
+        TextPageResult(
+            page_number=1,
+            source="pdf_text_layer",
+            has_text_layer=True,
+            ocr_used=False,
+            text=raw,
+            text_char_count=len(raw),
+        )
+    ]
+    reading_map = build_reading_text_map(raw, reading, pages)
+    graph = _graph_from_raw(raw, reading=reading, reading_map=reading_map)
+
+    org_start = raw.index("Sanierungsbau")
+    org_end = org_start + len("Sanierungsbau Perchtoldsdorf GmbH")
+    [entity] = _bind(
+        [_entity("ORGANIZATION", raw[org_start:org_end], org_start)], graph
+    )
+
+    assert entity.binding_status == "exact"
+    assert entity.identity_basis == "anchor_exact"
+    assert "repeated_token_ambiguity" in entity.binding_reasons
+    assert "canonical_range_missing" not in entity.binding_reasons
+
+    canonical_refs = [
+        ref
+        for ref in entity.anchor_refs
+        if ref.source_name == "canonical_reading_text" and ref.binding_role == "display_span"
+    ]
+    assert canonical_refs, "expected a bridged canonical display range"
+    start = min(ref.source_range.start for ref in canonical_refs)
+    end = max(ref.source_range.end for ref in canonical_refs)
+    assert reading[start:end] == "Sanierungsbau Perchtoldsdorf GmbH"
+
+
+def test_ambiguous_single_token_entity_stays_without_canonical_range() -> None:
+    # Contrast with the above: when the *entire* entity is the one repeated, ambiguous token (no
+    # unique boundary anchor of its own to bridge from), the canonical range correctly stays
+    # absent rather than being guessed.
+    raw = "Sanierungsbau Perchtoldsdorf GmbH\nHauptstrasse 5, Perchtoldsdorf\n"
+    reading = "Hauptstrasse 5, Perchtoldsdorf\nSanierungsbau Perchtoldsdorf GmbH\n"
+    pages = [
+        TextPageResult(
+            page_number=1,
+            source="pdf_text_layer",
+            has_text_layer=True,
+            ocr_used=False,
+            text=raw,
+            text_char_count=len(raw),
+        )
+    ]
+    reading_map = build_reading_text_map(raw, reading, pages)
+    graph = _graph_from_raw(raw, reading=reading, reading_map=reading_map)
+
+    loc_start = raw.index("Perchtoldsdorf", raw.index("Hauptstrasse"))
+    [entity] = _bind([_entity("LOCATION", "Perchtoldsdorf", loc_start)], graph)
+
+    assert entity.binding_status == "exact"  # anchor identity is still solid
+    assert entity.anchor_refs[0].source_range.start == loc_start
+    canonical_refs = [
+        ref
+        for ref in entity.anchor_refs
+        if ref.source_name == "canonical_reading_text" and ref.binding_role == "display_span"
+    ]
+    assert canonical_refs == []
+    assert "canonical_range_missing" in entity.binding_reasons
+    assert "repeated_token_ambiguity" in entity.binding_reasons
+
+
+def test_genuine_full_duplicate_entity_stays_ambiguous_for_both_occurrences() -> None:
+    # Unlike the repeated *interior* token above, here the entire multi-word value repeats
+    # verbatim (header + footer), so its boundary anchors are ambiguous too -- there is no
+    # stronger evidence to bridge from, and both occurrences must keep their canonical range
+    # absent rather than being guessed by textual order.
+    raw = (
+        "Sicherheitsdienst Wien KG\n"
+        "Email: office@example.at\n"
+        "Sicherheitsdienst Wien KG\n"
+    )
+    reading = (
+        "Email: office@example.at\n"
+        "Sicherheitsdienst Wien KG\n"
+        "Sicherheitsdienst Wien KG\n"
+    )
+    pages = [
+        TextPageResult(
+            page_number=1,
+            source="pdf_text_layer",
+            has_text_layer=True,
+            ocr_used=False,
+            text=raw,
+            text_char_count=len(raw),
+        )
+    ]
+    reading_map = build_reading_text_map(raw, reading, pages)
+    graph = _graph_from_raw(raw, reading=reading, reading_map=reading_map)
+
+    first_start = raw.index("Sicherheitsdienst Wien KG")
+    second_start = raw.index("Sicherheitsdienst Wien KG", first_start + 1)
+    bound = _bind(
+        [
+            _entity("ORG", "Sicherheitsdienst Wien KG", first_start),
+            _entity("ORG", "Sicherheitsdienst Wien KG", second_start),
+        ],
+        graph,
+    )
+
+    assert len(bound) == 2  # never collapsed into one guessed identity
+    for entity in bound:
+        canonical_refs = [
+            ref
+            for ref in entity.anchor_refs
+            if ref.source_name == "canonical_reading_text" and ref.binding_role == "display_span"
+        ]
+        assert canonical_refs == []
+        assert "canonical_range_missing" in entity.binding_reasons
 
 
 def test_no_overlap_produces_missing_evidence_only_status() -> None:

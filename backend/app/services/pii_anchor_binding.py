@@ -8,9 +8,15 @@ Binding strategy (deterministic, text-free):
 
 - Detection ranges are the entity's authoritative technical-raw offsets — raw stays the primary and
   only active detection input. Each detection span is matched to the raw ranges of anchors.
-- Detection range aligned to whole anchors → ``exact``; cutting across anchors → ``partial``; no
-  overlap → ``missing``; incompatible (mutually overlapping) candidate anchors → ``ambiguous``. When
-  no anchor graph is available for the run, every entity is ``not_applicable`` (evidence-only).
+- Detection range fully containing whole anchors → ``exact`` (trailing/leading non-semantic slack —
+  whitespace the tokenizer never anchors — never counts against this); cutting across an anchor →
+  ``partial``; no overlap → ``missing``; incompatible (mutually overlapping) candidate anchors →
+  ``ambiguous``. When no anchor graph is available for the run, every entity is ``not_applicable``
+  (evidence-only).
+- An exact entity's canonical/layout display range is emitted whenever its own first and last raw
+  anchors (boundary evidence) both resolve to that view — an interior anchor lacking one (e.g. a
+  repeated word that is independently ambiguous on its own) does not block the entity-level range;
+  it stays flagged via ``repeated_token_ambiguity`` instead of silently destroying the projection.
 - Repeated identical values are **never** globally married by string equality: binding is by raw
   offset overlap only, so two occurrences of the same word remain two entities bound to their own
   anchors.
@@ -242,7 +248,7 @@ def _bind_observation(
                     "anchor_missing",
                     "evidence_only_identity",
                     *_graph_reasons(context),
-                    *_range_reasons((), context, display_allowed=False),
+                    *_range_reasons(context, canonical_bridgeable=False, layout_bridgeable=False),
                 )
             ),
         )
@@ -253,7 +259,7 @@ def _bind_observation(
                 *_repeated_token_reasons(overlapping),
                 "evidence_only_identity",
                 *_graph_reasons(context),
-                *_range_reasons((), context, display_allowed=False),
+                *_range_reasons(context, canonical_bridgeable=False, layout_bridgeable=False),
             )
         )
         refs = tuple(
@@ -269,15 +275,20 @@ def _bind_observation(
             anchor_refs=refs,
         )
 
+    # A detection's declared span may run past its last (or before its first) whole-token anchor
+    # into pure non-semantic slack. The tokenizer that builds the anchor graph gives every
+    # non-whitespace character its own anchor (falling back to a single-character "symbol" anchor),
+    # so any raw offset range between ``overlapping`` anchors that carries no anchor of its own is
+    # guaranteed to be whitespace-only -- there is nothing else it could be. That means
+    # ``fully_contained`` (every overlapping anchor sits completely inside the detection's range) is
+    # sufficient on its own to call the binding exact: requiring the edges to match exactly on top
+    # of that would only reject trailing/leading whitespace, never a genuine partial token cut
+    # (``fully_contained`` already catches that, since the cut anchor's end exceeds the range).
     fully_contained = all(
         entity.start_offset <= anchor.start and anchor.end <= entity.end_offset
         for anchor in overlapping
     )
-    aligned = (
-        overlapping[0].start == entity.start_offset
-        and overlapping[-1].end == entity.end_offset
-    )
-    if fully_contained and aligned:
+    if fully_contained:
         return _anchor_bound(
             entity, overlapping, context=context, status="exact", basis="anchor_exact"
         )
@@ -296,11 +307,25 @@ def _anchor_bound(
 ) -> _BoundObservation:
     refs: list[PiiEntityAnchorRef] = []
     emit_display_refs = status == "exact"
-    all_canonical_ranges = emit_display_refs and all(
-        anchor.canonical_range is not None for anchor in overlapping
+    # A multi-token entity's own boundary anchors (first/last in raw order) resolving to canonical
+    # ranges is enough to safely bridge the entity's canonical/layout display range end to end, even
+    # when an anchor *between* them individually lacks one -- e.g. a word that also occurs elsewhere
+    # in the document makes that single anchor's own identity ambiguous in isolation. The interior
+    # anchor's ambiguity is never hidden or resolved by this: it stays "ambiguous" in the anchor
+    # graph and keeps flagging ``repeated_token_ambiguity`` below. Only the entity-level display
+    # envelope uses the stronger boundary evidence a standalone anchor lookup doesn't have access
+    # to. Requiring every constituent anchor to independently resolve is unnecessary here.
+    canonical_bridgeable = (
+        emit_display_refs
+        and bool(overlapping)
+        and overlapping[0].canonical_range is not None
+        and overlapping[-1].canonical_range is not None
     )
-    all_layout_ranges = emit_display_refs and all(
-        anchor.layout_range is not None for anchor in overlapping
+    layout_bridgeable = (
+        emit_display_refs
+        and bool(overlapping)
+        and overlapping[0].layout_range is not None
+        and overlapping[-1].layout_range is not None
     )
     for anchor in overlapping:
         contained = entity.start_offset <= anchor.start and anchor.end <= entity.end_offset
@@ -309,9 +334,9 @@ def _anchor_bound(
             "anchor_exact_match" if contained else "anchor_partial_overlap"
         )
         refs.append(_anchor_ref(anchor, anchor_status, "entity_span", (reason,)))
-        if all_canonical_ranges:
+        if canonical_bridgeable and anchor.canonical_range is not None:
             refs.append(_display_ref(anchor, _CANONICAL_SOURCE, anchor_status))
-        if all_layout_ranges:
+        if layout_bridgeable and anchor.layout_range is not None:
             refs.append(_display_ref(anchor, _LAYOUT_SOURCE, anchor_status))
     reason_code: PiiAnchorBindingReason = (
         "anchor_exact_match" if status == "exact" else "anchor_partial_overlap"
@@ -321,7 +346,11 @@ def _anchor_bound(
             reason_code,
             *_graph_reasons(context),
             *_repeated_token_reasons(overlapping),
-            *_range_reasons(overlapping, context, display_allowed=status == "exact"),
+            *_range_reasons(
+                context,
+                canonical_bridgeable=canonical_bridgeable,
+                layout_bridgeable=layout_bridgeable,
+            ),
         )
     )
     return _BoundObservation(
@@ -400,23 +429,17 @@ def _repeated_token_reasons(
 
 
 def _range_reasons(
-    anchors: Sequence[_RawAnchor], context: _AnchorContext, *, display_allowed: bool
+    context: _AnchorContext, *, canonical_bridgeable: bool, layout_bridgeable: bool
 ) -> tuple[PiiAnchorBindingReason, ...]:
     reasons: list[PiiAnchorBindingReason] = []
-    canonical_complete = display_allowed and bool(anchors) and all(
-        anchor.canonical_range is not None for anchor in anchors
-    )
-    if not canonical_complete:
+    if not canonical_bridgeable:
         reasons.append("canonical_range_missing")
         if context.canonical_available:
             reasons.append("reading_text_mapping_missing")
         else:
             reasons.append("source_not_available")
 
-    layout_complete = display_allowed and bool(anchors) and all(
-        anchor.layout_range is not None for anchor in anchors
-    )
-    if not layout_complete:
+    if not layout_bridgeable:
         reasons.append("layout_range_missing")
         if context.layout_available:
             reasons.append("layout_mapping_unavailable")
