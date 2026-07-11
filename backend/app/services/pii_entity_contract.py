@@ -302,8 +302,10 @@ def _anchor_display_range(
     ]
     if bound.binding_status != "exact" or not display_ranges:
         return None
-    if len(display_ranges) != bound.anchor_set.count:
-        return None
+    # pii_anchor_binding only ever emits these display refs when the entity's own boundary anchors
+    # resolved (bridgeable), so a non-empty list here is already a safe envelope even when an
+    # interior anchor was skipped (e.g. individually ambiguous elsewhere in the document) — no
+    # separate full-coverage check is needed.
     ordered = sorted(
         display_ranges, key=lambda source_range: (source_range.start, source_range.end)
     )

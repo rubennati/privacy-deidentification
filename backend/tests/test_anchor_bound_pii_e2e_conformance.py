@@ -649,3 +649,128 @@ def test_geometry_projection_propagates_repeated_suffix_entities(
     summary = body["binding_summary"]
     assert summary["entities_with_canonical_range"] == 3
     assert summary["missing_canonical_range_count"] == 0
+
+
+# --- 7. Trailing newline + repeated interior token: the cross-view highlight regression ----------
+# Reproduces the reported failure end to end: a multi-word ORGANIZATION detection whose raw span
+# includes a trailing newline, where one of its words ("Perchtoldsdorf") also occurs standalone
+# elsewhere in the document. The company's boundary words ("Sanierungsbau", "GmbH") are each unique,
+# so they still resolve cleanly and must bridge the whole entity's canonical range even though the
+# interior word is individually ambiguous. A standalone occurrence of the same repeated word, and a
+# genuinely duplicated company name (no unique boundary to bridge from), must NOT gain a canonical
+# range -- and ordinary email/phone entities in the same document must keep working normally.
+_TRAILING_RAW = (
+    "Sanierungsbau Perchtoldsdorf GmbH\n"
+    "Hauptstrasse 5, Perchtoldsdorf\n"
+    "office@sanierungsbau-p.at\n"
+    "+43 1 5551234\n"
+    "Sicherheitsdienst Wien KG\n"
+    "Sicherheitsdienst Wien KG\n"
+)
+_TRAILING_READING = (
+    "office@sanierungsbau-p.at\n"
+    "+43 1 5551234\n"
+    "Sanierungsbau Perchtoldsdorf GmbH\n"
+    "Hauptstrasse 5, Perchtoldsdorf\n"
+    "Sicherheitsdienst Wien KG\n"
+    "Sicherheitsdienst Wien KG\n"
+)
+
+
+def _entity_at(raw: str, entity_type: str, start: int, end: int) -> PiiEntity:
+    return PiiEntity(
+        id=uuid4().hex,
+        entity_type=entity_type,
+        text=raw[start:end],
+        start_offset=start,
+        end_offset=end,
+        score=0.9,
+        recognizer="SyntheticRecognizer",
+    )
+
+
+def test_trailing_newline_and_repeated_interior_token_still_highlight_in_both_views(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    raw = _TRAILING_RAW
+
+    org_start, org_core_end = _raw_span(raw, "Sanierungsbau Perchtoldsdorf GmbH")
+    # the detector's span runs one char past "GmbH" into a trailing "\n"
+    org_end_with_newline = org_core_end + 1
+    assert raw[org_end_with_newline - 1] == "\n"
+
+    loc_start, loc_end = _raw_span(raw, "Perchtoldsdorf", occurrence=1)
+    email_start, email_end = _raw_span(raw, "office@sanierungsbau-p.at")
+    phone_start, phone_end = _raw_span(raw, "+43 1 5551234")
+    dup1_start, dup1_end = _raw_span(raw, "Sicherheitsdienst Wien KG", occurrence=0)
+    dup2_start, dup2_end = _raw_span(raw, "Sicherheitsdienst Wien KG", occurrence=1)
+
+    entities = [
+        _entity_at(raw, "ORGANIZATION", org_start, org_end_with_newline),
+        _entity_at(raw, "LOCATION", loc_start, loc_end),
+        _entity_at(raw, "EMAIL_ADDRESS", email_start, email_end),
+        _entity_at(raw, "PHONE_NUMBER", phone_start, phone_end),
+        _entity_at(raw, "ORG", dup1_start, dup1_end),
+        _entity_at(raw, "ORG", dup2_start, dup2_end),
+    ]
+    _save_e2e(settings, document_id, raw, _TRAILING_READING, entities)
+
+    body = _get_contract(client, document_id)
+    assert body["anchor_graph_available"] is True
+
+    # 1-6: the complete company occurrence is identifiable end to end and stays one stable entity
+    # with both a correct raw and a correct canonical highlight, despite the trailing newline and
+    # the internally repeated word.
+    org = _by_value(body, "Sanierungsbau Perchtoldsdorf GmbH\n")
+    assert org["binding_status"] == "exact"
+    assert org["identity_basis"] == "anchor_exact"
+    assert "repeated_token_ambiguity" in org["binding_reasons"]
+    assert "canonical_range_missing" not in org["binding_reasons"]
+
+    raw_range = org["display"]["raw_highlight_range"]
+    assert raw[raw_range["start"] : raw_range["end"]].strip() == "Sanierungsbau Perchtoldsdorf GmbH"
+    canonical_range = org["display"]["canonical_highlight_range"]
+    assert canonical_range is not None, "the company lost its canonical highlight"
+    assert (
+        _TRAILING_READING[canonical_range["start"] : canonical_range["end"]]
+        == "Sanierungsbau Perchtoldsdorf GmbH"
+    )
+
+    # Re-fetching the contract must yield the same entity id for both views -- one entity, two
+    # ranges, not two independent objects.
+    body_again = _get_contract(client, document_id)
+    org_again = _by_value(body_again, "Sanierungsbau Perchtoldsdorf GmbH\n")
+    assert org_again["entity_id"] == org["entity_id"]
+
+    # A standalone occurrence of the same repeated word, with no unique boundary of its own to
+    # bridge from, correctly keeps no canonical range -- the repeat is never silently resolved.
+    location = _by_value(body, "Perchtoldsdorf")
+    assert location["binding_status"] == "exact"
+    assert location["display"]["canonical_highlight_range"] is None
+    assert "repeated_token_ambiguity" in location["binding_reasons"]
+
+    # 7: a genuinely duplicated company name (identical value, twice) has no unique boundary
+    # anchors either, so both occurrences correctly stay without a canonical range -- never
+    # guessed by textual order.
+    duplicates = [
+        entity for entity in body["entities"] if entity["value"] == "Sicherheitsdienst Wien KG"
+    ]
+    assert len(duplicates) == 2
+    for duplicate in duplicates:
+        assert duplicate["display"]["canonical_highlight_range"] is None
+        assert "canonical_range_missing" in duplicate["binding_reasons"]
+
+    # 8: ordinary entities elsewhere in the same document remain unaffected.
+    for value in ("office@sanierungsbau-p.at", "+43 1 5551234"):
+        entity = _by_value(body, value)
+        assert entity["binding_status"] == "exact", value
+        canonical_range = entity["display"]["canonical_highlight_range"]
+        assert canonical_range is not None, f"{value} lost its canonical highlight"
+        assert _TRAILING_READING[canonical_range["start"] : canonical_range["end"]] == value
+
+    # 9: no raw/canonical text leaks into binding metadata.
+    for entity in body["entities"]:
+        value = entity["value"]
+        assert value not in json.dumps(entity["anchor_refs"])
+        assert value not in json.dumps(entity["binding_reasons"])
