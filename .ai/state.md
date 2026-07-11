@@ -3,6 +3,12 @@
 > If this file conflicts with the current branch or commits, trust git.
 
 - Current phase: **Text Identity Phase C — Anchor-bound PII Entity Model v1**.
+- Artifact/document lifecycle integrity v1 is implemented on `artifact-lifecycle-integrity-v1`
+  (ADR-0038): new current results are selected through an atomic authority map; OCR text + quality
+  publish as one coherent run; pointed invalid current state fails explicitly; and a persistent
+  deletion tombstone plus cross-process lock prevents delayed workers from recreating deleted data.
+  Legacy artifact directories remain readable until their next publication. This is stabilization,
+  not an engine maturity-level advance.
 - PII result-integrity hardening is delivered on `pii-result-integrity-v1` (ADR-0037): PII refuses
   invalid/missing raw input instead of persisting a false empty success; partial same-type overlaps
   preserve independent coverage; worker and entity-contract reads use exact artifact identity; and

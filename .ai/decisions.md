@@ -229,3 +229,9 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   exact PII+Text artifact identity, and discriminated frontend state clears private data on identity
   transitions and fails closed unless one coherent contract loaded successfully. No engine level
   advance, dependency, detection-input switch, or future anchor-first package work.
+- [ADR-0038](../docs/adr/0038-artifact-and-document-lifecycle-integrity.md) — **Artifact and
+  document lifecycle integrity v1.** New runs publish through a per-document cross-process lock and
+  atomic current-authority map; OCR commits text + quality as one run; invalid pointed current state
+  fails explicitly instead of falling back; and deletion persists a job-state tombstone under the
+  same lock so delayed workers can never republish document-owned data. Legacy directories remain
+  readable until their first explicit publication. No engine-level advance or dependency change.
