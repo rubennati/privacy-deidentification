@@ -69,6 +69,39 @@ describe("PiiEntityCard header controls", () => {
     );
     expect(html).toContain("12–16");
     expect(html).toContain("Im extrahierten Text zu dieser Stelle springen");
+    expect(html).toContain(`id="pii-entity-card-${entity.id}"`);
+  });
+
+  it("merges the binding decision into the same detected-entity card", () => {
+    const html = render(
+      <PiiEntityCard
+        entity={entity}
+        documentId="doc-1"
+        artifactId="art-1"
+        feedbackEnabled={false}
+        existingStatus={null}
+        reviewOccurrence={{
+          occurrence_id: entity.id,
+          entity_type: entity.entity_type,
+          entity_group_id: "g".repeat(32),
+          raw_start: entity.start_offset,
+          raw_end: entity.end_offset,
+          score: entity.score,
+          recognizer: entity.recognizer,
+          projection_status: "exact",
+          projection_method: "offset_map",
+          reading_start_offset: 12,
+          reading_end_offset: 16,
+          review_status: "kept",
+          review_decision: "keep",
+          decision_scope: "occurrence",
+        }}
+      />,
+    );
+    expect(html).toContain("Bindende Entscheidung");
+    expect(html).toContain("Nicht pseudonymisiert");
+    expect(html).toContain("individuell");
+    expect(html).toContain('<option value="keep" selected');
   });
 });
 
@@ -149,5 +182,46 @@ describe("PiiEntityList", () => {
     );
     expect(html).toContain("Feedback gespeichert: Kein PII (False Positive)");
     expect(html).not.toContain("Feedback speichern");
+  });
+
+  it("matches review occurrences to detector cards by occurrence id", () => {
+    const html = render(
+      <PiiEntityList
+        entities={[entity]}
+        stale={false}
+        documentId="doc-1"
+        artifactId="art-1"
+        feedbackEnabled={false}
+        feedbackStatuses={{}}
+        review={{
+          document_id: "doc-1",
+          artifact_id: "art-1",
+          groups: [],
+          occurrences: [
+            {
+              occurrence_id: entity.id,
+              entity_type: entity.entity_type,
+              entity_group_id: "g".repeat(32),
+              raw_start: 12,
+              raw_end: 16,
+              score: 0.9,
+              recognizer: "FakeRecognizer",
+              projection_status: "exact",
+              projection_method: "offset_map",
+              reading_start_offset: 12,
+              reading_end_offset: 16,
+              review_status: "accepted",
+              review_decision: null,
+              decision_scope: null,
+            },
+          ],
+          manual_additions: [],
+          stale_decision_count: 0,
+          has_stale_decisions: false,
+        }}
+      />,
+    );
+    expect(html).toContain("Bindende Entscheidung");
+    expect(html).toContain("Wird pseudonymisiert");
   });
 });

@@ -2,6 +2,15 @@ import { useState } from "react";
 
 import type { PiiEntity } from "../../api/workstations";
 import {
+  PII_REVIEW_DECISION_OPTIONS,
+  fetchPiiReview,
+  reviewStatusLabel,
+  submitPiiReviewDecision,
+  type PiiReviewOccurrence,
+  type PiiReviewResult,
+  type PiiReviewDecisionValue,
+} from "../../api/piiReview";
+import {
   PII_FEEDBACK_ISSUE_OPTIONS,
   buildIssueFeedback,
   buildPositiveFeedback,
@@ -21,6 +30,9 @@ interface PiiEntityCardProps {
   feedbackEnabled: boolean;
   /** Feedback already recorded for this entity in this artifact, if any. */
   existingStatus: PiiFeedbackStatus | null;
+  /** Binding review state for this exact detector occurrence. */
+  reviewOccurrence?: PiiReviewOccurrence | null;
+  onReviewChanged?: (review: PiiReviewResult) => void;
 }
 
 type SubmitState = "idle" | "saving" | "error";
@@ -45,11 +57,15 @@ export function PiiEntityCard({
   artifactId,
   feedbackEnabled,
   existingStatus,
+  reviewOccurrence = null,
+  onReviewChanged,
 }: PiiEntityCardProps) {
   const [saved, setSaved] = useState<PiiFeedbackStatus | null>(existingStatus);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [issueType, setIssueType] = useState<PiiIssueOnly | "">("");
   const [comment, setComment] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewError, setReviewError] = useState(false);
 
   const locked = saved !== null;
 
@@ -84,10 +100,32 @@ export function PiiEntityCard({
     }
   }
 
+  async function submitReviewDecision(decision: PiiReviewDecisionValue) {
+    if (!reviewOccurrence || reviewSaving) return;
+    setReviewSaving(true);
+    setReviewError(false);
+    try {
+      await submitPiiReviewDecision(documentId, {
+        target_type: "occurrence",
+        target_id: reviewOccurrence.occurrence_id,
+        decision,
+      });
+      const updated = await fetchPiiReview(documentId);
+      if (updated) onReviewChanged?.(updated);
+    } catch {
+      setReviewError(true);
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
   const selectedExplanation = issueType === "" ? undefined : issueExplanation(issueType);
 
   return (
-    <li className="rounded-lg border border-card-border bg-dropzone p-3">
+    <li
+      id={`pii-entity-card-${entity.id}`}
+      className="scroll-mt-16 rounded-lg border border-card-border bg-dropzone p-3"
+    >
       <div className="flex items-start justify-between gap-3">
         <span className="rounded-full bg-accent-soft px-2 py-1 text-xs font-medium text-accent-dark">
           {entity.entity_type}
@@ -128,6 +166,43 @@ export function PiiEntityCard({
           {entity.recognizer}
         </dd>
       </dl>
+
+      {reviewOccurrence && (
+        <div className="mt-3 border-t border-card-border pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span className="text-xs font-medium text-muted">Bindende Entscheidung</span>
+              <p className="mt-0.5 text-xs text-accent-dark">
+                {reviewStatusLabel(reviewOccurrence.review_status)}
+                {reviewOccurrence.decision_scope === "occurrence" ? " · individuell" : ""}
+              </p>
+            </div>
+            <label className="sr-only" htmlFor={`entity-decision-${entity.id}`}>
+              Entscheidung für diese Entity
+            </label>
+            <select
+              id={`entity-decision-${entity.id}`}
+              value={reviewOccurrence.review_decision ?? "pseudonymize"}
+              disabled={reviewSaving}
+              onChange={(event) =>
+                void submitReviewDecision(event.target.value as PiiReviewDecisionValue)
+              }
+              className="rounded-lg border border-card-border bg-card px-2 py-1 text-xs text-ink"
+            >
+              {PII_REVIEW_DECISION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {reviewError && (
+            <p className="mt-2 text-xs font-medium text-red-700">
+              Entscheidung konnte nicht gespeichert werden.
+            </p>
+          )}
+        </div>
+      )}
 
       {feedbackEnabled && locked && saved && (
         <div className="mt-3 border-t border-card-border pt-3">

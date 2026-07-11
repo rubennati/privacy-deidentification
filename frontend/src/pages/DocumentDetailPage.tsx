@@ -608,14 +608,17 @@ export default function DocumentDetailPage() {
                       artifactId={pii.id}
                       feedbackEnabled={devPiiSettingsEnabled}
                       feedbackStatuses={feedbackStatuses}
+                      review={reviewResult}
+                      onReviewChanged={(review) => void refreshPiiReviewAndContract(review)}
+                      selectedOccurrenceId={selectedOccurrenceId}
                     />
                     {showReviewColumn && (
                       <PiiReviewGroupList
                         documentId={documentId}
                         review={reviewResult}
                         onReviewChanged={(review) => void refreshPiiReviewAndContract(review)}
-                        selectedOccurrenceId={selectedOccurrenceId}
                         showTechnicalDetails
+                        showDetectedGroups={false}
                       />
                     )}
                   </div>

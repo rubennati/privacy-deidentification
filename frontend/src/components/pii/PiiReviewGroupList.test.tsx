@@ -62,13 +62,18 @@ function baseReview(overrides: Partial<PiiReviewResult> = {}): PiiReviewResult {
   };
 }
 
-function render(review: PiiReviewResult | null, showTechnicalDetails?: boolean): string {
+function render(
+  review: PiiReviewResult | null,
+  showTechnicalDetails?: boolean,
+  showDetectedGroups?: boolean,
+): string {
   return renderToStaticMarkup(
     <PiiReviewGroupList
       documentId="doc-1"
       review={review}
       onReviewChanged={vi.fn()}
       showTechnicalDetails={showTechnicalDetails}
+      showDetectedGroups={showDetectedGroups}
     />,
   );
 }
@@ -202,5 +207,39 @@ describe("PiiReviewGroupList", () => {
       expect(html).toContain("Lesetext-Abdeckung");
       expect(html).toContain("Vorkommen anzeigen");
     });
+  });
+
+  it("can hide detector groups while retaining manual additions for the unified Dev View", () => {
+    const html = render(
+      baseReview({
+        manual_additions: [
+          {
+            addition_id: "m".repeat(32),
+            entity_type: "ORGANIZATION",
+            canonical_start: 10,
+            canonical_end: 20,
+            text_artifact_id: "t".repeat(32),
+            raw_start: null,
+            raw_end: null,
+            raw_projection_status: "unmapped",
+            origin: "human",
+            note: null,
+            created_at: "2026-07-11T10:00:00Z",
+            review_status: "accepted",
+            review_decision: null,
+          },
+        ],
+      }),
+      true,
+      false,
+    );
+    expect(html).not.toContain("Review-Entscheidungen");
+    expect(html).not.toContain("2× erkannt");
+    expect(html).toContain("Manuelle Ergänzungen");
+    expect(html).toContain("manuell hinzugefügt");
+  });
+
+  it("renders nothing in unified Dev mode when there are no manual additions", () => {
+    expect(render(baseReview(), true, false)).toBe("");
   });
 });

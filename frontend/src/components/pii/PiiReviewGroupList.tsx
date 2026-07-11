@@ -25,6 +25,8 @@ interface PiiReviewGroupListProps {
   /** When false (User View), hides the reading-text projection summary and the per-occurrence
    *  offset/override list — only the group-level decision remains. Defaults to true (Dev View). */
   showTechnicalDetails?: boolean;
+  /** Dev View can merge detector decisions into entity cards and render only manual additions. */
+  showDetectedGroups?: boolean;
 }
 
 const STATUS_STYLES: Record<PiiReviewStatus, string> = {
@@ -54,6 +56,7 @@ export function PiiReviewGroupList({
   onReviewChanged,
   selectedOccurrenceId,
   showTechnicalDetails = true,
+  showDetectedGroups = true,
 }: PiiReviewGroupListProps) {
   const [savingTarget, setSavingTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +75,9 @@ export function PiiReviewGroupList({
   }, [selectedOccurrenceId, review]);
 
   if (!review || (review.groups.length === 0 && review.manual_additions.length === 0)) {
+    return null;
+  }
+  if (!showDetectedGroups && review.manual_additions.length === 0) {
     return null;
   }
 
@@ -107,16 +113,22 @@ export function PiiReviewGroupList({
   }
 
   return (
-    <section aria-labelledby="review-groups-heading" className="mt-6">
-      <div className="flex items-center justify-between gap-3">
-        <h2 id="review-groups-heading" className="font-semibold text-ink">
-          Review-Entscheidungen
-        </h2>
-        <span className="text-xs text-muted">{review.groups.length}</span>
-      </div>
+    <section
+      aria-labelledby={showDetectedGroups ? "review-groups-heading" : "manual-additions-heading"}
+      className="mt-6"
+    >
+      {showDetectedGroups && (
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="review-groups-heading" className="font-semibold text-ink">
+            Review-Entscheidungen
+          </h2>
+          <span className="text-xs text-muted">{review.groups.length}</span>
+        </div>
+      )}
       {error && <p className="mt-2 text-xs font-medium text-red-700">{error}</p>}
-      <ul className="mt-4 space-y-3">
-        {review.groups.map((group) => {
+      {showDetectedGroups && (
+        <ul className="mt-4 space-y-3">
+          {review.groups.map((group) => {
           const occurrences = occurrencesByGroup.get(group.entity_group_id) ?? [];
           const expanded = expandedGroupId === group.entity_group_id;
           return (
@@ -233,8 +245,9 @@ export function PiiReviewGroupList({
               )}
             </li>
           );
-        })}
-      </ul>
+          })}
+        </ul>
+      )}
       {review.manual_additions.length > 0 && (
         <>
           <div className="mt-6 flex items-center justify-between gap-3">

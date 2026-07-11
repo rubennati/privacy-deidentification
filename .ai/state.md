@@ -848,6 +848,16 @@ anchor-graph, active-PII-input, pseudonymization, redaction, or export change. S
 [ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md). Next: re-run the checkpoint
 loop against this file's current-sequence section for the next engine priority.
 
+**Latest checkpoint (Unified Dev View entity review cards):** No engine level or contract change.
+The Dev View no longer renders detector entities once in `PiiEntityList` and again in the separate
+grouped `PiiReviewGroupList`. Each detected-entity card now combines recognizer evidence, dev
+feedback, current binding status, and an occurrence-level `pseudonymize`/`keep`/`false_positive`
+decision; refreshing that decision still uses the existing review API and keeps text highlights in
+sync. Clicking a text highlight scrolls to the same unified card. The grouped review UI remains
+unchanged in User View, while Dev View retains a separate section only for human-added entities
+that have no detector card. No backend, artifact, detection, review semantics, manual-addition,
+dependency, or privacy-boundary change.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
