@@ -91,6 +91,8 @@ def create_text_artifact(
     document_id: str,
     ocr_adapter: OcrAdapter,
     pdf_renderer: PdfRenderer,
+    *,
+    authority_job_id: str | None = None,
 ) -> TextArtifact:
     """Verify station inputs, route extraction, and persist an immutable result."""
     original, original_path = get_verified_original(settings, document_id)
@@ -113,7 +115,9 @@ def create_text_artifact(
         content=content,
     )
     quality_report = build_quality_report(original, audit, artifact, created_at)
-    save_text_run(settings, artifact, quality_report)
+    save_text_run(
+        settings, artifact, quality_report, authority_job_id=authority_job_id
+    )
     return artifact
 
 

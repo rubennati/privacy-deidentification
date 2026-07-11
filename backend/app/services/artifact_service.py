@@ -70,6 +70,19 @@ def save_pii_artifact(settings: Settings, artifact: PiiArtifact) -> None:
     )
 
 
+def save_job_pii_artifact(
+    settings: Settings, artifact: PiiArtifact, *, authority_job_id: str
+) -> None:
+    """Publish a PII result whose current authority activates only after job success."""
+    publish_artifact_files(
+        settings,
+        artifact.document_id,
+        {artifact.artifact_type: (artifact.id, artifact.model_dump_json())},
+        authority_job_id=authority_job_id,
+        authority_job_result=(artifact.id, artifact.artifact_type),
+    )
+
+
 def save_pii_review_result_artifact(
     settings: Settings, artifact: PiiReviewResultArtifact
 ) -> None:
@@ -84,7 +97,11 @@ def save_pii_review_result_artifact(
 
 
 def save_text_run(
-    settings: Settings, text: TextArtifact, quality_report: QualityReportArtifact
+    settings: Settings,
+    text: TextArtifact,
+    quality_report: QualityReportArtifact,
+    *,
+    authority_job_id: str | None = None,
 ) -> None:
     """Publish the text result and its quality report as one authoritative OCR run."""
     if text.document_id != quality_report.document_id:
@@ -96,6 +113,8 @@ def save_text_run(
             text.artifact_type: (text.id, text.model_dump_json()),
             quality_report.artifact_type: (quality_report.id, quality_report.model_dump_json()),
         },
+        authority_job_id=authority_job_id,
+        authority_job_result=(text.id, text.artifact_type),
     )
 
 
@@ -104,18 +123,7 @@ def get_latest_audit_artifact(settings: Settings, document_id: str) -> AuditArti
     current = _current(settings, document_id, "audit_result", _read_audit_artifact)
     if current is not None:
         return current
-    directory = _document_artifact_directory(settings, document_id)
-    if not directory.is_dir():
-        return None
-
-    artifacts = [
-        artifact
-        for path in directory.glob("*.json")
-        if (artifact := _read_audit_artifact(path, document_id)) is not None
-    ]
-    if not artifacts:
-        return None
-    return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
+    return None
 
 
 def get_latest_text_artifact(settings: Settings, document_id: str) -> TextArtifact | None:
@@ -123,18 +131,7 @@ def get_latest_text_artifact(settings: Settings, document_id: str) -> TextArtifa
     current = _current(settings, document_id, "text_result", _read_text_artifact)
     if current is not None:
         return current
-    directory = _document_artifact_directory(settings, document_id)
-    if not directory.is_dir():
-        return None
-
-    artifacts = [
-        artifact
-        for path in directory.glob("*.json")
-        if (artifact := _read_text_artifact(path, document_id)) is not None
-    ]
-    if not artifacts:
-        return None
-    return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
+    return None
 
 
 def get_text_artifact(
@@ -156,18 +153,7 @@ def get_latest_quality_report_artifact(
     current = _current(settings, document_id, "quality_report", _read_quality_report_artifact)
     if current is not None:
         return current
-    directory = _document_artifact_directory(settings, document_id)
-    if not directory.is_dir():
-        return None
-
-    artifacts = [
-        artifact
-        for path in directory.glob("*.json")
-        if (artifact := _read_quality_report_artifact(path, document_id)) is not None
-    ]
-    if not artifacts:
-        return None
-    return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
+    return None
 
 
 def get_latest_pii_artifact(settings: Settings, document_id: str) -> PiiArtifact | None:
@@ -175,18 +161,7 @@ def get_latest_pii_artifact(settings: Settings, document_id: str) -> PiiArtifact
     current = _current(settings, document_id, "pii_result", _read_pii_artifact)
     if current is not None:
         return current
-    directory = _document_artifact_directory(settings, document_id)
-    if not directory.is_dir():
-        return None
-
-    artifacts = [
-        artifact
-        for path in directory.glob("*.json")
-        if (artifact := _read_pii_artifact(path, document_id)) is not None
-    ]
-    if not artifacts:
-        return None
-    return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
+    return None
 
 
 def get_pii_artifact(
@@ -214,18 +189,7 @@ def get_latest_pii_review_result_artifact(
     )
     if current is not None:
         return current
-    directory = _document_artifact_directory(settings, document_id)
-    if not directory.is_dir():
-        return None
-
-    artifacts = [
-        artifact
-        for path in directory.glob("*.json")
-        if (artifact := _read_pii_review_result_artifact(path, document_id)) is not None
-    ]
-    if not artifacts:
-        return None
-    return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
+    return None
 
 
 def _document_artifact_directory(settings: Settings, document_id: str) -> Path:

@@ -19,7 +19,7 @@ from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
 from app.main import app
 from app.services.artifact_service import get_latest_quality_report_artifact
-from app.services.job_store import get_job_store
+from app.services.job_store import JobStoreUnavailableError, get_job_store
 from app.services.layout_text import build_pdf_layout_blocks
 from app.services.ocr_adapters import (
     OcrExtractionResult,
@@ -777,6 +777,60 @@ def test_invalid_current_text_is_explicit_and_does_not_fall_back(
     )
     assert historical.status_code == 200
     assert historical.json()["id"] == first.json()["id"]
+
+
+def test_missing_authority_is_explicit_and_exact_history_remains_available(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
+    )
+    created = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert created.status_code == 201
+    authority = document_data_dir / str(upload["id"]) / "artifacts" / "current-artifacts"
+    authority.unlink()
+
+    current = client.get(f"/api/documents/{upload['id']}/ocr")
+    historical = client.get(
+        f"/api/documents/{upload['id']}/ocr",
+        params={"artifact_id": created.json()["id"]},
+    )
+
+    assert current.status_code == 409
+    assert historical.status_code == 200
+    assert historical.json()["id"] == created.json()["id"]
+
+
+def test_unfinished_job_bound_run_is_not_current_or_consumable(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
+    )
+
+    def fail_job_completion(*_args: object, **_kwargs: object) -> None:
+        raise JobStoreUnavailableError
+
+    monkeypatch.setattr("app.services.job_store.JobStore.mark_succeeded", fail_job_completion)
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert response.status_code == 503
+    artifacts = _artifact_payloads_by_type(
+        document_data_dir, upload["id"], "text_result"
+    )
+    assert len(artifacts) == 1
+
+    current = client.get(f"/api/documents/{upload['id']}/ocr")
+    assert current.status_code == 409
+    exact = client.get(
+        f"/api/documents/{upload['id']}/ocr",
+        params={"artifact_id": artifacts[0]["id"]},
+    )
+    assert exact.status_code == 200
 
 
 def test_rerun_creates_new_immutable_quality_report(

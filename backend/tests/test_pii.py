@@ -24,6 +24,8 @@ from app.schemas import (
     TextPageResult,
 )
 from app.services.artifact_service import save_text_artifact
+from app.services.job_models import JobContext, JobExecutionMode, JobKind, JobRecord
+from app.services.job_store import get_job_store
 from app.services.pii_adapters import DetectedEntity, PiiUnavailableError
 from app.services.pii_profiles import get_pii_profile
 from app.services.structured_content import build_structured_content
@@ -238,6 +240,61 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
     assert job["document_id"] == document_id
     assert job["result_artifact_id"] == artifact["id"]
     assert job["result_artifact_type"] == "pii_result"
+
+
+def test_pii_refuses_text_artifacts_without_current_authority(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    pii_fake: FakePiiAnalyzer,
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    artifact = _save_text(settings, document_id, "Synthetic text")
+    authority = document_data_dir / document_id / "artifacts" / "current-artifacts"
+    authority.unlink()
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 409
+    assert pii_fake.calls == []
+    assert (document_data_dir / document_id / "artifacts" / f"{artifact.id}.json").is_file()
+
+
+def test_pii_refuses_job_bound_text_until_the_job_succeeds(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    pii_fake: FakePiiAnalyzer,
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    artifact = _save_text(settings, document_id, "Synthetic text")
+    record = JobRecord.from_context(
+        JobContext.create(
+            kind=JobKind.OCR_TEXT,
+            document_id=document_id,
+            execution_mode=JobExecutionMode.SYNCHRONOUS_INLINE,
+        )
+    )
+    store = get_job_store(settings)
+    store.create_job(record)
+    record.mark_running()
+    store.mark_running(record)
+    authority_path = document_data_dir / document_id / "artifacts" / "current-artifacts"
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority["text_result"] = {
+        "artifact_id": artifact.id,
+        "job_id": record.job_id,
+        "job_result_artifact_id": artifact.id,
+        "job_result_artifact_type": artifact.artifact_type,
+    }
+    authority_path.write_text(json.dumps(authority), encoding="utf-8")
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 409
+    assert pii_fake.calls == []
 
 
 def test_post_projects_pii_into_reading_text_without_changing_detection_input(

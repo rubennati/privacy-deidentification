@@ -91,7 +91,13 @@ def ocr_document(
     )
     result = runner.run(
         context,
-        lambda: create_text_artifact(settings, document_id, ocr_adapter, pdf_renderer),
+        lambda: create_text_artifact(
+            settings,
+            document_id,
+            ocr_adapter,
+            pdf_renderer,
+            authority_job_id=context.job_id,
+        ),
     )
     response.headers[_JOB_ID_HEADER] = result.record.job_id
     return result.unwrap()
@@ -126,7 +132,7 @@ def _enqueue_ocr_job(settings: Settings, document_id: str) -> JSONResponse:
 @router.get(
     "/{document_id}/ocr",
     response_model=TextArtifact,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_ocr(
     document_id: str,
@@ -145,7 +151,7 @@ def get_document_ocr(
 @router.get(
     "/{document_id}/text-package",
     response_model=DocumentTextPackageV1,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_text_package(
     document_id: str, settings: Settings = Depends(get_settings)
@@ -164,7 +170,7 @@ def get_document_text_package(
 @router.get(
     "/{document_id}/text-anchors",
     response_model=DocumentTextAnchorGraphV1,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_text_anchors(
     document_id: str, settings: Settings = Depends(get_settings)

@@ -72,6 +72,7 @@ class OcrJobWorker:
                 record.document_id,
                 self._ocr_adapter,
                 self._pdf_renderer,
+                authority_job_id=record.job_id,
             )
         except Exception as exc:  # every failure is recorded and sanitized, never propagated
             error_code, error_message = sanitize_job_error(exc)

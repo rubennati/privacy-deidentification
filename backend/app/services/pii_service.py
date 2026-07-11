@@ -21,6 +21,7 @@ from app.schemas import (
 from app.services.artifact_service import (
     get_latest_pii_artifact,
     get_latest_text_artifact,
+    save_job_pii_artifact,
     save_pii_artifact,
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
@@ -77,6 +78,8 @@ def create_pii_artifact(
     document_id: str,
     analyzer: PiiAnalyzer,
     request: PiiRunRequest | None = None,
+    *,
+    authority_job_id: str | None = None,
 ) -> PiiArtifact:
     """Analyze the latest valid text result and persist an immutable PII result."""
     if get_document_record(settings, document_id) is None:
@@ -100,7 +103,10 @@ def create_pii_artifact(
         created_at=_now_utc_iso(),
         content=content,
     )
-    save_pii_artifact(settings, artifact)
+    if authority_job_id is None:
+        save_pii_artifact(settings, artifact)
+    else:
+        save_job_pii_artifact(settings, artifact, authority_job_id=authority_job_id)
     return artifact
 
 

@@ -75,7 +75,13 @@ def analyze_document_pii(
     )
     result = runner.run(
         context,
-        lambda: create_pii_artifact(settings, document_id, analyzer, request),
+        lambda: create_pii_artifact(
+            settings,
+            document_id,
+            analyzer,
+            request,
+            authority_job_id=context.job_id,
+        ),
     )
     response.headers[_JOB_ID_HEADER] = result.record.job_id
     return result.unwrap()
@@ -84,7 +90,7 @@ def analyze_document_pii(
 @router.get(
     "/{document_id}/pii",
     response_model=PiiArtifact,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_pii(
     document_id: str, settings: Settings = Depends(get_settings)
@@ -132,7 +138,7 @@ def get_pii_feedback_summary(
 @router.get(
     "/{document_id}/pii/review",
     response_model=PiiReviewResult,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_pii_review(
     document_id: str, settings: Settings = Depends(get_settings)
@@ -144,7 +150,7 @@ def get_document_pii_review(
 @router.get(
     "/{document_id}/pii/review-result",
     response_model=PiiReviewResultArtifact,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_pii_review_result_artifact(
     document_id: str, settings: Settings = Depends(get_settings)

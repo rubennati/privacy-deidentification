@@ -11,6 +11,8 @@ from pathlib import Path
 
 from app.config import Settings
 from app.errors import ApiError
+from app.services.job_models import JobStatus
+from app.services.job_store import get_job_store
 
 _CURRENT_FILE = "current-artifacts"
 
@@ -30,9 +32,12 @@ class InvalidCurrentArtifactError(ApiError):
 
 
 def current_artifact_id(settings: Settings, document_id: str, artifact_type: str) -> str | None:
-    """Return the explicitly published current id, or ``None`` for legacy state."""
+    """Resolve explicit authority and verify any producing job completed successfully."""
     path = settings.document_data_dir / document_id / "artifacts" / _CURRENT_FILE
     if not path.exists():
+        artifact_directory = path.parent
+        if artifact_directory.is_dir() and any(artifact_directory.glob("*.json")):
+            raise InvalidCurrentArtifactError(artifact_type)
         return None
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -43,15 +48,42 @@ def current_artifact_id(settings: Settings, document_id: str, artifact_type: str
     artifact_id = value.get(artifact_type)
     if artifact_id is None:
         return None
-    if not isinstance(artifact_id, str):
+    if isinstance(artifact_id, str):
+        # Authority maps emitted by lifecycle v1 predate job binding but were already explicit,
+        # atomic publication commits. They remain readable; absent maps never trigger scanning.
+        return artifact_id
+    if not isinstance(artifact_id, dict):
         raise InvalidCurrentArtifactError(artifact_type)
-    return artifact_id
+    published_id = artifact_id.get("artifact_id")
+    job_id = artifact_id.get("job_id")
+    job_result_id = artifact_id.get("job_result_artifact_id", published_id)
+    job_result_type = artifact_id.get("job_result_artifact_type", artifact_type)
+    if (
+        not isinstance(published_id, str)
+        or not isinstance(job_id, str)
+        or not isinstance(job_result_id, str)
+        or not isinstance(job_result_type, str)
+    ):
+        raise InvalidCurrentArtifactError(artifact_type)
+    job = get_job_store(settings).get_job(job_id)
+    if (
+        job is None
+        or job.document_id != document_id
+        or job.status is not JobStatus.SUCCEEDED
+        or job.artifact_id != job_result_id
+        or job.artifact_type != job_result_type
+    ):
+        raise InvalidCurrentArtifactError(artifact_type)
+    return published_id
 
 
 def publish_artifact_files(
     settings: Settings,
     document_id: str,
     artifacts: dict[str, tuple[str, str]],
+    *,
+    authority_job_id: str | None = None,
+    authority_job_result: tuple[str, str] | None = None,
 ) -> None:
     """Atomically publish one coherent run under the document lifecycle lock.
 
@@ -73,10 +105,7 @@ def publish_artifact_files(
             pointer = directory / _CURRENT_FILE
             current = _read_current_for_update(pointer)
             current.update(
-                {
-                    artifact_type: artifact_id
-                    for artifact_type, (artifact_id, _) in artifacts.items()
-                }
+                _authority_entries(artifacts, authority_job_id, authority_job_result)
             )
             _atomic_write(pointer, json.dumps(current, sort_keys=True, separators=(",", ":")))
         except Exception:
@@ -115,18 +144,41 @@ def _tombstone_path(settings: Settings, document_id: str) -> Path:
     return settings.job_state_dir / "document-lifecycle" / f"{document_id}.deleted"
 
 
-def _read_current_for_update(path: Path) -> dict[str, str]:
+def _read_current_for_update(path: Path) -> dict[str, object]:
     if not path.exists():
         return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise InvalidCurrentArtifactError("authority") from exc
-    if not isinstance(value, dict) or not all(
-        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
-    ):
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise InvalidCurrentArtifactError("authority")
     return value
+
+
+def _authority_entries(
+    artifacts: dict[str, tuple[str, str]],
+    authority_job_id: str | None,
+    authority_job_result: tuple[str, str] | None,
+) -> dict[str, object]:
+    if authority_job_id is None:
+        return {
+            artifact_type: artifact_id
+            for artifact_type, (artifact_id, _) in artifacts.items()
+        }
+    result_id, result_type = authority_job_result or next(
+        (artifact_id, artifact_type)
+        for artifact_type, (artifact_id, _) in artifacts.items()
+    )
+    return {
+        artifact_type: {
+            "artifact_id": artifact_id,
+            "job_id": authority_job_id,
+            "job_result_artifact_id": result_id,
+            "job_result_artifact_type": result_type,
+        }
+        for artifact_type, (artifact_id, _) in artifacts.items()
+    }
 
 
 def _atomic_write(destination: Path, content: str) -> None:
