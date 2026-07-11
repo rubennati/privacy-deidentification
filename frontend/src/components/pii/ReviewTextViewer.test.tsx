@@ -391,6 +391,40 @@ describe("ReviewTextViewer review-decision awareness", () => {
     expect(withoutHandler).not.toContain("cursor-pointer");
   });
 
+  it("preserves both identities from partially overlapping contract ranges", () => {
+    const secondEntityId = "2".repeat(32);
+    const secondOccurrenceId = "c".repeat(32);
+    const first = highlightModel.byView.technical_raw_text[0];
+    const overlappingModel: AnchorBoundPiiHighlightModel = {
+      ...highlightModel,
+      byView: {
+        ...highlightModel.byView,
+        technical_raw_text: [
+          first,
+          {
+            ...first,
+            entity_id: secondEntityId,
+            source_entity_ids: [secondOccurrenceId],
+            primary_source_entity_id: secondOccurrenceId,
+            anchor_ids: ["d".repeat(32)],
+            start: 3,
+            end: 8,
+            confidence: 0.8,
+          },
+        ],
+      },
+      summary: { ...highlightModel.summary, total_entities: 2 },
+    };
+
+    const html = renderWithReview("raw", overlappingModel, vi.fn());
+
+    expect(html).toContain(`data-entity-id="${entityId}"`);
+    expect(html).toContain(`data-entity-id="${secondEntityId}"`);
+    expect(html).toContain(`data-entity-ids="${entityId} ${secondEntityId}"`);
+    expect(html).toContain(`pii-mark-${occurrenceId}`);
+    expect(html).toContain(`pii-mark-${secondOccurrenceId}`);
+  });
+
   it("highlights a manual addition in the canonical reading-text view (PII L14, ADR-0035)", () => {
     const html = render(
       "reading",

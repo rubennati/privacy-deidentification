@@ -82,6 +82,7 @@ export function PiiTextViewer({
             key={`entity-${segment.highlight.entity_id}-${segment.highlight.source_name}-${segment.highlight.start}`}
             id={`pii-mark-${segment.highlight.primary_source_entity_id}`}
             data-entity-id={segment.highlight.entity_id}
+            data-entity-ids={segment.highlights.map((highlight) => highlight.entity_id).join(" ")}
             data-source-name={segment.highlight.source_name}
             onClick={
               onSelectEntity
@@ -101,6 +102,9 @@ export function PiiTextViewer({
               showEntityMeta
                 ? `${segment.highlight.entity_type} · ${(segment.highlight.confidence * 100).toFixed(0)} %` +
                   ` · ${reviewStatusLabel(segment.highlight.review_state)}` +
+                  (segment.highlights.length > 1
+                    ? ` · ${segment.highlights.length} überlappende Entities`
+                    : "") +
                   (segment.highlight.origin === "human" ? " · Manuell hinzugefügt" : "") +
                   (segment.highlight.reason_codes.length > 0
                     ? ` · ${segment.highlight.reason_codes.join(", ")}`

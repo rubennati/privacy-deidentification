@@ -38,7 +38,12 @@ export interface AnchorBoundPiiHighlight {
 
 export type AnchorBoundHighlightSegment =
   | { kind: "text"; text: string }
-  | { kind: "entity"; text: string; highlight: AnchorBoundPiiHighlight };
+  | {
+      kind: "entity";
+      text: string;
+      highlight: AnchorBoundPiiHighlight;
+      highlights: AnchorBoundPiiHighlight[];
+    };
 
 export interface AnchorBoundPiiHighlightsByView {
   technical_raw_text: AnchorBoundPiiHighlight[];
@@ -258,35 +263,34 @@ export function buildAnchorBoundHighlightSegments(
   highlights: readonly AnchorBoundPiiHighlight[],
 ): AnchorBoundHighlightSegment[] {
   const codePoints = Array.from(text);
-  const valid = highlights.filter((highlight) => isValidHighlight(codePoints, highlight));
-  const ranked = [...valid].sort(compareAnchorHighlightPriority);
-  const accepted: AnchorBoundPiiHighlight[] = [];
-
-  for (const candidate of ranked) {
-    const overlaps = accepted.some(
-      (highlight) => candidate.start < highlight.end && candidate.end > highlight.start,
-    );
-    if (!overlaps) {
-      accepted.push(candidate);
-    }
-  }
-
-  accepted.sort(compareAnchorHighlightPosition);
+  const valid = highlights
+    .filter((highlight) => isValidHighlight(codePoints, highlight))
+    .sort(compareAnchorHighlightPosition);
+  const boundaries = [
+    ...new Set([0, codePoints.length, ...valid.flatMap((item) => [item.start, item.end])]),
+  ].sort((left, right) => left - right);
   const segments: AnchorBoundHighlightSegment[] = [];
-  let cursor = 0;
-  for (const highlight of accepted) {
-    if (highlight.start > cursor) {
-      segments.push({ kind: "text", text: codePoints.slice(cursor, highlight.start).join("") });
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const start = boundaries[index];
+    const end = boundaries[index + 1];
+    if (end <= start) {
+      continue;
     }
-    segments.push({
-      kind: "entity",
-      text: codePoints.slice(highlight.start, highlight.end).join(""),
-      highlight,
-    });
-    cursor = highlight.end;
-  }
-  if (cursor < codePoints.length) {
-    segments.push({ kind: "text", text: codePoints.slice(cursor).join("") });
+    const memberships = valid
+      .filter((highlight) => highlight.start < end && highlight.end > start)
+      .sort(compareAnchorHighlightPriority);
+    const segmentText = codePoints.slice(start, end).join("");
+    const primary = memberships[0];
+    if (!primary) {
+      segments.push({ kind: "text", text: segmentText });
+    } else {
+      segments.push({
+        kind: "entity",
+        text: segmentText,
+        highlight: primary,
+        highlights: memberships,
+      });
+    }
   }
   return segments;
 }
