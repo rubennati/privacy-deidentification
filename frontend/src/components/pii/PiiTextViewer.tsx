@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
-import { reviewStatusLabel, type PiiReviewStatus } from "../../api/piiReview";
+import { reviewStatusLabel } from "../../api/piiReview";
+import { entityTypeLabel } from "../../lib/entityTypeLabels";
 import {
   buildAnchorBoundHighlightSegments,
   invalidAnchorBoundHighlights,
@@ -12,12 +13,14 @@ interface PiiTextViewerProps {
   text: string;
   highlights: readonly AnchorBoundPiiHighlight[];
   /**
-   * When false, the per-entity hover tooltip (entity type + score) is suppressed. Highlights and
-   * offsets are unchanged; this only hides the technical metadata exposed on hover in user view.
+   * When false, the technical per-entity hover tooltip (type enum, score, reason codes) is
+   * replaced by a plain-language one (German label + review status). Highlights and offsets are
+   * unchanged; this only switches the metadata exposed on hover in user view.
    */
   showEntityMeta?: boolean;
-  /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
-  onSelectEntity?: (entityId: string) => void;
+  /** Called when a highlighted span is clicked, with the clicked mark element so the caller can
+   *  anchor a popover to it. */
+  onSelectEntity?: (entityId: string, element: HTMLElement) => void;
   /** Called with character offsets when the reader selects a non-empty span of this text (PII L14 /
    *  Review L10, ADR-0035). Only meaningful in the canonical reading-text view — the caller decides
    *  whether to wire this in for a given mode. */
@@ -31,19 +34,60 @@ const ENTITY_STYLES: Record<string, string> = {
   LOCATION: "bg-emerald-200 text-emerald-950",
   ORGANIZATION: "bg-orange-200 text-orange-950",
   DATE_TIME: "bg-pink-200 text-pink-950",
-};
-
-// "accepted" (pseudonymize, the default) looks like a normal highlight — it is the expected case
-// for nearly every entity, so it gets no extra modifier. "kept" (explicitly opted out of
-// pseudonymization) stays visually distinguishable. Rejected entities never reach this component
-// (filtered out upstream).
-const REVIEW_STATUS_MODIFIERS: Partial<Record<PiiReviewStatus, string>> = {
-  kept: "opacity-60 [text-decoration:underline] decoration-dashed",
+  ADDRESS: "bg-teal-200 text-teal-950",
+  IBAN_CODE: "bg-indigo-200 text-indigo-950",
+  BIC: "bg-indigo-200 text-indigo-950",
+  URL: "bg-cyan-200 text-cyan-950",
 };
 
 // A manually added span (PII L14 / Review L10, ADR-0035) stays visually distinct from a machine
-// detection, composable with the review-status modifiers above.
+// detection while it is still pseudonymize-bound; once kept/rejected it uses the same state look
+// as every other entity so one visual language describes the decision, not the origin.
 const MANUAL_ADDITION_MODIFIER = "ring-2 ring-inset ring-sky-500";
+
+/**
+ * The three review states share one visual language across all views:
+ * - accepted (default, will be pseudonymized): colored highlight per entity type
+ * - kept (explicitly not pseudonymized): no fill, solid frame — still visibly "something",
+ *   still clickable to revise
+ * - rejected (not PII / false positive): no fill, dashed muted frame — visibly dismissed,
+ *   still clickable to revise
+ */
+function highlightStateClasses(highlight: AnchorBoundPiiHighlight): string {
+  if (highlight.review_state === "rejected") {
+    // A ring (box-shadow) cannot be dashed, so the dismissed state draws its frame via outline.
+    return "bg-transparent text-muted [outline:1.5px_dashed_#a8b0a4] [outline-offset:-1.5px]";
+  }
+  if (highlight.review_state === "kept") {
+    return "bg-transparent text-ink ring-1 ring-inset ring-slate-400";
+  }
+  const colored = ENTITY_STYLES[highlight.entity_type] ?? "bg-gray-200 text-gray-950";
+  const needsReview = highlight.needs_review ? " ring-1 ring-inset ring-red-400" : "";
+  const manual = highlight.origin === "human" ? ` ${MANUAL_ADDITION_MODIFIER}` : "";
+  return `${colored}${needsReview}${manual}`;
+}
+
+function technicalTooltip(segment: {
+  highlight: AnchorBoundPiiHighlight;
+  highlights: AnchorBoundPiiHighlight[];
+}): string {
+  return (
+    `${segment.highlight.entity_type} · ${(segment.highlight.confidence * 100).toFixed(0)} %` +
+    ` · ${reviewStatusLabel(segment.highlight.review_state)}` +
+    (segment.highlights.length > 1 ? ` · ${segment.highlights.length} überlappende Entities` : "") +
+    (segment.highlight.origin === "human" ? " · Manuell hinzugefügt" : "") +
+    (segment.highlight.reason_codes.length > 0
+      ? ` · ${segment.highlight.reason_codes.join(", ")}`
+      : "")
+  );
+}
+
+function plainTooltip(highlight: AnchorBoundPiiHighlight, clickable: boolean): string {
+  return (
+    `${entityTypeLabel(highlight.entity_type)} · ${reviewStatusLabel(highlight.review_state)}` +
+    (clickable ? " · Klicken zum Ändern" : "")
+  );
+}
 
 export function PiiTextViewer({
   text,
@@ -113,32 +157,18 @@ export function PiiTextViewer({
               data-entity-id={segment.highlight.entity_id}
               data-entity-ids={segment.highlights.map((highlight) => highlight.entity_id).join(" ")}
               data-source-name={segment.highlight.source_name}
+              data-review-state={segment.highlight.review_state}
               onClick={
                 onSelectEntity
-                  ? () => onSelectEntity(segment.highlight.primary_source_entity_id)
+                  ? (event) =>
+                      onSelectEntity(segment.highlight.primary_source_entity_id, event.currentTarget)
                   : undefined
               }
-              className={`scroll-mt-16 rounded px-0.5 ${onSelectEntity ? "cursor-pointer" : ""} ${
-                ENTITY_STYLES[segment.highlight.entity_type] ?? "bg-gray-200 text-gray-950"
-              } ${
-                segment.highlight.needs_review ? "ring-1 ring-inset ring-red-400" : ""
-              } ${
-                REVIEW_STATUS_MODIFIERS[segment.highlight.review_state] ?? ""
-              } ${
-                segment.highlight.origin === "human" ? MANUAL_ADDITION_MODIFIER : ""
-              }`}
+              className={`scroll-mt-16 rounded px-0.5 ${onSelectEntity ? "cursor-pointer" : ""} ${highlightStateClasses(segment.highlight)}`}
               title={
                 showEntityMeta
-                  ? `${segment.highlight.entity_type} · ${(segment.highlight.confidence * 100).toFixed(0)} %` +
-                    ` · ${reviewStatusLabel(segment.highlight.review_state)}` +
-                    (segment.highlights.length > 1
-                      ? ` · ${segment.highlights.length} überlappende Entities`
-                      : "") +
-                    (segment.highlight.origin === "human" ? " · Manuell hinzugefügt" : "") +
-                    (segment.highlight.reason_codes.length > 0
-                      ? ` · ${segment.highlight.reason_codes.join(", ")}`
-                      : "")
-                  : undefined
+                  ? technicalTooltip(segment)
+                  : plainTooltip(segment.highlight, onSelectEntity != null)
               }
             >
               {segment.text}

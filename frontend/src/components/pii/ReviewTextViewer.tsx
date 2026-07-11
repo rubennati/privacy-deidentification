@@ -14,8 +14,9 @@ interface ReviewTextViewerProps {
   devMode?: boolean;
   /** Forwarded to the highlighted text view: when false, hover metadata is suppressed. */
   showEntityMeta?: boolean;
-  /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
-  onSelectEntity?: (entityId: string) => void;
+  /** Called when a highlighted span is clicked (with the mark element, e.g. to anchor a popover),
+   *  so the caller can reveal its entity group or open an in-place decision. */
+  onSelectEntity?: (entityId: string, element: HTMLElement) => void;
   /** Reviewer-added spans (PII L14 / Review L10, ADR-0035), merged into the highlight display only
    *  — never touching the backend anchor-bound entity contract. */
   manualAdditions?: readonly PiiManualAddition[];
@@ -89,7 +90,7 @@ export function ReviewTextViewer({
                   : "text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
               }`}
             >
-              Kanonischer Lesetext
+              {devMode ? "Kanonischer Lesetext" : "Lesetext"}
             </button>
             <button
               type="button"
@@ -101,7 +102,7 @@ export function ReviewTextViewer({
                   : "text-muted hover:text-ink"
               }`}
             >
-              Technischer Rohtext
+              {devMode ? "Technischer Rohtext" : "Technische Ansicht"}
             </button>
             {devMode && (
               <button
@@ -122,42 +123,49 @@ export function ReviewTextViewer({
         )}
       </div>
 
-      {activeMode !== "raw" && (
+      {/* Diagnostic hints about anchor binding, contract ranges, and view semantics are developer
+          material: in user view a single plain-language sentence covers the one case that changes
+          what the reader sees (a highlight only visible in the technical view). */}
+      {devMode && activeMode !== "raw" && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent-dark">
           {activeMode === "reading"
-            ? devMode
-              ? "Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen kommen aus dem anchor-gebundenen Entity-Vertrag."
-              : "Der Lesetext ist die lesefreundliche Hauptansicht."
+            ? "Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen kommen aus dem anchor-gebundenen Entity-Vertrag."
             : layoutHighlights.length > 0
               ? "Der Layout-Text dient der Orientierung. Markierungen erscheinen nur, wenn der Entity-Vertrag Layout-Ranges liefert."
               : "Der Layout-Text dient der Orientierung. Für diese Entities liefert der Vertrag keine Layout-Ranges."}
         </p>
       )}
-      {activeMode === "reading" && hasMissingCanonicalMapping && (
+      {!devMode && activeMode === "reading" && hasMissingCanonicalMapping && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Einige erkannte Stellen können in dieser Ansicht nicht markiert werden und sind nur in
+          der technischen Ansicht sichtbar.
+        </p>
+      )}
+      {devMode && activeMode === "reading" && hasMissingCanonicalMapping && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
           Kanonische Ranges fehlen, sind teilweise oder mehrdeutig. Fehlende Lesetext-Markierungen
           werden hier nicht geraten.
         </p>
       )}
-      {activeMode === "layout" && hasMissingLayoutRanges && (
+      {devMode && activeMode === "layout" && hasMissingLayoutRanges && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
           Layout-Ranges fehlen oder sind nicht verfügbar. Der Vertrag liefert nur markierbare
           Layout-Ranges, wenn die Anchor-Zuordnung sicher ist.
         </p>
       )}
-      {hasMissingAnchorBinding && (
+      {devMode && hasMissingAnchorBinding && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
           Anchor-Bindung fehlt fuer einige PII-Entities. Diese Entities bleiben als Raw-Range
           sichtbar und werden nicht in andere Views geraten.
         </p>
       )}
-      {hasPartialOrAmbiguousBinding && (
+      {devMode && hasPartialOrAmbiguousBinding && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
           Anchor-Bindung ist teilweise oder mehrdeutig. Der Backend-Vertrag markiert diese
           Zuordnung explizit.
         </p>
       )}
-      {hasEvidenceOnlyFallback && (
+      {devMode && hasEvidenceOnlyFallback && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
           Evidence-only Fallback ist aktiv, wenn keine verlaessliche Anchor-Identitaet vorliegt.
         </p>

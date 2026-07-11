@@ -122,35 +122,12 @@ export function buildAnchorBoundPiiHighlights(
   const warningCodes = new Set<string>();
 
   for (const entity of contract.entities) {
-    if (entity.review_state === "rejected") {
-      continue;
-    }
-    for (const reason of entity.binding_reasons) {
-      summary.binding_reason_counts[reason] = (summary.binding_reason_counts[reason] ?? 0) + 1;
-      if (reason !== "anchor_exact_match") {
-        warningCodes.add(reason);
-      }
-    }
-    for (const warning of entity.warnings) {
-      warningCodes.add(warning);
-    }
-    if (entity.identity_basis === "evidence_only") {
-      summary.evidence_only_count += 1;
-    }
-    if (entity.binding_status === "missing") {
-      summary.missing_binding_count += 1;
-    }
-    if (entity.binding_status === "partial") {
-      summary.partial_binding_count += 1;
-    } else if (entity.binding_status === "ambiguous") {
-      summary.ambiguous_binding_count += 1;
-    }
-    if (entity.mapping_status === "missing") {
-      summary.missing_canonical_count += 1;
-    } else if (entity.mapping_status === "ambiguous") {
-      summary.ambiguous_canonical_count += 1;
-    } else if (entity.mapping_status === "partial") {
-      summary.partial_canonical_count += 1;
+    // A rejected (false-positive) entity stays renderable as an explicitly dismissed ghost so a
+    // reviewer can see and revise the decision in place — but it no longer contributes to the
+    // warning/coverage summary, which describes only active (pseudonymize/keep) entities.
+    const rejected = entity.review_state === "rejected";
+    if (!rejected) {
+      collectEntitySummary(entity, summary, warningCodes);
     }
 
     const raw = highlightForRange(entity, "technical_raw_text", entity.display.raw_highlight_range);
@@ -168,7 +145,7 @@ export function buildAnchorBoundPiiHighlights(
     }
 
     const layoutRanges = rangesForSource(entity, "layout_text");
-    if (layoutRanges.length === 0) {
+    if (layoutRanges.length === 0 && !rejected) {
       summary.missing_layout_count += 1;
     }
     for (const range of layoutRanges) {
@@ -187,6 +164,40 @@ export function buildAnchorBoundPiiHighlights(
   return { byView, summary };
 }
 
+function collectEntitySummary(
+  entity: ReviewReadyAnchorBoundPiiEntity,
+  summary: AnchorBoundPiiHighlightSummary,
+  warningCodes: Set<string>,
+): void {
+  for (const reason of entity.binding_reasons) {
+    summary.binding_reason_counts[reason] = (summary.binding_reason_counts[reason] ?? 0) + 1;
+    if (reason !== "anchor_exact_match") {
+      warningCodes.add(reason);
+    }
+  }
+  for (const warning of entity.warnings) {
+    warningCodes.add(warning);
+  }
+  if (entity.identity_basis === "evidence_only") {
+    summary.evidence_only_count += 1;
+  }
+  if (entity.binding_status === "missing") {
+    summary.missing_binding_count += 1;
+  }
+  if (entity.binding_status === "partial") {
+    summary.partial_binding_count += 1;
+  } else if (entity.binding_status === "ambiguous") {
+    summary.ambiguous_binding_count += 1;
+  }
+  if (entity.mapping_status === "missing") {
+    summary.missing_canonical_count += 1;
+  } else if (entity.mapping_status === "ambiguous") {
+    summary.ambiguous_canonical_count += 1;
+  } else if (entity.mapping_status === "partial") {
+    summary.partial_canonical_count += 1;
+  }
+}
+
 export const buildHighlightsFromAnchorBoundEntities = buildAnchorBoundPiiHighlights;
 export const buildViewHighlightsFromEntityContract = buildAnchorBoundPiiHighlights;
 
@@ -201,9 +212,10 @@ export interface ManualAdditionHighlights {
  * backend contract/`pii_result`. Canonical offsets are always available (that's what was captured);
  * the raw view is populated only when the reverse projection was `"exact"`, mirroring how detector
  * entities already only highlight raw when their own mapping is exact, never guessed. A `rejected`
- * addition is excluded, matching how rejected detector entities never reach this component either.
- * A `stale` addition (its `text_artifact_id` was superseded by a newer text result) is excluded
- * too: its offsets refer to a previous text buffer, so rendering it into the current one would
+ * addition stays included and renders as a dismissed ghost (like a rejected detector entity), so
+ * the decision remains visible and revisable in place.
+ * A `stale` addition (its `text_artifact_id` was superseded by a newer text result) is excluded:
+ * its offsets refer to a previous text buffer, so rendering it into the current one would
  * decorate unrelated characters.
  */
 export function buildManualAdditionHighlights(
@@ -213,7 +225,7 @@ export function buildManualAdditionHighlights(
   const raw: AnchorBoundPiiHighlight[] = [];
 
   for (const addition of manualAdditions) {
-    if (addition.review_status === "rejected" || addition.artifact_currency === "stale") {
+    if (addition.artifact_currency === "stale") {
       continue;
     }
     canonical.push(
