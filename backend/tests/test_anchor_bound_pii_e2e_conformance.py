@@ -39,6 +39,7 @@ from app.schemas import (
     TextPageResult,
 )
 from app.services.artifact_service import save_pii_artifact, save_text_artifact
+from app.services.reading_text import ReadingCell, ReadingRow, build_reading_text
 from app.services.reading_text_geometry_projection import (
     build_reading_text_geometry_projection_map,
 )
@@ -46,6 +47,7 @@ from app.services.reading_text_projection import (
     build_reading_text_map,
     project_pii_entities_to_reading_text,
 )
+from app.services.reading_text_row_lineage import build_reading_text_row_lineage_map
 
 _CONTRACT_URL = "/api/documents/{document_id}/pii/entity-contract"
 
@@ -774,3 +776,201 @@ def test_trailing_newline_and_repeated_interior_token_still_highlight_in_both_vi
         value = entity["value"]
         assert value not in json.dumps(entity["anchor_refs"])
         assert value not in json.dumps(entity["binding_reasons"])
+
+
+# --- Anchor-first Text Package v2: builder-emitted (construction-time) row lineage ----------------
+# The fixtures above all go through the post-hoc reading_text_map / geometry-projection fallback
+# tiers. This section proves the SAME end-to-end outcome is now reachable purely from lineage the
+# canonical-reading-text builder itself emits while rendering -- no post-render text search
+# mechanism is present in this fixture at all (reading_text_map is left empty and no geometry
+# projection map is saved), so a correct canonical range here can only have come from
+# ``reading_text_row_lineage_map``.
+_ROW_LINEAGE_RAW = (
+    "Sanierungsbau Perchtoldsdorf GmbH\n"
+    "Hauptstrasse 5, Perchtoldsdorf\n"
+    "Sicherheitsdienst Wien KG\n"
+    "Sicherheitsdienst Wien KG\n"
+)
+
+
+def _row_lineage_rows(raw: str) -> list[ReadingRow]:
+    lines = raw.split("\n")[:-1]  # drop the trailing empty split after the final "\n"
+    offset = 0
+    rows: list[ReadingRow] = []
+    for index, line in enumerate(lines):
+        rows.append(
+            ReadingRow(
+                page_number=1,
+                y0=0.05 + index * 0.02,
+                y1=0.05 + index * 0.02 + 0.012,
+                cells=(ReadingCell(text=line, x0=0.07, x1=0.07 + len(line) * 0.006),),
+                source_range=(offset, offset + len(line)),
+            )
+        )
+        offset += len(line) + 1
+    return rows
+
+
+def _save_with_row_construction_lineage(
+    settings: Settings, document_id: str, raw: str, entities: list[PiiEntity]
+) -> str:
+    """Persist a text + PII artifact pair using only builder-emitted row-construction lineage.
+
+    Runs the real ``build_reading_text`` builder over hand-positioned rows (the same primitive
+    ``collect_pdf_reading_rows`` produces from a real PDF), then the real
+    ``build_reading_text_row_lineage_map`` converter -- the same two calls the OCR/Text station
+    makes. ``reading_text_map`` is deliberately left empty and no geometry projection map is saved,
+    so nothing else in this fixture could supply a canonical range.
+    """
+    pages = [
+        TextPageResult(
+            page_number=1,
+            source="pdf_text_layer",
+            has_text_layer=True,
+            ocr_used=False,
+            text=raw,
+            text_char_count=len(raw),
+        )
+    ]
+    reading = build_reading_text(raw, pages, None, [], None, positioned_rows=_row_lineage_rows(raw))
+    assert reading is not None
+    row_lineage_map = build_reading_text_row_lineage_map(
+        document_id=document_id,
+        reading_text=reading.text,
+        pages=pages,
+        row_lineage=reading.row_lineage,
+    )
+    assert row_lineage_map is not None
+
+    text_id = uuid4().hex
+    save_text_artifact(
+        settings,
+        TextArtifact(
+            id=text_id,
+            document_id=document_id,
+            input_artifact_id="c" * 32,
+            input_audit_artifact_id="d" * 32,
+            created_at="2026-07-10T09:00:00.000000Z",
+            content=TextContent(
+                document_id=document_id,
+                input_artifact_id="c" * 32,
+                input_audit_artifact_id="d" * 32,
+                source="pdf_text_layer",
+                text=raw,
+                text_char_count=len(raw),
+                pages=pages,
+                tool_versions={"test": "1"},
+                flags=[],
+                reading_text_version="1",
+                reading_text=reading.text,
+                reading_text_status=reading.status,
+                reading_text_row_lineage_map_version="1",
+                reading_text_row_lineage_map=row_lineage_map,
+                # Deliberately no reading_text_map, no geometry projection map: only builder-emitted
+                # row-construction lineage is available to the anchor graph in this fixture.
+            ),
+        ),
+    )
+    counts: dict[str, int] = {}
+    for entity in entities:
+        counts[entity.entity_type] = counts.get(entity.entity_type, 0) + 1
+    save_pii_artifact(
+        settings,
+        PiiArtifact(
+            id=uuid4().hex,
+            document_id=document_id,
+            input_text_artifact_id=text_id,
+            created_at="2026-07-10T10:00:00.000000Z",
+            content=PiiContent(
+                document_id=document_id,
+                input_text_artifact_id=text_id,
+                profile="custom",
+                language="de",
+                score_threshold=0.5,
+                text_char_count=len(raw),
+                reading_text_char_count=len(reading.text),
+                configured_entity_types=sorted(counts),
+                entities=_sorted_entities(entities),
+                entity_counts=dict(sorted(counts.items())),
+                tool_versions={},
+                flags=[],
+                validation=PiiValidationSummary(
+                    enabled=True, kept=len(entities), dropped=0, score_down=0
+                ),
+            ),
+        ),
+    )
+    return reading.text
+
+
+def test_builder_emitted_row_lineage_resolves_repeated_token_and_duplicates_through_contract(
+    client: TestClient, settings: Settings
+) -> None:
+    """The completion criterion for Anchor-first Text Package v2, proved end to end: raw detection
+    -> Text Anchor Graph -> anchor-bound entity -> entity contract -> canonical display range, with
+    the canonical range supplied entirely by builder-emitted row-construction lineage."""
+    document_id = _upload_document(client)
+    raw = _ROW_LINEAGE_RAW
+
+    org_start, org_core_end = _raw_span(raw, "Sanierungsbau Perchtoldsdorf GmbH")
+    org_end_with_newline = org_core_end + 1  # a detector span running past "GmbH" into "\n"
+    assert raw[org_end_with_newline - 1] == "\n"
+    dup1_start, dup1_end = _raw_span(raw, "Sicherheitsdienst Wien KG", occurrence=0)
+    dup2_start, dup2_end = _raw_span(raw, "Sicherheitsdienst Wien KG", occurrence=1)
+
+    entities = [
+        _entity_at(raw, "ORGANIZATION", org_start, org_end_with_newline),
+        _entity_at(raw, "ORG", dup1_start, dup1_end),
+        _entity_at(raw, "ORG", dup2_start, dup2_end),
+    ]
+    reading_text = _save_with_row_construction_lineage(settings, document_id, raw, entities)
+
+    body = _get_contract(client, document_id)
+    assert body["anchor_graph_available"] is True
+
+    # The multi-word organisation, containing a word ("Perchtoldsdorf") that also occurs
+    # elsewhere, resolves to a complete, correct canonical range -- construction-time row lineage
+    # projects every token in its exact row arithmetically, so this now succeeds without even
+    # needing the boundary-bridging fallback the post-hoc mechanisms required.
+    org = _by_value(body, "Sanierungsbau Perchtoldsdorf GmbH\n")
+    assert org["binding_status"] == "exact"
+    assert org["identity_basis"] == "anchor_exact"
+    assert "canonical_range_missing" not in org["binding_reasons"]
+    canonical_range = org["display"]["canonical_highlight_range"]
+    assert canonical_range is not None
+    assert (
+        reading_text[canonical_range["start"] : canonical_range["end"]]
+        == "Sanierungsbau Perchtoldsdorf GmbH"
+    )
+
+    # Two genuinely duplicated occurrences of the same company name, at distinct raw positions,
+    # each resolve to their OWN correct, distinct canonical range -- equal text values in
+    # different source positions stay distinct information units, never guessed by textual order.
+    duplicates = [
+        entity for entity in body["entities"] if entity["value"] == "Sicherheitsdienst Wien KG"
+    ]
+    assert len(duplicates) == 2
+    duplicate_ids = {entity["entity_id"] for entity in duplicates}
+    assert len(duplicate_ids) == 2
+    for duplicate in duplicates:
+        canonical_range = duplicate["display"]["canonical_highlight_range"]
+        assert canonical_range is not None
+        assert (
+            reading_text[canonical_range["start"] : canonical_range["end"]]
+            == "Sicherheitsdienst Wien KG"
+        )
+    duplicate_canonical_ranges = {
+        (
+            duplicate["display"]["canonical_highlight_range"]["start"],
+            duplicate["display"]["canonical_highlight_range"]["end"],
+        )
+        for duplicate in duplicates
+    }
+    assert len(duplicate_canonical_ranges) == 2  # distinct ranges, not the same span twice
+
+    # No raw/canonical text leaks into binding metadata.
+    for entity in body["entities"]:
+        value = entity["value"]
+        assert value not in json.dumps(entity["anchor_refs"])
+        assert value not in json.dumps(entity["binding_reasons"])
+        assert value not in json.dumps(entity["warnings"])

@@ -432,6 +432,26 @@ persistence.
 > Those paths, and a real `anchor-first-text-package-v2` that unifies every rendering path behind
 > one contract, remain open — the acceptance criteria below (byte-stability, legacy-artifact safety,
 > e2e conformance) hold for the delivered slice, but full-document acceptance does not yet.
+>
+> **Status update (2026-07-11).** Phase 2 of construction-time lineage is delivered on branch
+> `anchor-first-text-package-v2` itself — see
+> [ADR-0036](../adr/0036-reading-text-row-construction-lineage-v2.md). Party/two-column heading
+> grouping (a row wholly on one side keeps its own range through the reorder), keyword-header and
+> generic geometric tables (row-granularity lineage per rendered table line, shared between both
+> renderers), and metadata/offer-field rows (a single untouched row is attributed) now emit real
+> lineage; each explicitly declines exactly where a sub-row raw boundary is genuinely unknowable
+> (a row split across both party-column sides, a fused table header, a fused multi-field metadata
+> row). `RowLineageSegment` gained an honest `status` (`exact`/`normalized`/`merged`) instead of
+> always claiming `exact`; synthetic section headings are now explicit `inserted` segments instead
+> of silent gaps. Verified end to end: the repeated-interior-token multi-word entity case (the
+> acceptance criterion above) now resolves through simple arithmetic projection from an exact-length
+> row, and two duplicate values at distinct raw positions each keep their own distinct canonical
+> range, purely from builder-emitted lineage — `reading_text_map` deliberately empty, no geometry
+> projection map present, proven through the real entity contract. Multi-column prose reconstruction
+> and in-row label/value splitting remain open (a single source row's cells can land in different
+> synthesized columns, so no whole-row range applies safely); cell-level granularity remains out of
+> scope. The `text_match` display-fallback retirement plan (§8.3) is closer but not yet triggered —
+> that fallback still legitimately covers documents/paths this phase does not.
 
 - **Goal:** the reading-text builder emits `(raw_span → reading_span)` segments *while rendering*
   each fragment (it already holds the source rows/geometry), replacing dependence on post-hoc
