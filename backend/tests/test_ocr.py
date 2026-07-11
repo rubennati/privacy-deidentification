@@ -361,7 +361,10 @@ def test_mixed_pdf_routes_each_page_and_preserves_order(
     assert all(upload_dir not in path.parents for path in adapter.calls)
     assert all(not path.exists() for path in adapter.calls)
     artifact_directory = document_data_dir / str(upload["id"]) / "artifacts"
-    assert all(path.suffix == ".json" for path in artifact_directory.rglob("*"))
+    assert all(
+        path.suffix == ".json" or path.name == "current-artifacts"
+        for path in artifact_directory.rglob("*")
+    )
 
 
 def test_docx_extracts_paragraphs_without_ocr(
@@ -748,6 +751,32 @@ def test_get_returns_latest_text_artifact(
     assert second.status_code == 201
     assert response.status_code == 200
     assert response.json()["id"] == second.json()["id"]
+
+
+def test_invalid_current_text_is_explicit_and_does_not_fall_back(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
+    )
+    first = client.post(f"/api/documents/{upload['id']}/ocr")
+    second = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert first.status_code == 201
+    assert second.status_code == 201
+    current_path = _artifact_path(document_data_dir, upload["id"], second.json()["id"])
+    current_path.write_text('{"artifact_type":"text_result","contract":"future"}', encoding="utf-8")
+
+    response = client.get(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 409
+    assert "invalid or incompatible" in response.json()["detail"]
+    historical = client.get(
+        f"/api/documents/{upload['id']}/ocr", params={"artifact_id": first.json()["id"]}
+    )
+    assert historical.status_code == 200
+    assert historical.json()["id"] == first.json()["id"]
 
 
 def test_rerun_creates_new_immutable_quality_report(

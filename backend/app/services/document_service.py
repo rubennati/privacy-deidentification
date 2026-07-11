@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from app.config import Settings
 from app.errors import ApiError
 from app.schemas import DocumentSummary, OriginalArtifact
+from app.services.artifact_lifecycle import document_lifecycle_lock, mark_document_deleted
 from app.services.job_store import delete_jobs_for_document
 
 _ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
@@ -189,9 +190,13 @@ def delete_document(settings: Settings, document_id: str) -> None:
         else f"{document_id}.{record.extension}"
     )
     stored_file = settings.upload_storage_dir / storage_filename
-    stored_file.unlink(missing_ok=True)
-    delete_jobs_for_document(settings, document_id)
-    delete_document_data(settings, document_id)
+    with document_lifecycle_lock(settings, document_id):
+        # The tombstone lives outside the document directory and survives deletion. Publishers
+        # check it while holding this same cross-process lock, making successful deletion terminal.
+        mark_document_deleted(settings, document_id)
+        stored_file.unlink(missing_ok=True)
+        delete_jobs_for_document(settings, document_id)
+        delete_document_data(settings, document_id)
 
 
 def _document_directory(settings: Settings, document_id: str) -> Path:

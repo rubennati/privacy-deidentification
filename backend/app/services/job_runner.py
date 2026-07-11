@@ -20,6 +20,7 @@ Behavior contract for Phase 2:
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 
 from fastapi import Depends
 
@@ -31,7 +32,7 @@ from app.services.job_models import (
     JobResult,
     sanitize_job_error,
 )
-from app.services.job_store import JobStore, get_job_store
+from app.services.job_store import JobNotFoundError, JobStore, get_job_store
 
 
 class SyncJobRunner:
@@ -61,14 +62,18 @@ class SyncJobRunner:
             error_code, error_message = sanitize_job_error(exc)
             record.mark_failed(error_code=error_code, error_message=error_message)
             if self._store is not None:
-                self._store.mark_failed(record)
+                # Deletion terminally removes jobs while a station may still be unwinding.
+                with suppress(JobNotFoundError):
+                    self._store.mark_failed(record)
             return JobResult(record=record, error=exc)
         record.mark_succeeded(
             artifact_id=getattr(artifact, "id", None),
             artifact_type=getattr(artifact, "artifact_type", None),
         )
         if self._store is not None:
-            self._store.mark_succeeded(record)
+            # Deletion may win after publication; it also removes the published files.
+            with suppress(JobNotFoundError):
+                self._store.mark_succeeded(record)
         return JobResult(record=record, artifact=artifact)
 
 

@@ -29,8 +29,7 @@ from app.schemas import (
 from app.services.artifact_service import (
     get_latest_audit_artifact,
     get_latest_text_artifact,
-    save_quality_report_artifact,
-    save_text_artifact,
+    save_text_run,
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.docx_extraction import extract_docx_text
@@ -114,8 +113,7 @@ def create_text_artifact(
         content=content,
     )
     quality_report = build_quality_report(original, audit, artifact, created_at)
-    save_text_artifact(settings, artifact)
-    save_quality_report_artifact(settings, quality_report)
+    save_text_run(settings, artifact, quality_report)
     return artifact
 
 

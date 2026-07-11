@@ -23,7 +23,7 @@ import threading
 
 from app.config import Settings
 from app.services.job_models import JobKind, JobRecord, sanitize_job_error
-from app.services.job_store import JobStore
+from app.services.job_store import JobNotFoundError, JobStore
 from app.services.ocr_adapters import OcrAdapter, get_ocr_adapter
 from app.services.ocr_service import create_text_artifact
 from app.services.pdf_renderer import PdfRenderer, get_pdf_renderer
@@ -76,7 +76,14 @@ class OcrJobWorker:
         except Exception as exc:  # every failure is recorded and sanitized, never propagated
             error_code, error_message = sanitize_job_error(exc)
             record.mark_failed(error_code=error_code, error_message=error_message)
-            self._store.mark_failed(record)
+            try:
+                self._store.mark_failed(record)
+            except JobNotFoundError:
+                logger.info(
+                    "ocr job discarded after document deletion",
+                    extra={"job_id": record.job_id},
+                )
+                return
             logger.warning(
                 "ocr job failed",
                 extra={"job_id": record.job_id, "error_code": error_code},
@@ -86,7 +93,14 @@ class OcrJobWorker:
             artifact_id=getattr(artifact, "id", None),
             artifact_type=getattr(artifact, "artifact_type", None),
         )
-        self._store.mark_succeeded(record)
+        try:
+            self._store.mark_succeeded(record)
+        except JobNotFoundError:
+            logger.info(
+                "ocr job completion discarded after document deletion",
+                extra={"job_id": record.job_id},
+            )
+            return
         logger.info(
             "ocr job succeeded",
             extra={"job_id": record.job_id, "artifact_type": record.artifact_type},

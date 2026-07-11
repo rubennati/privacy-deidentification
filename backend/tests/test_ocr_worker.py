@@ -9,6 +9,7 @@ fixtures are synthetic — no private corpus text is used.
 from __future__ import annotations
 
 import json
+import threading
 from io import BytesIO
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from docx import Document as DocxDocument
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.services.artifact_service import save_text_artifact
 from app.services.job_models import (
     JobContext,
     JobExecutionMode,
@@ -206,3 +208,53 @@ def test_two_workers_do_not_both_process_the_same_job(
     assert first.process_next() is True
     # The single job is already claimed/terminal, so a second worker finds nothing to do.
     assert second.process_next() is False
+
+
+def test_deleted_document_rejects_delayed_worker_publication(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document_id = _upload_and_audit(
+        client, "document.docx", _docx_bytes("Lifecycle"), _DOCX_MIME
+    )
+    initial = client.post(f"/api/documents/{document_id}/ocr")
+    assert initial.status_code == 201
+    delayed = initial.json()
+    delayed["id"] = "f" * 32
+    store = get_job_store(settings)
+    _pending_ocr_job(store, document_id)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def delayed_station(*_args: object, **_kwargs: object):
+        from app.schemas import TextArtifact
+
+        entered.set()
+        assert release.wait(timeout=5)
+        artifact = TextArtifact.model_validate(delayed)
+        save_text_artifact(settings, artifact)
+        return artifact
+
+    monkeypatch.setattr("app.services.ocr_worker.create_text_artifact", delayed_station)
+    worker_error: list[BaseException] = []
+
+    def run_worker() -> None:
+        try:
+            _worker(settings, store).process_next()
+        except BaseException as exc:  # test captures unexpected thread failures
+            worker_error.append(exc)
+
+    thread = threading.Thread(target=run_worker)
+    thread.start()
+    assert entered.wait(timeout=5)
+    assert client.delete(f"/api/documents/{document_id}").status_code == 204
+    release.set()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert worker_error == []
+    assert not (document_data_dir / document_id).exists()
+    tombstone = settings.job_state_dir / "document-lifecycle" / f"{document_id}.deleted"
+    assert tombstone.is_file()
