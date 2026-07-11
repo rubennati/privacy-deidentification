@@ -8,7 +8,30 @@ import {
   buildAnchorBoundPiiHighlights,
   buildHighlightSegments,
   buildManualAdditionHighlights,
+  invalidAnchorBoundHighlights,
+  type AnchorBoundPiiHighlight,
 } from "./piiHighlights";
+
+function anchorHighlight(overrides: Partial<AnchorBoundPiiHighlight> = {}): AnchorBoundPiiHighlight {
+  return {
+    entity_id: "a".repeat(32),
+    entity_type: "LOCATION",
+    identity_basis: "anchor_exact",
+    source_entity_ids: ["a".repeat(32)],
+    primary_source_entity_id: "a".repeat(32),
+    anchor_ids: ["anchor-1"],
+    source_name: "technical_raw_text",
+    start: 0,
+    end: 5,
+    binding_status: "exact",
+    mapping_status: "exact",
+    review_state: "accepted",
+    needs_review: false,
+    reason_codes: [],
+    confidence: 0.9,
+    ...overrides,
+  };
+}
 
 function manualAddition(overrides: Partial<PiiManualAddition> = {}): PiiManualAddition {
   return {
@@ -25,6 +48,7 @@ function manualAddition(overrides: Partial<PiiManualAddition> = {}): PiiManualAd
     created_at: "2026-07-11T10:00:00Z",
     review_status: "accepted",
     review_decision: null,
+    artifact_currency: "current",
     ...overrides,
   };
 }
@@ -480,5 +504,45 @@ describe("buildManualAdditionHighlights", () => {
     const { canonical } = buildManualAdditionHighlights([manualAddition({ review_status: "kept" })]);
 
     expect(canonical[0].review_state).toBe("kept");
+  });
+
+  it("excludes a stale manual addition entirely, even if accepted", () => {
+    // A stale addition's offsets refer to a superseded text buffer -- rendering it against the
+    // current one would decorate unrelated characters, so it must never reach either view.
+    const { canonical, raw } = buildManualAdditionHighlights([
+      manualAddition({ artifact_currency: "stale" }),
+    ]);
+
+    expect(canonical).toHaveLength(0);
+    expect(raw).toHaveLength(0);
+  });
+
+  it("keeps a current manual addition active", () => {
+    const { canonical } = buildManualAdditionHighlights([
+      manualAddition({ artifact_currency: "current" }),
+    ]);
+
+    expect(canonical).toHaveLength(1);
+  });
+});
+
+describe("invalidAnchorBoundHighlights", () => {
+  it("returns highlights that do not fit the given text buffer", () => {
+    const text = "Hallo Wien";
+    const valid = anchorHighlight({ start: 0, end: 5 });
+    const outOfBounds = anchorHighlight({ start: 0, end: 500 });
+    const negative = anchorHighlight({ start: -3, end: 4 });
+    const empty = anchorHighlight({ start: 3, end: 3 });
+
+    const invalid = invalidAnchorBoundHighlights(text, [valid, outOfBounds, negative, empty]);
+
+    expect(invalid).toEqual([outOfBounds, negative, empty]);
+  });
+
+  it("returns an empty list when every highlight fits", () => {
+    const text = "Hallo Wien";
+    const valid = anchorHighlight({ start: 0, end: 5 });
+
+    expect(invalidAnchorBoundHighlights(text, [valid])).toEqual([]);
   });
 });

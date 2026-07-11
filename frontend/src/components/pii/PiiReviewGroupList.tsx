@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   PII_REVIEW_DECISION_OPTIONS,
   fetchPiiReview,
+  reviewDecisionLabel,
   reviewStatusLabel,
   submitPiiReviewDecision,
   type PiiReviewDecisionScope,
@@ -155,6 +156,15 @@ export function PiiReviewGroupList({
                   {group.projection_summary.unmapped_count} nur Rohtext
                 </p>
               )}
+              {group.stale_decision != null && (
+                // A previous decision named this same (deterministic) group id, but was recorded
+                // against a since-superseded PII run — never applied to the current status/dropdown
+                // above. Shown as explicit history, not as the active decision.
+                <p className="mt-2 rounded-md bg-accent-soft px-2 py-1 text-xs text-ink">
+                  Vorherige Entscheidung (gilt nicht mehr für dieses Ergebnis):{" "}
+                  {reviewDecisionLabel(group.stale_decision)}
+                </p>
+              )}
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label className="sr-only" htmlFor={`group-decision-${group.entity_group_id}`}>
                   Entscheidung für Gruppe
@@ -257,11 +267,18 @@ export function PiiReviewGroupList({
             <span className="text-xs text-muted">{review.manual_additions.length}</span>
           </div>
           <ul aria-labelledby="manual-additions-heading" className="mt-4 space-y-3">
-            {review.manual_additions.map((addition) => (
+            {review.manual_additions.map((addition) => {
+              // A stale addition's canonical offsets refer to a superseded text result: it stays
+              // listed for audit/history, but must never look like an active, decidable entry —
+              // the backend also refuses a new decision against it (404, target no longer exists).
+              const isStale = addition.artifact_currency === "stale";
+              return (
               <li
                 key={addition.addition_id}
                 id={groupElementId(addition.addition_id)}
-                className="scroll-mt-16 rounded-lg border border-card-border bg-card p-3"
+                className={`scroll-mt-16 rounded-lg border border-card-border bg-card p-3 ${
+                  isStale ? "opacity-70" : ""
+                }`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -270,9 +287,15 @@ export function PiiReviewGroupList({
                     </span>
                     <span className="ml-2 text-xs text-muted">manuell hinzugefügt</span>
                   </div>
-                  <span className={`text-xs font-medium ${STATUS_STYLES[addition.review_status]}`}>
-                    {reviewStatusLabel(addition.review_status)}
-                  </span>
+                  {isStale ? (
+                    <span className="text-xs font-medium text-red-700">
+                      Veraltet · gilt nicht mehr für den aktuellen Text
+                    </span>
+                  ) : (
+                    <span className={`text-xs font-medium ${STATUS_STYLES[addition.review_status]}`}>
+                      {reviewStatusLabel(addition.review_status)}
+                    </span>
+                  )}
                 </div>
                 {showTechnicalDetails && (
                   <p className="mt-2 text-xs text-muted">
@@ -298,12 +321,12 @@ export function PiiReviewGroupList({
                   <select
                     id={`manual-addition-decision-${addition.addition_id}`}
                     value={addition.review_decision ?? "pseudonymize"}
-                    disabled={savingTarget === addition.addition_id}
+                    disabled={isStale || savingTarget === addition.addition_id}
                     onChange={(event) => {
                       const value = event.target.value as PiiReviewDecisionValue;
                       void submit("manual_addition", addition.addition_id, value);
                     }}
-                    className="rounded-lg border border-card-border bg-dropzone px-2 py-1 text-xs text-ink"
+                    className="rounded-lg border border-card-border bg-dropzone px-2 py-1 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {PII_REVIEW_DECISION_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
@@ -313,7 +336,8 @@ export function PiiReviewGroupList({
                   </select>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </>
       )}

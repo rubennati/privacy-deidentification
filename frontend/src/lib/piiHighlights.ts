@@ -36,11 +36,18 @@ export interface AnchorBoundPiiHighlight {
   origin?: "human";
 }
 
+// Every segment carries its own code-point range in the source buffer. Segments always partition
+// the text exactly (each code point appears in exactly one segment), so `start` is unique per
+// segment and safe as a stable render key — a highlight split by an overlapping one must never
+// reuse the highlight's own start as a key for both fragments (that duplicate-key reconciliation
+// is what used to corrupt the rendered text).
 export type AnchorBoundHighlightSegment =
-  | { kind: "text"; text: string }
+  | { kind: "text"; text: string; start: number; end: number }
   | {
       kind: "entity";
       text: string;
+      start: number;
+      end: number;
       highlight: AnchorBoundPiiHighlight;
       highlights: AnchorBoundPiiHighlight[];
     };
@@ -195,6 +202,9 @@ export interface ManualAdditionHighlights {
  * the raw view is populated only when the reverse projection was `"exact"`, mirroring how detector
  * entities already only highlight raw when their own mapping is exact, never guessed. A `rejected`
  * addition is excluded, matching how rejected detector entities never reach this component either.
+ * A `stale` addition (its `text_artifact_id` was superseded by a newer text result) is excluded
+ * too: its offsets refer to a previous text buffer, so rendering it into the current one would
+ * decorate unrelated characters.
  */
 export function buildManualAdditionHighlights(
   manualAdditions: readonly PiiManualAddition[],
@@ -203,7 +213,7 @@ export function buildManualAdditionHighlights(
   const raw: AnchorBoundPiiHighlight[] = [];
 
   for (const addition of manualAdditions) {
-    if (addition.review_status === "rejected") {
+    if (addition.review_status === "rejected" || addition.artifact_currency === "stale") {
       continue;
     }
     canonical.push(
@@ -282,17 +292,29 @@ export function buildAnchorBoundHighlightSegments(
     const segmentText = codePoints.slice(start, end).join("");
     const primary = memberships[0];
     if (!primary) {
-      segments.push({ kind: "text", text: segmentText });
+      segments.push({ kind: "text", text: segmentText, start, end });
     } else {
       segments.push({
         kind: "entity",
         text: segmentText,
+        start,
+        end,
         highlight: primary,
         highlights: memberships,
       });
     }
   }
   return segments;
+}
+
+/** Highlights whose range does not fit the given text buffer. They are never rendered (the text
+ *  must stay uncorrupted), but callers can surface the drop explicitly instead of silently. */
+export function invalidAnchorBoundHighlights(
+  text: string,
+  highlights: readonly AnchorBoundPiiHighlight[],
+): AnchorBoundPiiHighlight[] {
+  const codePoints = Array.from(text);
+  return highlights.filter((highlight) => !isValidHighlight(codePoints, highlight));
 }
 
 function highlightForRange(

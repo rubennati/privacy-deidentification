@@ -45,6 +45,7 @@ from app.schemas import (
     PiiReviewResultArtifact,
     PiiReviewResultEntry,
     PiiReviewStatus,
+    PiiStaleReviewDecision,
 )
 from app.services.artifact_service import (
     get_latest_pii_artifact,
@@ -144,8 +145,8 @@ def get_pii_review_result(
     decisions = _load_latest_decisions(settings, document_id, artifact.id)
     manual_additions = _load_latest_manual_additions(settings, document_id)
     current_text_artifact_id = _current_text_artifact_id(settings, document_id)
-    stale_count = _count_stale_decisions(
-        settings, document_id, artifact.id, manual_additions, current_text_artifact_id
+    stale_decisions = _collect_stale_decisions(
+        settings, document_id, artifact.id, manual_additions, decisions, current_text_artifact_id
     )
     return _build_review_result(
         document_id,
@@ -155,7 +156,7 @@ def get_pii_review_result(
         groups,
         decisions,
         manual_additions,
-        stale_count,
+        stale_decisions,
         settings=settings,
         latest_pii_artifact_id=(latest_artifact.id if latest_artifact is not None else None),
         latest_text_artifact_id=current_text_artifact_id,
@@ -320,8 +321,8 @@ def _persist_review_result_snapshot(
     decisions = _load_latest_decisions(settings, document_id, artifact_id)
     manual_additions = _load_latest_manual_additions(settings, document_id)
     current_text_artifact_id = _current_text_artifact_id(settings, document_id)
-    stale_count = _count_stale_decisions(
-        settings, document_id, artifact_id, manual_additions, current_text_artifact_id
+    stale_decisions = _collect_stale_decisions(
+        settings, document_id, artifact_id, manual_additions, decisions, current_text_artifact_id
     )
     content = _build_review_result(
         document_id,
@@ -331,7 +332,7 @@ def _persist_review_result_snapshot(
         groups,
         decisions,
         manual_additions,
-        stale_count,
+        stale_decisions,
         settings=settings,
         # Both callers of this function (`set_pii_review_decision`/`add_pii_manual_entity`) always
         # fetch `get_latest_pii_artifact` themselves before reaching here, so `artifact_id` here is
@@ -383,7 +384,7 @@ def _build_review_result(
     groups: list[PiiEntityGroup],
     decisions: dict[tuple[str, str], PiiReviewDecisionRecord],
     manual_additions: dict[str, PiiManualAdditionRecord],
-    stale_decision_count: int,
+    stale_decisions: list[PiiStaleReviewDecision],
     *,
     settings: Settings,
     latest_pii_artifact_id: str | None,
@@ -408,6 +409,12 @@ def _build_review_result(
             created_at=addition.recorded_at,
             review_status=_status_for(decision_record.decision if decision_record else None),
             review_decision=decision_record.decision if decision_record else None,
+            artifact_currency=(
+                "current"
+                if latest_text_artifact_id is not None
+                and addition.text_artifact_id == latest_text_artifact_id
+                else "stale"
+            ),
         )
         for addition in sorted(
             manual_additions.values(), key=lambda item: (item.canonical_start, item.addition_id)
@@ -431,15 +438,28 @@ def _build_review_result(
         if target_type == "occurrence"
     }
 
+    # Entity-group ids are deterministic per (type, normalized value), so a stale decision from a
+    # superseded run can be correlated to the group this run detects again — surfaced explicitly,
+    # never applied (the effective status below still resolves only from current-run decisions).
+    stale_group_decisions = {
+        item.target_id: item
+        for item in stale_decisions
+        if item.target_type == "entity_group"
+    }
     review_groups = [
         PiiEntityGroupReview(
             **group.model_dump(),
             review_status=_status_for(decision_record.decision if decision_record else None),
             review_decision=decision_record.decision if decision_record else None,
             updated_at=decision_record.recorded_at if decision_record else None,
+            stale_decision=(stale_item.decision if stale_item is not None else None),
+            stale_decision_recorded_at=(
+                stale_item.recorded_at if stale_item is not None else None
+            ),
         )
         for group in groups
         for decision_record in [group_decisions.get(group.entity_group_id)]
+        for stale_item in [stale_group_decisions.get(group.entity_group_id)]
     ]
 
     review_occurrences = []
@@ -496,8 +516,9 @@ def _build_review_result(
         occurrences=review_occurrences,
         manual_additions=review_manual_additions,
         entries=entries,
-        stale_decision_count=stale_decision_count,
-        has_stale_decisions=stale_decision_count > 0,
+        stale_decision_count=len(stale_decisions),
+        has_stale_decisions=len(stale_decisions) > 0,
+        stale_decisions=stale_decisions,
     )
 
 
@@ -594,24 +615,26 @@ def _load_latest_manual_additions(
     return latest
 
 
-def _count_stale_decisions(
+def _collect_stale_decisions(
     settings: Settings,
     document_id: str,
     current_artifact_id: str,
     manual_additions: dict[str, PiiManualAdditionRecord],
+    current_decisions: dict[tuple[str, str], PiiReviewDecisionRecord],
     current_text_artifact_id: str | None,
-) -> int:
-    """Count review items that exist but no longer apply because their basis was re-run since.
+) -> list[PiiStaleReviewDecision]:
+    """Itemize review items that exist but no longer apply because their basis was re-run since.
 
     For entity-group/occurrence decisions: mirrors ``_load_latest_decisions``'s latest-line-per-
-    target collapse, but across *every* PII artifact id ever recorded for this document, then counts
-    how many of those latest-per-target records target a different id than ``current_artifact_id``.
-    For manual additions: counts every addition whose ``text_artifact_id`` differs from
+    target collapse, but across *every* PII artifact id ever recorded for this document, then keeps
+    those latest-per-target records that target a different id than ``current_artifact_id``.
+    For manual additions: every addition whose ``text_artifact_id`` differs from
     ``current_text_artifact_id`` (a manual addition has no ``pii_result`` origin, so a PII re-run
-    alone never makes it stale -- only a new *text* artifact can). Neither path changes which
-    decision/addition applies; both only make visible what was previously silent.
+    alone never makes it stale -- only a new *text* artifact can), carrying its own latest decision
+    when one exists. Neither path changes which decision/addition applies; both only make visible,
+    per item, what ``stale_decision_count`` previously only aggregated.
     """
-    stale = 0
+    stale: list[PiiStaleReviewDecision] = []
     path = _decisions_path(settings, document_id)
     if path.is_file():
         latest_by_target: dict[tuple[str, str], PiiReviewDecisionRecord] = {}
@@ -620,14 +643,36 @@ def _count_stale_decisions(
             if not isinstance(record, PiiReviewDecisionRecord):
                 continue
             latest_by_target[(record.target_type, record.target_id)] = record
-        stale += sum(
-            1
-            for (target_type, _target_id), record in latest_by_target.items()
+        stale.extend(
+            PiiStaleReviewDecision(
+                target_type=record.target_type,
+                target_id=record.target_id,
+                decision=record.decision,
+                recorded_at=record.recorded_at,
+                artifact_id=record.artifact_id,
+            )
+            for (target_type, _target_id), record in sorted(latest_by_target.items())
             if target_type != "manual_addition" and record.artifact_id != current_artifact_id
         )
-    stale += sum(
-        1
-        for addition in manual_additions.values()
+    stale.extend(
+        PiiStaleReviewDecision(
+            target_type="manual_addition",
+            target_id=addition.addition_id,
+            decision=(
+                decision_record.decision
+                if (
+                    decision_record := current_decisions.get(
+                        ("manual_addition", addition.addition_id)
+                    )
+                )
+                is not None
+                else None
+            ),
+            entity_type=addition.entity_type,
+            recorded_at=addition.recorded_at,
+            text_artifact_id=addition.text_artifact_id,
+        )
+        for addition in sorted(manual_additions.values(), key=lambda item: item.addition_id)
         if addition.text_artifact_id != current_text_artifact_id
     )
     return stale

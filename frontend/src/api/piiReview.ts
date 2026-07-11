@@ -50,6 +50,12 @@ export interface PiiEntityGroupReview {
   review_status: PiiReviewStatus;
   review_decision: PiiReviewDecisionValue | null;
   updated_at: string | null;
+  // A previous decision recorded against a superseded PII run that named this same (deterministic)
+  // group id. Never applied — `review_status`/`review_decision` above reflect only the current
+  // run — but surfaced so the card can say "previous decision no longer applies" explicitly.
+  // Optional for legacy/cached responses.
+  stale_decision?: PiiReviewDecisionValue | null;
+  stale_decision_recorded_at?: string | null;
 }
 
 export interface PiiReviewOccurrence {
@@ -87,6 +93,10 @@ export interface PiiManualAddition {
   created_at: string;
   review_status: PiiReviewStatus;
   review_decision: PiiReviewDecisionValue | null;
+  // Whether this addition's canonical offsets still refer to the current text artifact. A "stale"
+  // addition stays listed for audit/history, but must never render as a highlight into, or an
+  // active decision against, the current text. Optional for legacy/cached responses (= "current").
+  artifact_currency?: PiiReviewArtifactCurrency;
 }
 
 // Review Result v1: one stable, unified entry per detected occurrence or manual addition, so a
@@ -135,6 +145,25 @@ export interface PiiReviewResult {
   // longer matches the current text result (PII L14 / Review L10, ADR-0035).
   stale_decision_count: number;
   has_stale_decisions: boolean;
+  // Itemization of exactly the set `stale_decision_count` counts (audit/history, never applied).
+  // Optional for legacy/cached responses.
+  stale_decisions?: PiiStaleReviewDecision[];
+}
+
+// One recorded review item that no longer applies to the current result — the per-item view of
+// `stale_decision_count`, so warning, cards, and effective state can describe the same set.
+export interface PiiStaleReviewDecision {
+  target_type: PiiReviewDecisionScope;
+  target_id: string;
+  // Null for a stale manual addition that was never explicitly decided.
+  decision: PiiReviewDecisionValue | null;
+  // Known for manual additions; decision records do not carry one.
+  entity_type: string | null;
+  recorded_at: string;
+  // The superseded pii_result the decision was recorded against; null for manual additions.
+  artifact_id: string | null;
+  // The superseded text_result a manual addition was captured against; null for decisions.
+  text_artifact_id: string | null;
 }
 
 export interface PiiReviewDecisionRequest {

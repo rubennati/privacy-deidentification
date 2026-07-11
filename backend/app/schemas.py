@@ -2433,6 +2433,11 @@ class PiiManualAddition(BaseModel):
     created_at: str
     review_status: PiiReviewStatus = "accepted"
     review_decision: PiiReviewDecisionValue | None = None
+    # Whether this addition's canonical offsets still refer to the document's current text
+    # artifact. A "stale" addition stays listed for audit/history, but its offsets belong to a
+    # superseded ``reading_text`` — it must never be rendered as a highlight into, or an active
+    # decision against, the current text. Defaults to "current" for legacy persisted snapshots.
+    artifact_currency: Literal["current", "stale"] = "current"
 
 
 class PiiReviewOccurrence(BaseModel):
@@ -2483,6 +2488,13 @@ class PiiEntityGroupReview(PiiEntityGroup):
     review_status: PiiReviewStatus = "accepted"
     review_decision: PiiReviewDecisionValue | None = None
     updated_at: str | None = None
+    # Entity-group ids are deterministic per (type, normalized value), so a decision recorded
+    # against a superseded PII artifact can name the same group id this run detects again. It is
+    # never reapplied (``review_decision`` above stays None until re-decided) — these two additive
+    # fields surface that superseded previous decision explicitly, so the UI can say "a previous
+    # decision exists but no longer applies" instead of looking identical to "never reviewed".
+    stale_decision: PiiReviewDecisionValue | None = None
+    stale_decision_recorded_at: str | None = None
 
 
 # --- Review Result v1: unified stable entity entries (this branch) -------------------------------
@@ -2561,6 +2573,31 @@ class PiiReviewResultEntry(BaseModel):
         return self
 
 
+class PiiStaleReviewDecision(BaseModel):
+    """One recorded review item that no longer applies to the current result (audit/history only).
+
+    Itemizes what ``stale_decision_count`` previously only aggregated, so the warning, the review
+    cards, and the effective state can describe the same set. For an ``entity_group``/``occurrence``
+    item this is the latest decision line recorded against a superseded ``pii_result``
+    (``artifact_id`` names that superseded run); for a ``manual_addition`` item it is an addition
+    whose ``text_artifact_id`` no longer matches the current text result. No raw document text is
+    ever carried — only ids, codes, and timestamps.
+    """
+
+    target_type: PiiReviewDecisionScope
+    target_id: str = Field(min_length=1, max_length=64)
+    # The recorded decision; None for a stale manual addition that was never explicitly decided
+    # (its implied default was "pseudonymize", but a stale item has no active decision at all).
+    decision: PiiReviewDecisionValue | None = None
+    # Known for manual additions (stored on the addition record); decision lines do not carry one.
+    entity_type: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*$")
+    recorded_at: str
+    # The superseded pii_result the decision was recorded against; None for manual additions.
+    artifact_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    # The superseded text_result a manual addition was captured against; None for decisions.
+    text_artifact_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+
+
 class PiiReviewResult(BaseModel):
     """The reviewable PII view for one document: groups and occurrences with resolved decisions.
 
@@ -2594,6 +2631,10 @@ class PiiReviewResult(BaseModel):
     # (target_type, target_id).
     stale_decision_count: int = Field(default=0, ge=0)
     has_stale_decisions: bool = False
+    # Itemization of exactly the set `stale_decision_count` counts (audit/history, never applied).
+    # Newly computed results always fill this consistently; legacy persisted snapshots may carry a
+    # count without items, so the model deliberately does not cross-validate count == len(items).
+    stale_decisions: list[PiiStaleReviewDecision] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_staleness(self) -> PiiReviewResult:
