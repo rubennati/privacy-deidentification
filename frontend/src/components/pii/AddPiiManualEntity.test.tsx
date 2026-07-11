@@ -34,8 +34,11 @@ describe("AddPiiManualEntity", () => {
     );
 
     expect(html).toContain("Wien");
-    expect(html).toContain(">PERSON<");
-    expect(html).toContain(">LOCATION<");
+    // Option values stay the backend enum; the visible label is the plain German name.
+    expect(html).toContain('value="PERSON"');
+    expect(html).toContain(">Person<");
+    expect(html).toContain('value="LOCATION"');
+    expect(html).toContain(">Ort<");
     expect(html).toContain("Als PII hinzufügen");
   });
 

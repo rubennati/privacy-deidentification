@@ -5,6 +5,7 @@ import {
   fetchPiiReview,
   type PiiReviewResult,
 } from "../../api/piiReview";
+import { entityTypeLabel } from "../../lib/entityTypeLabels";
 
 interface AddPiiManualEntityProps {
   documentId: string;
@@ -80,7 +81,7 @@ export function AddPiiManualEntity({
     <div
       role="region"
       aria-label="Als PII hinzufügen"
-      className="mt-3 rounded-lg border border-card-border bg-card p-3"
+      className="mt-3 rounded-lg border border-card-border bg-card p-3 shadow-[0_8px_30px_rgba(17,24,39,0.16)]"
     >
       <p className="text-xs text-muted">
         Auswahl: <span className="font-medium text-ink">„{truncatedPreview}“</span>
@@ -99,7 +100,7 @@ export function AddPiiManualEntity({
         >
           {entityTypes.map((type) => (
             <option key={type} value={type}>
-              {type}
+              {entityTypeLabel(type)}
             </option>
           ))}
         </select>

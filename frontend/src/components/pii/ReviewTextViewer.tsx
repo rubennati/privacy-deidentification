@@ -68,8 +68,9 @@ export function ReviewTextViewer({
 
   return (
     <section className="min-w-0" aria-labelledby="text-viewer-heading">
-      {/* Toolbar: title + display-mode toggle, kept compact directly above the paper page. */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* Toolbar: title + display-mode toggle. Sticky so the mode switch stays reachable while the
+          full-height paper below scrolls with the page (no nested scroll container). */}
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 bg-card py-2">
         <h2 id="text-viewer-heading" className="font-semibold text-ink">
           Extrahierter Text
         </h2>
@@ -171,12 +172,11 @@ export function ReviewTextViewer({
         </p>
       )}
 
-      {/* Workspace: a subtle desk-like surface. The scroll lives here (unchanged from before) so
-          jump-to-entity keeps scrolling the highlighted mark into view. */}
-      <div className="mt-3 max-h-[70vh] overflow-auto rounded-xl bg-dropzone p-4 sm:p-6">
-        {/* Paper: a centered A4-width sheet so the review reads like a document page, not a raw
-            debug panel. It never spans the full workspace width. */}
-        <div className="mx-auto max-w-[210mm] rounded-sm border border-card-border bg-card px-6 py-8 shadow-[0_1px_2px_rgba(17,24,39,0.06),0_12px_32px_rgba(17,24,39,0.08)] sm:px-10 sm:py-12">
+      {/* Paper: a centered A4-width sheet that grows with its content and scrolls with the page —
+          deliberately no fixed-height inner scroll container (that read like an embedded iframe:
+          its own scrollbar, a cut-off sheet). Jump-to-entity scrolls the page itself. */}
+      <div className="mt-3">
+        <div className="mx-auto max-w-[210mm] rounded-md border border-card-border bg-card px-6 py-8 shadow-[0_1px_3px_rgba(17,24,39,0.08),0_16px_40px_rgba(17,24,39,0.10)] sm:px-10 sm:py-12">
           {activeMode === "layout" ? (
             layoutText ? (
               layoutHighlights.length > 0 ? (

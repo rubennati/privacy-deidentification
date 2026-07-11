@@ -717,16 +717,20 @@ export default function DocumentDetailPage() {
                   onTextSelected={reviewInteractive ? setSelectedTextRange : undefined}
                 />
                 {reviewInteractive && text.content.reading_text && (
-                  <AddPiiManualEntity
-                    documentId={documentId}
-                    entityTypes={pii?.content.configured_entity_types ?? []}
-                    readingText={text.content.reading_text}
-                    selection={selectedTextRange}
-                    onAdded={(review) => {
-                      setSelectedTextRange(null);
-                      void refreshPiiReviewAndContract(review);
-                    }}
-                  />
+                  // Sticky at the viewport bottom: the paper is full page height now, so a
+                  // selection made mid-document must not open a panel far below the fold.
+                  <div className="sticky bottom-3 z-20">
+                    <AddPiiManualEntity
+                      documentId={documentId}
+                      entityTypes={pii?.content.configured_entity_types ?? []}
+                      readingText={text.content.reading_text}
+                      selection={selectedTextRange}
+                      onAdded={(review) => {
+                        setSelectedTextRange(null);
+                        void refreshPiiReviewAndContract(review);
+                      }}
+                    />
+                  </div>
                 )}
                 {isDevView && !pii && (
                   <p className="mt-3 text-xs text-muted">PII-Erkennung noch nicht ausgeführt.</p>
@@ -734,7 +738,9 @@ export default function DocumentDetailPage() {
               </div>
               {isDevView &&
                 (pii ? (
-                  <div className="max-h-[70vh] overflow-auto">
+                  // The document column scrolls with the page; the technical sidebar pins to the
+                  // viewport and keeps its own scroll so it stays usable beside a long paper.
+                  <div className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-auto">
                     <PiiEntityList
                       entities={pii.content.entities}
                       stale={piiStatus === "stale"}
