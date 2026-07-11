@@ -2462,6 +2462,13 @@ class PiiReviewOccurrence(BaseModel):
             "been recorded yet (the implied default is 'pseudonymize')."
         ),
     )
+    updated_at: str | None = Field(
+        default=None,
+        description=(
+            "Timestamp of the effective decision record (occurrence-level if present, else the "
+            "covering group's); None while no explicit decision has been recorded yet."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_span(self) -> PiiReviewOccurrence:
@@ -2476,6 +2483,82 @@ class PiiEntityGroupReview(PiiEntityGroup):
     review_status: PiiReviewStatus = "accepted"
     review_decision: PiiReviewDecisionValue | None = None
     updated_at: str | None = None
+
+
+# --- Review Result v1: unified stable entity entries (this branch) -------------------------------
+# A Review Result entry is a stable, durable domain artifact for one reviewed PII entity — detected
+# or manually added — separate from OCR/text artifacts, detection evidence, the Text Anchor Graph,
+# and the original ``pii_result``. Review decides the disposition of a stable *entity identity*; it
+# never mutates OCR/Text/anchor artifacts or ``pii_result``. ``entry_id`` is always the existing
+# occurrence/addition uuid the decision log already keys on (ADR-0033/ADR-0034's occurrence-id-
+# primary guardrail — anchor ids are only stable per text-artifact-bytes x graph-builder version, so
+# they are never a persisted lookup key). ``anchor_entity_id`` is an additive, freshly-recomputed
+# secondary reference into the anchor-bound entity contract (ADR-0031 Phase C), rebuilt from the
+# *exact* pii/text artifact pair an entry actually originated from — never "today's" pair for a
+# stale entry — so a re-run, tokenizer change, or newer anchor-graph builder version can never
+# silently reattach a decision to a different entity.
+PiiReviewEntryOrigin = Literal["detected", "manual"]
+# Whether the entry's own originating artifact (its ``pii_artifact_id`` for a detected entry, its
+# ``text_artifact_id`` for a manual addition) still matches the document's current one. "stale"
+# never causes silent reapplication elsewhere — it only makes visible what was already true.
+PiiReviewArtifactCurrency = Literal["current", "stale"]
+# Whether stable identity beyond the primary occurrence/addition id could be established for this
+# entry. "resolved" -- anchor-bound (detected) or a resolved raw/canonical projection (manual).
+# "unresolved" -- identity could be attempted but came back missing/ambiguous/not-applicable; the
+# entry is still fully reviewable, just without a secondary anchor/raw reference. "incompatible" --
+# a genuine structural break (the entry's own stored offsets no longer fit inside its own
+# referenced text, or that referenced artifact fails to load) rather than an ordinary binding gap.
+# Never guessed.
+PiiReviewIdentityStatus = Literal["resolved", "unresolved", "incompatible"]
+
+
+class PiiReviewResultEntry(BaseModel):
+    """One stable, reviewed PII entity — detected or manually added — in the unified Review Result.
+
+    Unifies detector-origin occurrences and reviewer-added manual additions behind one shape so a
+    downstream consumer (e.g. a future Replacement Plan) can read decisions without distinguishing
+    origin-specific record types or interpreting the review overlay's own JSONL/decision internals.
+    No copied source text: every field here is an id, code, offset-free status, or count.
+    """
+
+    entry_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    origin: PiiReviewEntryOrigin
+    entity_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    entity_group_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    pii_artifact_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{32}$",
+        description="The originating pii_result artifact; None for manual additions (no detector "
+        "origin to key on).",
+    )
+    text_artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    artifact_currency: PiiReviewArtifactCurrency
+    identity_status: PiiReviewIdentityStatus
+    identity_reason_codes: list[PiiEntityReviewReasonCode] = Field(default_factory=list)
+    anchor_entity_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    mapping_status: PiiEntityMappingStatus
+    review_status: PiiReviewStatus = "accepted"
+    review_decision: PiiReviewDecisionValue | None = None
+    decision_scope: PiiReviewDecisionScope | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_entry(self) -> PiiReviewResultEntry:
+        if self.origin == "manual" and self.pii_artifact_id is not None:
+            raise ValueError("manual additions have no originating pii_result artifact")
+        if self.origin == "detected" and self.pii_artifact_id is None:
+            raise ValueError("detected entries require their originating pii_result artifact")
+        if self.anchor_entity_id is not None and (
+            self.origin != "detected" or self.identity_status != "resolved"
+        ):
+            raise ValueError("anchor_entity_id is only set for resolved, detected entries")
+        if self.identity_status == "resolved":
+            if self.identity_reason_codes:
+                raise ValueError("resolved identity must not carry reason codes")
+        elif not self.identity_reason_codes:
+            raise ValueError("unresolved/incompatible identity requires at least one reason code")
+        return self
 
 
 class PiiReviewResult(BaseModel):
@@ -2497,6 +2580,11 @@ class PiiReviewResult(BaseModel):
     # PII L14 / Review L10 (ADR-0035): human-added spans, parallel to but never merged into
     # ``groups``/``occurrences`` (both detector-origin only, keyed off ``PiiEntity.id``).
     manual_additions: list[PiiManualAddition] = Field(default_factory=list)
+    # Review Result v1 (this branch): one coherent, stable entry per occurrence/manual addition --
+    # see the type-level docstrings above. Additive; never a second source of truth for the decision
+    # itself (still resolved from the same JSONL overlay `groups`/`occurrences`/`manual_additions`
+    # already reflect).
+    entries: list[PiiReviewResultEntry] = Field(default_factory=list)
     # Review L8 (ADR-0034): a decision is only ever matched against the exact ``pii_result``
     # artifact it was recorded for, so a re-run (new artifact id) already never silently reapplies
     # an old decision -- but previously that fell back to "no decision recorded" indistinguishably
@@ -2511,6 +2599,18 @@ class PiiReviewResult(BaseModel):
     def _validate_staleness(self) -> PiiReviewResult:
         if self.has_stale_decisions != (self.stale_decision_count > 0):
             raise ValueError("has_stale_decisions must match stale_decision_count > 0")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_entries(self) -> PiiReviewResult:
+        expected_ids = {occurrence.occurrence_id for occurrence in self.occurrences} | {
+            addition.addition_id for addition in self.manual_additions
+        }
+        entry_ids = [entry.entry_id for entry in self.entries]
+        if len(entry_ids) != len(set(entry_ids)):
+            raise ValueError("entries must have unique entry ids")
+        if set(entry_ids) != expected_ids:
+            raise ValueError("entries must exactly cover occurrences and manual additions")
         return self
 
 

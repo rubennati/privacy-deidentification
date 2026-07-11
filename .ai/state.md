@@ -922,6 +922,38 @@ binding-algorithm change; the previously-fixed cross-view organisation highlight
 interior token, genuine duplicates, trailing newline) is unchanged and still covered by the existing
 corpus. 909 backend tests / 201 frontend tests pass.
 
+**Latest checkpoint (Review Result v1 — unified stable entity entries):** Not an engine level
+change (PII L17 "stable entity model with lineage" remains `⛔ open` — identity still does not
+survive a PII re-run by design; this delivers the review-result *contract* prerequisite, never a
+claim of cross-re-run stability). Closes the feasibility audit's third and final recommended branch
+(`review-result-v1`), on top of the already-delivered Review L8 `review_result` artifact
+(ADR-0034) and manual additions (ADR-0035). New `PiiReviewResultEntry`
+(`PiiReviewResult.entries`/`PiiReviewResultArtifact.content.entries`) unifies detector-origin
+occurrences and reviewer-added manual additions behind one shape: `entry_id` stays
+occurrence/addition-id-primary (ADR-0033's anchor-id-drift guardrail unchanged), `origin` replaces
+needing two record types, `anchor_entity_id` is an additive secondary reference into the
+anchor-bound entity contract (ADR-0031 Phase C) rebuilt fresh on every read from the entry's own
+originating pii/text artifact pair — never "today's" pair for a stale entry, and never persisted as
+a lookup key. `identity_status` (`resolved`/`unresolved`/`incompatible`) and `artifact_currency`
+(`current`/`stale`) make explicit, per entry, what was previously only a document-level aggregate
+(`has_stale_decisions`) or not surfaced at all (anchor-binding gaps); `mapping_status` is visible on
+every entry and a decision never upgrades it. `pii_entity_contract.py`'s private mapping-status/
+display-range/reason-code helpers moved to a new leaf module `pii_entity_display.py` (zero behavior
+change, proven by the unchanged entity-contract suite) so the new `pii_review_result.py` builder
+reuses them instead of duplicating logic or importing `pii_entity_contract.py` back (which would
+cycle, since that module already imports `pii_review_service.py`). Integration is additive on the
+*existing* Review L8 artifact/endpoints — no new endpoint, no SQLite, no change to the append-only
+JSONL write path or to `groups`/`occurrences`/`manual_additions`. A dedicated end-to-end test proves
+`pii_result` and the anchor-bound entity contract stay byte-identical before/after a review
+decision; other tests cover stale/incompatible/unresolved identity, mapping-quality stability across
+accept/keep/reject, cross-view identity agreement (the same `anchor_entity_id` ties the raw and
+canonical views to one entity), and no copied source text. No detection, recognizer, `pii_result`
+schema, active-PII-input, anchor-graph, tokenizer, pseudonymization, redaction, or export change.
+See [ADR-0039](../docs/adr/0039-review-result-v1-unified-entity-contract.md). Next: re-run the
+checkpoint loop against this file's current-sequence section for the next engine priority; a
+Replacement Plan consuming `PiiReviewResultEntry` is the next step this branch was scoped to
+unblock, explicitly not implemented here.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next

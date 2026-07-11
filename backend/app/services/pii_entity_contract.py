@@ -33,7 +33,6 @@ from app.schemas import (
     PiiEntity,
     PiiEntityContractV1,
     PiiEntityDisplay,
-    PiiEntityDisplaySpan,
     PiiEntityMappingStatus,
     PiiEntityMappingSummary,
     PiiEntityProvenance,
@@ -48,23 +47,14 @@ from app.services.artifact_service import get_pii_artifact, get_text_artifact
 from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.pii_anchor_binding import bind_pii_entities_to_anchors
+from app.services.pii_entity_display import (
+    anchor_display_range,
+    canonical_display_range,
+    classify_mapping_status,
+    identity_reason_codes,
+)
 from app.services.pii_review_service import PiiReviewArtifactNotFoundError, get_pii_review_result
 
-# Anchor-binding gaps that make an entity worth a human look. ``not_applicable`` (no anchor graph)
-# and ``exact`` do not force review — the entity is either solidly bound or degraded for a reason
-# outside its control.
-_BINDING_REVIEW_REASON: dict[str, PiiEntityReviewReasonCode] = {
-    "partial": "anchor_binding_partial",
-    "missing": "anchor_binding_missing",
-    "ambiguous": "anchor_binding_ambiguous",
-}
-# Canonical display-mapping gaps, surfaced the same way as in ADR-0029. Under the anchor-first model
-# these describe the reading-view projection, not identity, but still flag an incomplete display.
-_MAPPING_REASON: dict[PiiEntityMappingStatus, PiiEntityReviewReasonCode] = {
-    "partial": "canonical_mapping_partial",
-    "missing": "canonical_mapping_missing",
-    "ambiguous": "canonical_mapping_ambiguous",
-}
 # Overlap-decision reason codes lifted onto the review-ready entity, mapped to the review reason
 # vocabulary. ``longer_span_selected``/``stronger_confidence_selected`` collapse to one code because
 # a reviewer only cares that a stronger candidate was chosen, not the exact tie-break rule.
@@ -164,17 +154,17 @@ def _to_review_ready(
     representative = review_by_occurrence[occurrence_ids[0]]
     representative_entity = entity_by_id[occurrence_ids[0]]
 
-    anchor_canonical = _anchor_display_range(bound, "canonical_reading_text")
+    anchor_canonical = anchor_display_range(bound, "canonical_reading_text")
     anchor_canonical_range = anchor_canonical[0] if anchor_canonical is not None else None
     anchor_canonical_exact = anchor_canonical[1] if anchor_canonical is not None else True
-    mapping_status = _mapping_status(
+    mapping_status = classify_mapping_status(
         representative_entity,
         canonical_available,
         reading_text,
         anchor_canonical_range=anchor_canonical_range,
         anchor_canonical_exact=anchor_canonical_exact,
     )
-    canonical_range = _canonical_range(
+    canonical_range = canonical_display_range(
         representative_entity, mapping_status, anchor_canonical_range=anchor_canonical_range
     )
     review_reason_codes = _review_reason_codes(
@@ -211,57 +201,6 @@ def _to_review_ready(
     )
 
 
-def _mapping_status(
-    entity: PiiEntity,
-    canonical_available: bool,
-    reading_text: str | None,
-    *,
-    anchor_canonical_range: PiiEntityDisplaySpan | None,
-    anchor_canonical_exact: bool,
-) -> PiiEntityMappingStatus:
-    """Classify how the entity's raw span connects to the canonical reading text (display view).
-
-    ``not_applicable`` when the run produced no canonical text at all; otherwise a mapped
-    (``exact``/``projected``) or unmapped (``partial``/``missing``/``ambiguous``) state. An unmapped
-    entity whose exact value appears more than once in the canonical text is ``ambiguous`` (multiple
-    candidate positions), else ``missing`` — never dropped in any case. An anchor-derived range is
-    ``exact`` only when every contributing anchor's canonical range was itself byte-exact;
-    ``anchor_canonical_exact=False`` (a reformatted/merged row-lineage or geometry-projection
-    segment bridged the range) downgrades it to the honest ``projected`` state instead — never
-    claiming ``exact`` for a canonical line that does not read byte-for-byte like the raw span.
-    """
-    if anchor_canonical_range is not None:
-        return "exact" if anchor_canonical_exact else "projected"
-    if not canonical_available:
-        return "not_applicable"
-    if entity.projection_status == "exact":
-        return "exact" if entity.projection_method == "offset_map" else "projected"
-    if entity.projection_status == "partial":
-        return "partial"
-    if reading_text is not None and reading_text.count(entity.text) > 1:
-        return "ambiguous"
-    return "missing"
-
-
-def _canonical_range(
-    entity: PiiEntity,
-    mapping_status: PiiEntityMappingStatus,
-    *,
-    anchor_canonical_range: PiiEntityDisplaySpan | None,
-) -> PiiEntityDisplaySpan | None:
-    if anchor_canonical_range is not None:
-        return anchor_canonical_range
-    if mapping_status not in ("exact", "projected"):
-        return None
-    if entity.reading_start_offset is None or entity.reading_end_offset is None:
-        return None
-    return PiiEntityDisplaySpan(
-        start=entity.reading_start_offset,
-        end=entity.reading_end_offset,
-        projection_method=entity.projection_method,
-    )
-
-
 def _review_reason_codes(
     binding_status: str,
     mapping_status: PiiEntityMappingStatus,
@@ -269,13 +208,9 @@ def _review_reason_codes(
 ) -> list[PiiEntityReviewReasonCode]:
     """The reasons this entity needs human review: anchor-binding gaps, display-mapping gaps, and
     cross-type overlap conflicts. Deterministic order; ``exact``/``not_applicable`` add nothing."""
-    codes: list[PiiEntityReviewReasonCode] = []
-    binding_reason = _BINDING_REVIEW_REASON.get(binding_status)
-    if binding_reason is not None:
-        codes.append(binding_reason)
-    mapping_reason = _MAPPING_REASON.get(mapping_status)
-    if mapping_reason is not None:
-        codes.append(mapping_reason)
+    codes: list[PiiEntityReviewReasonCode] = list(
+        identity_reason_codes(binding_status, mapping_status)
+    )
     if provenance is not None and provenance.review_required:
         codes.append("conflicting_entity_type")
         codes.append("ambiguous_overlap_review_required")
@@ -313,36 +248,6 @@ def _entity_warnings(
             seen.add(code)
             unique.append(code)
     return unique
-
-
-def _anchor_display_range(
-    bound: AnchorBoundPiiEntityV1, source_name: str
-) -> tuple[PiiEntityDisplaySpan, bool] | None:
-    """The entity's bridged display range for ``source_name``, plus whether every contributing
-    anchor ref was itself byte-exact (``ref.mapping_status`` is ``exact``/``None``, never
-    ``normalized``/``merged``). ``None`` is treated as exact for refs built before this field
-    existed and for the raw/entity-span roles, which never carry a display projection here."""
-    display_refs = [
-        (ref.source_range, ref.mapping_status)
-        for ref in bound.anchor_refs
-        if ref.source_name == source_name
-        and ref.source_range is not None
-        and ref.binding_role == "display_span"
-    ]
-    if bound.binding_status != "exact" or not display_refs:
-        return None
-    # pii_anchor_binding only ever emits these display refs when the entity's own boundary anchors
-    # resolved (bridgeable), so a non-empty list here is already a safe envelope even when an
-    # interior anchor was skipped (e.g. individually ambiguous elsewhere in the document) — no
-    # separate full-coverage check is needed.
-    ordered = sorted(display_refs, key=lambda item: (item[0].start, item[0].end))
-    all_exact = all(status in (None, "exact") for _range, status in display_refs)
-    span = PiiEntityDisplaySpan(
-        start=ordered[0][0].start,
-        end=ordered[-1][0].end,
-        projection_method="offset_map",
-    )
-    return span, all_exact
 
 
 def _mapping_summary(

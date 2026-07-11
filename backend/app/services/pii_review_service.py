@@ -43,6 +43,7 @@ from app.schemas import (
     PiiReviewOccurrence,
     PiiReviewResult,
     PiiReviewResultArtifact,
+    PiiReviewResultEntry,
     PiiReviewStatus,
 )
 from app.services.artifact_service import (
@@ -50,11 +51,13 @@ from app.services.artifact_service import (
     get_latest_pii_review_result_artifact,
     get_latest_text_artifact,
     get_pii_artifact,
+    get_text_artifact,
     save_pii_review_result_artifact,
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.pii_grouping import group_pii_entities
 from app.services.pii_manual_addition import resolve_canonical_span_to_raw
+from app.services.pii_review_result import build_detected_entries, build_manual_addition_entries
 
 _REVIEW_DIRECTORY = "review"
 _DECISIONS_FILENAME = "pii_review_decisions.jsonl"
@@ -127,10 +130,11 @@ def get_pii_review_result(
     """Return review state for one exact PII result, or the latest when explicitly omitted."""
     if get_document_record(settings, document_id) is None:
         raise DocumentNotFoundError
+    latest_artifact = get_latest_pii_artifact(settings, document_id)
     artifact = (
         get_pii_artifact(settings, document_id, artifact_id)
         if artifact_id is not None
-        else get_latest_pii_artifact(settings, document_id)
+        else latest_artifact
     )
     if artifact is None:
         raise PiiReviewArtifactNotFoundError
@@ -152,6 +156,9 @@ def get_pii_review_result(
         decisions,
         manual_additions,
         stale_count,
+        settings=settings,
+        latest_pii_artifact_id=(latest_artifact.id if latest_artifact is not None else None),
+        latest_text_artifact_id=current_text_artifact_id,
     )
 
 
@@ -325,6 +332,12 @@ def _persist_review_result_snapshot(
         decisions,
         manual_additions,
         stale_count,
+        settings=settings,
+        # Both callers of this function (`set_pii_review_decision`/`add_pii_manual_entity`) always
+        # fetch `get_latest_pii_artifact` themselves before reaching here, so `artifact_id` here is
+        # already the latest one -- no extra fetch needed to know this snapshot's view is current.
+        latest_pii_artifact_id=artifact_id,
+        latest_text_artifact_id=current_text_artifact_id,
     )
     snapshot = PiiReviewResultArtifact(
         id=uuid4().hex,
@@ -371,6 +384,10 @@ def _build_review_result(
     decisions: dict[tuple[str, str], PiiReviewDecisionRecord],
     manual_additions: dict[str, PiiManualAdditionRecord],
     stale_decision_count: int,
+    *,
+    settings: Settings,
+    latest_pii_artifact_id: str | None,
+    latest_text_artifact_id: str | None,
 ) -> PiiReviewResult:
     manual_addition_decisions = {
         target_id: record
@@ -429,13 +446,16 @@ def _build_review_result(
     for entity in entities:
         group_id = group_id_by_occurrence[entity.id]
         occurrence_decision = occurrence_decisions.get(entity.id)
+        effective_record: PiiReviewDecisionRecord | None
         if occurrence_decision is not None:
             decision: PiiReviewDecisionValue | None = occurrence_decision.decision
             scope: PiiReviewDecisionScope | None = "occurrence"
+            effective_record = occurrence_decision
         else:
             group_decision = group_decisions.get(group_id)
             decision = group_decision.decision if group_decision else None
             scope = "entity_group" if group_decision else None
+            effective_record = group_decision
         review_occurrences.append(
             PiiReviewOccurrence(
                 occurrence_id=entity.id,
@@ -452,8 +472,21 @@ def _build_review_result(
                 review_status=_status_for(decision),
                 review_decision=decision,
                 decision_scope=scope,
+                updated_at=(effective_record.recorded_at if effective_record is not None else None),
             )
         )
+
+    entries = _build_review_entries(
+        settings,
+        document_id,
+        artifact_id,
+        text_artifact_id,
+        entities,
+        review_occurrences,
+        review_manual_additions,
+        latest_pii_artifact_id=latest_pii_artifact_id,
+        latest_text_artifact_id=latest_text_artifact_id,
+    )
 
     return PiiReviewResult(
         document_id=document_id,
@@ -462,9 +495,56 @@ def _build_review_result(
         groups=review_groups,
         occurrences=review_occurrences,
         manual_additions=review_manual_additions,
+        entries=entries,
         stale_decision_count=stale_decision_count,
         has_stale_decisions=stale_decision_count > 0,
     )
+
+
+def _build_review_entries(
+    settings: Settings,
+    document_id: str,
+    artifact_id: str,
+    text_artifact_id: str,
+    entities: list[PiiEntity],
+    occurrences: list[PiiReviewOccurrence],
+    manual_additions: list[PiiManualAddition],
+    *,
+    latest_pii_artifact_id: str | None,
+    latest_text_artifact_id: str | None,
+) -> list[PiiReviewResultEntry]:
+    """Assemble the unified Review Result v1 entries (Review Result v1).
+
+    Rebinds detected occurrences against the anchor graph of the *exact* text artifact this PII
+    run consumed (never "today's" text for a stale run) and reuses each manual addition's own
+    stored reverse-projection outcome -- see ``pii_review_result.py`` for the identity rules.
+    """
+    text_artifact = get_text_artifact(settings, document_id, text_artifact_id)
+    detected_entries = build_detected_entries(
+        document_id=document_id,
+        pii_artifact_id=artifact_id,
+        text_artifact_id=text_artifact_id,
+        text_artifact=text_artifact,
+        entities=entities,
+        occurrences=occurrences,
+        is_current=(artifact_id == latest_pii_artifact_id),
+    )
+
+    unique_manual_text_ids = {addition.text_artifact_id for addition in manual_additions}
+    manual_text_artifacts = {
+        text_id: (
+            text_artifact
+            if text_id == text_artifact_id
+            else get_text_artifact(settings, document_id, text_id)
+        )
+        for text_id in unique_manual_text_ids
+    }
+    manual_entries = build_manual_addition_entries(
+        manual_additions=manual_additions,
+        current_text_artifact_id=latest_text_artifact_id,
+        text_artifacts_by_id=manual_text_artifacts,
+    )
+    return detected_entries + manual_entries
 
 
 def _load_latest_decisions(

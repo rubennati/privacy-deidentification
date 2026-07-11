@@ -67,6 +67,8 @@ export interface PiiReviewOccurrence {
   review_status: PiiReviewStatus;
   review_decision: PiiReviewDecisionValue | null;
   decision_scope: PiiReviewDecisionScope | null;
+  // Timestamp of the effective decision record; absent while no explicit decision was recorded.
+  updated_at?: string | null;
 }
 
 // PII L14 / Review L10 (ADR-0035): a reviewer-added span the engine missed. Parallel to, and never
@@ -87,6 +89,34 @@ export interface PiiManualAddition {
   review_decision: PiiReviewDecisionValue | null;
 }
 
+// Review Result v1: one stable, unified entry per detected occurrence or manual addition, so a
+// future consumer (e.g. a Replacement Plan) can read decisions without distinguishing origin-
+// specific shapes or the review overlay's own decision-log internals. Additive and optional here —
+// existing UI keeps reading `occurrences`/`manual_additions`/`groups` directly; nothing renders
+// `entries` yet.
+export type PiiReviewEntryOrigin = "detected" | "manual";
+export type PiiReviewArtifactCurrency = "current" | "stale";
+export type PiiReviewIdentityStatus = "resolved" | "unresolved" | "incompatible";
+
+export interface PiiReviewResultEntry {
+  entry_id: string;
+  origin: PiiReviewEntryOrigin;
+  entity_type: string;
+  entity_group_id: string | null;
+  pii_artifact_id: string | null;
+  text_artifact_id: string;
+  artifact_currency: PiiReviewArtifactCurrency;
+  identity_status: PiiReviewIdentityStatus;
+  identity_reason_codes: string[];
+  anchor_entity_id: string | null;
+  mapping_status: "exact" | "projected" | "partial" | "missing" | "ambiguous" | "not_applicable";
+  review_status: PiiReviewStatus;
+  review_decision: PiiReviewDecisionValue | null;
+  decision_scope: PiiReviewDecisionScope | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface PiiReviewResult {
   document_id: string;
   artifact_id: string;
@@ -96,6 +126,9 @@ export interface PiiReviewResult {
   groups: PiiEntityGroupReview[];
   occurrences: PiiReviewOccurrence[];
   manual_additions: PiiManualAddition[];
+  // Review Result v1: the unified view over `occurrences`/`manual_additions` above. Optional here
+  // for older cached responses; always present on newly written reads/snapshots.
+  entries?: PiiReviewResultEntry[];
   // Review L8 (ADR-0034): decisions recorded against a since-superseded PII result were already
   // never silently reapplied; these additive fields make that explicit instead of looking
   // identical to "no decision recorded". Also covers manual additions whose text_artifact_id no

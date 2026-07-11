@@ -235,3 +235,11 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   fails explicitly instead of falling back; and deletion persists a job-state tombstone under the
   same lock so delayed workers can never republish document-owned data. Legacy directories remain
   readable until their first explicit publication. No engine-level advance or dependency change.
+- [ADR-0039](../docs/adr/0039-review-result-v1-unified-entity-contract.md) — **Review Result v1 —
+  unified stable entity entries.** New `PiiReviewResultEntry` unifies detected occurrences and
+  manual additions behind one shape on the existing `PiiReviewResult`/`PiiReviewResultArtifact`
+  (Review L8), carrying entry-level `identity_status` (resolved/unresolved/incompatible),
+  `artifact_currency` (current/stale), a freshly-recomputed (never persisted) anchor-identity
+  reference, and mapping quality that a decision never upgrades. No SQLite, new endpoint,
+  detection, anchor-graph, pseudonymization, redaction, or export change; closes the feasibility
+  audit's third recommended branch.
