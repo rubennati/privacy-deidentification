@@ -438,7 +438,7 @@ def test_entities_are_sorted_and_counts_are_derived(
     assert content["entity_counts"] == {"LOCATION": 1, "PERSON": 2}
 
 
-def test_empty_text_creates_empty_result_without_loading_analyzer(
+def test_untrusted_empty_text_is_rejected_without_loading_analyzer(
     client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
 ) -> None:
     upload = _upload_document(client)
@@ -447,12 +447,8 @@ def test_empty_text_creates_empty_result_without_loading_analyzer(
 
     response = client.post(f"/api/documents/{document_id}/pii")
 
-    content = response.json()["content"]
-    assert response.status_code == 201
-    assert content["profile"] == "custom"
-    assert content["entities"] == []
-    assert content["entity_counts"] == {}
-    assert content["flags"] == ["empty_text"]
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Document text package is not valid for PII detection."
     assert pii_fake.calls == []
 
 

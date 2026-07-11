@@ -135,7 +135,7 @@ describe("runOcr", () => {
       method: "POST",
     });
     expect(fetchMock).toHaveBeenNthCalledWith(2, `/api/jobs/${JOB_ID}`, { method: "GET" });
-    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/documents/doc-1/ocr", {
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/documents/doc-1/ocr?artifact_id=text-id", {
       method: "GET",
     });
     // The 202 job is tracked immediately, and the shared store reflects its terminal status once

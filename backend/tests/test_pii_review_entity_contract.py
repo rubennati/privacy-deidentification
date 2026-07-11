@@ -36,6 +36,7 @@ from app.schemas import (
     TextContent,
 )
 from app.services.artifact_service import save_pii_artifact, save_text_artifact
+from app.services.pii_overlap import resolve_pii_overlaps
 
 _CONTRACT_URL = "/api/documents/{document_id}/pii/entity-contract"
 
@@ -210,9 +211,96 @@ def _save_pii_over_text(
 
 
 def _get_contract(client: TestClient, document_id: str) -> dict[str, object]:
-    response = client.get(_CONTRACT_URL.format(document_id=document_id))
+    pii = client.get(f"/api/documents/{document_id}/pii").json()
+    response = client.get(
+        _CONTRACT_URL.format(document_id=document_id),
+        params={
+            "pii_artifact_id": pii["id"],
+            "text_artifact_id": pii["input_text_artifact_id"],
+        },
+    )
     assert response.status_code == 200
     return response.json()
+
+
+def test_entity_contract_uses_one_exact_snapshot_when_newer_artifacts_exist(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    old_text_id = "1" * 32
+    new_text_id = "2" * 32
+    _save_text(settings, document_id, text_id=old_text_id, raw="Alpha Person")
+    old_pii = _save_pii(
+        settings,
+        document_id,
+        [_entity("PERSON", "Alpha Person", 0)],
+        input_text_artifact_id=old_text_id,
+        text_char_count=len("Alpha Person"),
+    )
+    _save_text(settings, document_id, text_id=new_text_id, raw="Beta Place")
+    _save_pii(
+        settings,
+        document_id,
+        [_entity("LOCATION", "Beta Place", 0)],
+        input_text_artifact_id=new_text_id,
+        text_char_count=len("Beta Place"),
+    )
+
+    response = client.get(
+        _CONTRACT_URL.format(document_id=document_id),
+        params={"pii_artifact_id": old_pii.id, "text_artifact_id": old_text_id},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pii_artifact_id"] == old_pii.id
+    assert body["text_artifact_id"] == old_text_id
+    assert [entity["value"] for entity in body["entities"]] == ["Alpha Person"]
+
+
+def test_entity_contract_rejects_mixed_pii_and_text_snapshot(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    _save_text(settings, document_id, text_id="1" * 32, raw="Alpha")
+    pii = _save_pii(
+        settings,
+        document_id,
+        [_entity("PERSON", "Alpha", 0)],
+        input_text_artifact_id="1" * 32,
+        text_char_count=5,
+    )
+    _save_text(settings, document_id, text_id="2" * 32, raw="Beta")
+
+    response = client.get(
+        _CONTRACT_URL.format(document_id=document_id),
+        params={"pii_artifact_id": pii.id, "text_artifact_id": "2" * 32},
+    )
+
+    assert response.status_code == 409
+
+
+def test_partial_same_type_overlaps_survive_entity_contract(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    raw = "ABCDEFGHIJKLMNO"
+    first = _entity("PERSON", raw[0:10], 0)
+    second = _entity("PERSON", raw[5:15], 5)
+    resolved, _summary = resolve_pii_overlaps([first, second])
+    _save_pii_over_text(settings, document_id, raw, resolved)
+
+    body = _get_contract(client, document_id)
+
+    ranges = [
+        (entity["raw_text_range"]["start"], entity["raw_text_range"]["end"])
+        for entity in body["entities"]
+    ]
+    assert ranges == [
+        (0, 10),
+        (5, 15),
+    ]
+    assert all(entity["provenance"]["candidate_count"] == 1 for entity in body["entities"])
 
 
 def _manual_overlapping_anchor_graph(document_id: str, text_id: str) -> DocumentTextAnchorGraphV1:
@@ -306,12 +394,18 @@ def _manual_overlapping_anchor_graph(document_id: str, text_id: str) -> Document
 
 
 def test_unknown_document_returns_404(client: TestClient) -> None:
-    assert client.get(_CONTRACT_URL.format(document_id="0" * 32)).status_code == 404
+    assert client.get(
+        _CONTRACT_URL.format(document_id="0" * 32),
+        params={"pii_artifact_id": "1" * 32, "text_artifact_id": "2" * 32},
+    ).status_code == 404
 
 
 def test_document_without_pii_result_returns_404(client: TestClient) -> None:
     document_id = _upload_document(client)
-    assert client.get(_CONTRACT_URL.format(document_id=document_id)).status_code == 404
+    assert client.get(
+        _CONTRACT_URL.format(document_id=document_id),
+        params={"pii_artifact_id": "1" * 32, "text_artifact_id": "2" * 32},
+    ).status_code == 404
 
 
 # --- anchor-bound identity when the graph supports it --------------------------------------------
@@ -519,24 +613,18 @@ def test_missing_layout_range_is_reason_coded_without_guessing(
 # --- degrade / never drop ------------------------------------------------------------------------
 
 
-def test_no_matching_text_artifact_is_evidence_only_degrade(
+def test_missing_exact_text_artifact_makes_contract_unavailable(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
     _save_pii(settings, document_id, [_entity("LOCATION", "Wien", 10)])
 
-    body = _get_contract(client, document_id)
-
-    assert body["anchor_graph_available"] is False
-    assert body["anchor_graph_status"] is None
-    assert len(body["entities"]) == 1  # never dropped
-    entity = body["entities"][0]
-    assert entity["identity_basis"] == "evidence_only"
-    assert entity["binding_status"] == "not_applicable"
-    assert body["binding_summary"]["evidence_only"] == 1
-    assert body["binding_summary"]["not_applicable"] == 1
-    # not_applicable (no graph for the run) does not by itself force review.
-    assert "anchor_binding_missing" not in entity["display"]["review_reason_codes"]
+    pii = client.get(f"/api/documents/{document_id}/pii").json()
+    response = client.get(
+        _CONTRACT_URL.format(document_id=document_id),
+        params={"pii_artifact_id": pii["id"], "text_artifact_id": "a" * 32},
+    )
+    assert response.status_code == 404
 
 
 def test_missing_binding_does_not_drop_and_flags_review(
@@ -680,7 +768,8 @@ def test_cross_type_review_flag_is_surfaced_as_needs_review(
         review_required=True,
     )
     entity = _entity("PERSON", "Max", 0, provenance=provenance)
-    _save_pii(settings, document_id, [entity])
+    _save_text(settings, document_id, text_id="a" * 32, raw="Max")
+    _save_pii(settings, document_id, [entity], text_char_count=3)
 
     entity_out = _get_contract(client, document_id)["entities"][0]
 
@@ -706,12 +795,13 @@ def test_merged_duplicate_provenance_is_surfaced_as_warning_only(
         superseded_candidate_ids=["b" * 32],
     )
     entity = _entity("EMAIL_ADDRESS", "max@example.at", 0, provenance=provenance)
-    _save_pii(settings, document_id, [entity])
+    _save_text(settings, document_id, text_id="a" * 32, raw="max@example.at")
+    _save_pii(settings, document_id, [entity], text_char_count=len("max@example.at"))
 
     entity_out = _get_contract(client, document_id)["entities"][0]
 
     # A merge is informational: it appears in warnings but does not force review on its own here
-    # (no anchor graph for the run, so binding is not_applicable, not a review reason).
+    # (the exact text snapshot is present and the merge itself is not a review reason).
     assert entity_out["display"]["needs_review"] is False
     assert "merged_provenance" in entity_out["warnings"]
     assert "recognizer_duplicate" in entity_out["warnings"]
@@ -782,7 +872,11 @@ def test_value_is_confined_and_no_token_text_leaks(
         settings, document_id, f"{secret} in Wien", [_entity("PERSON", secret, 0)]
     )
 
-    response = client.get(_CONTRACT_URL.format(document_id=document_id))
+    pii = client.get(f"/api/documents/{document_id}/pii").json()
+    response = client.get(
+        _CONTRACT_URL.format(document_id=document_id),
+        params={"pii_artifact_id": pii["id"], "text_artifact_id": pii["input_text_artifact_id"]},
+    )
     entity_out = response.json()["entities"][0]
 
     # The value appears only in the dedicated value field, never in identity/binding metadata.

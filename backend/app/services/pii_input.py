@@ -13,8 +13,8 @@ Contract rules PII follows here (ADR-0027 consumer rules):
   context. Neither silently suppresses an entity — they are attached as context, not applied.
 - A **structurally invalid** package (unsupported version, malformed source roles, unresolvable
   document id) is rejected with a controlled error. A package that is invalid *only* because its raw
-  text is empty is not a hard error: ``has_usable_raw_text`` is ``False`` and the caller produces
-  the existing empty result. A **degraded** package (missing optional layers/lineage) is usable as
+  text is empty is rejected: absence of trustworthy analyzed text is not a valid empty PII result.
+  A **degraded** package (missing optional layers/lineage) is usable as
   long as raw text exists.
 
 The adapter never mutates the package and never copies a raw text snippet into metadata: only the
@@ -48,10 +48,15 @@ _ROLE_BY_SOURCE_NAME: dict[str, PiiInputSourceRole] = {
     "quality_evidence": "quality_hint",
 }
 
-# Blockers that make a package structurally unusable for PII (as opposed to merely empty raw text,
-# which is the existing benign empty-result path). Kept in sync with the contract's blocker codes.
+# Blockers that make a package unusable for PII. Missing raw text is a trust failure, not a valid
+# empty analysis. Kept in sync with the contract's blocker codes.
 _STRUCTURAL_BLOCKERS = frozenset(
-    {"missing_document_id", "unsupported_contract_version", "invalid_text_source"}
+    {
+        "missing_document_id",
+        "unsupported_contract_version",
+        "invalid_text_source",
+        "missing_required_raw_text",
+    }
 )
 
 

@@ -88,7 +88,8 @@ def create_pii_artifact(
 
     # Consume the OCR Output Contract v1 Document Text Package via the intake adapter (ADR-0027/28)
     # rather than reaching into TextContent internals. A structurally invalid package raises a
-    # controlled 422 here; empty raw text stays the existing benign empty-result path below.
+    # controlled 422 here, including missing/untrusted raw text. Valid-empty means analysis ran on
+    # trustworthy non-empty text and found no entities; it never means OCR supplied no input.
     pii_input = PiiInputAdapter.from_text_artifact(text_artifact)
 
     content = _analyze_text(run_settings, pii_input, analyzer)

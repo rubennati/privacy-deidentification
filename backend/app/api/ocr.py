@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import JSONResponse
 
 from app.api.jobs import to_job_status_response
@@ -14,6 +14,7 @@ from app.schemas import (
     JobStatusResponse,
     TextArtifact,
 )
+from app.services.artifact_service import get_text_artifact
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
@@ -26,7 +27,11 @@ from app.services.job_models import (
 from app.services.job_runner import SyncJobRunner, provide_job_runner
 from app.services.job_store import JobStore, get_job_store
 from app.services.ocr_adapters import OcrAdapter, get_ocr_adapter
-from app.services.ocr_service import create_text_artifact, get_latest_text
+from app.services.ocr_service import (
+    TextArtifactNotFoundError,
+    create_text_artifact,
+    get_latest_text,
+)
 from app.services.pdf_renderer import PdfRenderer, get_pdf_renderer
 
 router = APIRouter(prefix="/documents", tags=["ocr"])
@@ -124,9 +129,16 @@ def _enqueue_ocr_job(settings: Settings, document_id: str) -> JSONResponse:
     responses={404: {"model": ErrorResponse}},
 )
 def get_document_ocr(
-    document_id: str, settings: Settings = Depends(get_settings)
+    document_id: str,
+    artifact_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
+    settings: Settings = Depends(get_settings),
 ) -> TextArtifact:
-    """Return the newest text result for a document."""
+    """Return an exact text result when requested; otherwise return the newest."""
+    if artifact_id is not None:
+        artifact = get_text_artifact(settings, document_id, artifact_id)
+        if artifact is None:
+            raise TextArtifactNotFoundError
+        return artifact
     return get_latest_text(settings, document_id)
 
 

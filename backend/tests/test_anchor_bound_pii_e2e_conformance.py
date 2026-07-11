@@ -235,7 +235,11 @@ def _sorted_entities(entities: list[PiiEntity]) -> list[PiiEntity]:
 
 
 def _get_contract(client: TestClient, document_id: str) -> dict:
-    response = client.get(_CONTRACT_URL.format(document_id=document_id))
+    pii = client.get(f"/api/documents/{document_id}/pii").json()
+    response = client.get(
+        _CONTRACT_URL.format(document_id=document_id),
+        params={"pii_artifact_id": pii["id"], "text_artifact_id": pii["input_text_artifact_id"]},
+    )
     assert response.status_code == 200, response.text
     return response.json()
 

@@ -1,6 +1,6 @@
 """Anchor-bound review-ready PII entity contract builder (ADR-0031 Phase C, on top of ADR-0029).
 
-Turns a document's latest immutable ``pii_result`` into a stable, review-facing
+Turns one explicitly selected immutable ``pii_result`` into a stable, review-facing
 :class:`PiiEntityContractV1` of **anchor-bound** entities. Detection results are normalized against
 the OCR/Text-owned Text Anchor Graph v1 (ADR-0031 Phase B) by ``pii_anchor_binding.py``: entity
 identity derives from anchor identity + type where an exact binding exists, and offsets/canonical
@@ -11,8 +11,8 @@ This is a pure, additive, derived view — like ``pii_grouping.py`` and ``pii_re
 - It never mutates ``pii_result`` or its entities/offsets, and adds no detection.
 - Raw text stays the primary detection source; the anchor graph is owned by OCR/Text and only read.
   Missing/partial/ambiguous anchor binding never drops an entity — it is classified, surfaced as a
-  review reason, and kept. When no matching anchor graph exists for the run, identity degrades to an
-  explicit evidence-only fallback (``anchor_graph_available`` is ``False``).
+  review reason, and kept. A missing exact text artifact makes the whole result unavailable; it is
+  never replaced by a graph from another run.
 - Canonical reading ranges are a view-specific display projection (ADR-0029 mapping status), not
   identity. ``value`` mirrors ``PiiEntity.text`` (already on ``GET …/pii``); it appears only on the
   entity, never inside binding refs, display metadata, warnings, or provenance, and no surrounding
@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import cast
 
 from app.config import Settings
+from app.errors import ApiError
 from app.schemas import (
     AnchorBoundPiiEntityV1,
     DocumentTextAnchorGraphV1,
@@ -43,7 +44,7 @@ from app.schemas import (
     ReviewReadyAnchorBoundPiiEntity,
     TextArtifact,
 )
-from app.services.artifact_service import get_latest_pii_artifact, get_latest_text_artifact
+from app.services.artifact_service import get_pii_artifact, get_text_artifact
 from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.pii_anchor_binding import bind_pii_entities_to_anchors
@@ -81,20 +82,36 @@ _MERGE_REASON_TO_REASON: dict[PiiOverlapReason, PiiEntityReviewReasonCode] = {
 }
 
 
-def build_pii_entity_contract(settings: Settings, document_id: str) -> PiiEntityContractV1:
-    """Build the anchor-bound review-ready entity contract for a document's latest PII result.
+class PiiEntityContractIncompatibleError(ApiError):
+    """Raised when requested PII and text artifacts do not belong to one run."""
+
+    def __init__(self) -> None:
+        super().__init__("PII and text artifacts do not belong to the same result.", 409)
+
+
+def build_pii_entity_contract(
+    settings: Settings,
+    document_id: str,
+    pii_artifact_id: str,
+    text_artifact_id: str,
+) -> PiiEntityContractV1:
+    """Build a contract from one caller-selected, internally coherent artifact snapshot.
 
     Raises the same clean 404 as the review endpoint when the document or its PII result is missing.
     """
-    review = get_pii_review_result(settings, document_id)
-    artifact = get_latest_pii_artifact(settings, document_id)
-    if artifact is None:  # pragma: no cover - the review call above already guaranteed one
+    artifact = get_pii_artifact(settings, document_id, pii_artifact_id)
+    if artifact is None:
         raise PiiReviewArtifactNotFoundError
+    if artifact.input_text_artifact_id != text_artifact_id:
+        raise PiiEntityContractIncompatibleError
+    review = get_pii_review_result(settings, document_id, artifact.id)
 
     content = artifact.content
     package_id = content.input_text_artifact_id
     canonical_available = content.reading_text_char_count is not None
-    matching_text = _matching_text_artifact(settings, document_id, package_id)
+    matching_text = get_text_artifact(settings, document_id, text_artifact_id)
+    if matching_text is None:
+        raise PiiReviewArtifactNotFoundError
     reading_text = matching_text.content.reading_text if matching_text is not None else None
     graph = _anchor_graph(matching_text)
 
@@ -402,21 +419,6 @@ def _binding_warning_codes(entities: list[ReviewReadyAnchorBoundPiiEntity]) -> l
         )
         warnings.update(entity.warnings)
     return sorted(warnings)
-
-
-def _matching_text_artifact(
-    settings: Settings, document_id: str, package_id: str
-) -> TextArtifact | None:
-    """The exact text artifact this PII result was built from, or ``None`` if it changed since.
-
-    Only a byte-matching text artifact (same id as the PII input package) has offset-compatible raw
-    text, so anchors and the ambiguous/missing canonical distinction stay safe; a later OCR re-run
-    (different id) degrades the run to evidence-only binding rather than binding to wrong offsets.
-    """
-    text_artifact = get_latest_text_artifact(settings, document_id)
-    if text_artifact is None or text_artifact.id != package_id:
-        return None
-    return text_artifact
 
 
 def _anchor_graph(

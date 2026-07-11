@@ -11,9 +11,9 @@ Policy (conservative, deterministic, and fully synthetic-testable):
 - **Exact duplicate** (identical start/end/type): merge into one survivor; combine recognizer names
   and record the merged candidates' ids. Reason ``exact_duplicate`` (also ``recognizer_duplicate``
   when the recognizers differ), decision ``merged_provenance``.
-- **Same type, overlapping** (a connected cluster of same-type spans): keep the single strongest
-  span (longest, then highest score, then earliest start, then recognizer name, then id) and drop
-  the rest — but record their ids on the survivor and count them, so nothing is dropped *silently*.
+- **Same type, overlapping**: greedily select the strongest span, suppress only candidates fully
+  contained by that winner, then continue with the remaining candidates. Partial or transitive
+  overlap alone can never suppress independently covered spans.
   Reason ``nested_entity`` when the winner contains a competitor, else ``same_type_overlap``;
   decision ``longer_span_selected`` or ``stronger_confidence_selected``.
 - **Different type, overlapping**: never dropped. Both entities are preserved and flagged for review
@@ -125,34 +125,47 @@ def _resolve_same_type_overlaps(
     provenance: dict[str, PiiEntityProvenance],
     reasons: dict[str, int],
 ) -> list[PiiEntity]:
-    """Keep one strongest span per same-type overlap cluster, recording dropped competitors."""
+    """Suppress only contained competitors of each winner, preserving independent coverage."""
     survivors: list[PiiEntity] = []
     for cluster in _clusters(entities, same_type_only=True):
-        if len(cluster) == 1:
-            survivors.append(cluster[0])
-            continue
-        winner = _strongest(cluster)
-        losers = [entity for entity in cluster if entity.id != winner.id]
-        nested = any(_contains(winner, loser) for loser in losers)
-        decision: PiiOverlapReason = "longer_span_selected"
-        if all(_length(loser) == _length(winner) for loser in losers):
-            decision = "stronger_confidence_selected"
-        merge_reason: PiiOverlapReason = "nested_entity" if nested else "same_type_overlap"
-        existing = provenance[winner.id]
-        superseded = sorted({*existing.superseded_candidate_ids, *(loser.id for loser in losers)})
-        provenance[winner.id] = existing.model_copy(
-            update={
-                "candidate_count": existing.candidate_count + len(losers),
-                "merge_reason": existing.merge_reason or merge_reason,
-                "overlap_decision": decision,
-                "superseded_candidate_ids": superseded,
-            }
-        )
-        _count(reasons, merge_reason)
-        _count(reasons, decision)
-        for _ in losers:
-            _count(reasons, "dropped_lower_confidence_duplicate")
-        survivors.append(winner)
+        remaining = list(cluster)
+        while remaining:
+            winner = _strongest(remaining)
+            # A partial overlap may cover characters outside the winner. Suppressing it would
+            # shrink known PII coverage, so only fully contained candidates are superseded.
+            losers = [
+                entity
+                for entity in remaining
+                if entity.id != winner.id and _contains(winner, entity)
+            ]
+            survivors.append(winner)
+            remaining = [
+                entity
+                for entity in remaining
+                if entity.id != winner.id and entity not in losers
+            ]
+            if not losers:
+                continue
+            nested = any(_contains(winner, loser) for loser in losers)
+            decision: PiiOverlapReason = "longer_span_selected"
+            if all(_length(loser) == _length(winner) for loser in losers):
+                decision = "stronger_confidence_selected"
+            merge_reason: PiiOverlapReason = "nested_entity" if nested else "same_type_overlap"
+            existing = provenance[winner.id]
+            provenance[winner.id] = existing.model_copy(
+                update={
+                    "candidate_count": existing.candidate_count + len(losers),
+                    "merge_reason": existing.merge_reason or merge_reason,
+                    "overlap_decision": decision,
+                    "superseded_candidate_ids": sorted(
+                        {*existing.superseded_candidate_ids, *(loser.id for loser in losers)}
+                    ),
+                }
+            )
+            _count(reasons, merge_reason)
+            _count(reasons, decision)
+            for _ in losers:
+                _count(reasons, "dropped_lower_confidence_duplicate")
     return survivors
 
 

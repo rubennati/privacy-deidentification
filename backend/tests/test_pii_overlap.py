@@ -98,23 +98,20 @@ def test_partial_same_type_overlap_equal_length_prefers_higher_confidence() -> N
 
     resolved, summary = resolve_pii_overlaps([weaker, stronger])
 
-    assert _ids(resolved) == [stronger.id]
-    assert summary.dropped_count == 1
-    provenance = resolved[0].provenance
-    assert provenance is not None
-    assert provenance.overlap_decision == "stronger_confidence_selected"
-    assert provenance.merge_reason == "same_type_overlap"
+    assert _ids(resolved) == [weaker.id, stronger.id]
+    assert summary.dropped_count == 0
 
 
-def test_same_type_overlap_chain_resolves_to_single_winner() -> None:
+def test_same_type_overlap_chain_preserves_independently_covered_outer_span() -> None:
     a = _entity("ORGANIZATION", 0, 12, score=0.5, entity_id="5" * 32)
     b = _entity("ORGANIZATION", 6, 30, score=0.8, entity_id="6" * 32)  # longest span
     c = _entity("ORGANIZATION", 20, 28, score=0.9, entity_id="7" * 32)
 
     resolved, summary = resolve_pii_overlaps([a, b, c])
 
-    assert _ids(resolved) == [b.id]
-    assert summary.dropped_count == 2
+    assert _ids(resolved) == [a.id, b.id]
+    assert summary.dropped_count == 1
+    assert c.id in resolved[1].provenance.superseded_candidate_ids  # type: ignore[union-attr]
 
 
 # --- Cross-type overlap is preserved and flagged, never dropped ----------------------------------

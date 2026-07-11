@@ -49,6 +49,7 @@ from app.services.artifact_service import (
     get_latest_pii_artifact,
     get_latest_pii_review_result_artifact,
     get_latest_text_artifact,
+    get_pii_artifact,
     save_pii_review_result_artifact,
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
@@ -120,11 +121,17 @@ class PiiManualAdditionInvalidError(ApiError):
         super().__init__(detail, 422)
 
 
-def get_pii_review_result(settings: Settings, document_id: str) -> PiiReviewResult:
-    """Return the reviewable groups/occurrences/manual additions for the latest PII result."""
+def get_pii_review_result(
+    settings: Settings, document_id: str, artifact_id: str | None = None
+) -> PiiReviewResult:
+    """Return review state for one exact PII result, or the latest when explicitly omitted."""
     if get_document_record(settings, document_id) is None:
         raise DocumentNotFoundError
-    artifact = get_latest_pii_artifact(settings, document_id)
+    artifact = (
+        get_pii_artifact(settings, document_id, artifact_id)
+        if artifact_id is not None
+        else get_latest_pii_artifact(settings, document_id)
+    )
     if artifact is None:
         raise PiiReviewArtifactNotFoundError
 

@@ -81,8 +81,10 @@ export default function DocumentDetailPage() {
   const [pii, setPii] = useState<PiiArtifact | null>(null);
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
   const [reviewResult, setReviewResult] = useState<PiiReviewResult | null>(null);
-  const [piiEntityContract, setPiiEntityContract] = useState<PiiEntityContractV1 | null>(null);
-  const [piiEntityContractError, setPiiEntityContractError] = useState(false);
+  const [piiEntityContractState, setPiiEntityContractState] = useState<
+    | { status: "idle" | "loading" | "not_found" | "incompatible" | "error" }
+    | { status: "ok"; contract: PiiEntityContractV1 }
+  >({ status: "idle" });
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
   const [selectedTextRange, setSelectedTextRange] = useState<{
@@ -123,6 +125,15 @@ export default function DocumentDetailPage() {
       };
     }
     setSelectedPiiProfile("");
+    // Identity transition fail-closed: private text and all derived state leave the DOM before the
+    // next document request starts, never after it happens to finish.
+    setDocument(null);
+    setAudit(null);
+    setText(null);
+    setPii(null);
+    setReviewResult(null);
+    setPiiEntityContractState({ status: "idle" });
+    setLoading(true);
     setReviewTextMode("reading");
     setSelectedTextRange(null);
     setAnalysisStep("idle");
@@ -167,6 +178,7 @@ export default function DocumentDetailPage() {
   // Restore per-entity feedback state for the current PII artifact when the dev gate is on.
   const devGateEnabled = appConfig?.devEngineSettingsEnabled ?? false;
   const piiArtifactId = pii?.id ?? null;
+  const piiTextArtifactId = pii?.input_text_artifact_id ?? null;
   useEffect(() => {
     if (!documentId || !piiArtifactId || !devGateEnabled) {
       setFeedbackStatuses({});
@@ -187,34 +199,45 @@ export default function DocumentDetailPage() {
     setSelectedOccurrenceId(null);
     if (!documentId || !piiArtifactId) {
       setReviewResult(null);
-      setPiiEntityContract(null);
-      setPiiEntityContractError(false);
+      setPiiEntityContractState({ status: "idle" });
+      return;
+    }
+    if (!text || piiTextArtifactId !== text.id) {
+      setPiiEntityContractState({ status: "idle" });
       return;
     }
     let active = true;
-    void Promise.all([fetchPiiReview(documentId), fetchPiiEntityContract(documentId)]).then(
-      ([review, contractResult]) => {
+    setPiiEntityContractState({ status: "loading" });
+    void Promise.all([
+      fetchPiiReview(documentId),
+      fetchPiiEntityContract(documentId, piiArtifactId, text.id),
+    ])
+      .then(([review, contractResult]) => {
         if (!active) return;
         setReviewResult(review);
-        setPiiEntityContract(contractResult.status === "ok" ? contractResult.contract : null);
-        setPiiEntityContractError(contractResult.status === "error");
-      },
-    );
+        setPiiEntityContractState(contractResult);
+      })
+      .catch(() => {
+        if (active) setPiiEntityContractState({ status: "error" });
+      });
     return () => {
       active = false;
     };
-  }, [documentId, piiArtifactId]);
+  }, [documentId, piiArtifactId, piiTextArtifactId, text]);
 
   const refreshPiiReviewAndContract = async (review: PiiReviewResult) => {
     setReviewResult(review);
     if (!documentId || !piiArtifactId) {
-      setPiiEntityContract(null);
-      setPiiEntityContractError(false);
+      setPiiEntityContractState({ status: "idle" });
       return;
     }
-    const contractResult = await fetchPiiEntityContract(documentId);
-    setPiiEntityContract(contractResult.status === "ok" ? contractResult.contract : null);
-    setPiiEntityContractError(contractResult.status === "error");
+    if (!text || pii?.input_text_artifact_id !== text.id) {
+      setPiiEntityContractState({ status: "idle" });
+      return;
+    }
+    setPiiEntityContractState({ status: "loading" });
+    const contractResult = await fetchPiiEntityContract(documentId, piiArtifactId, text.id);
+    setPiiEntityContractState(contractResult);
   };
 
   // Reload recovery: rehydrate any tracked OCR job for this document and resume polling it (a
@@ -251,7 +274,11 @@ export default function DocumentDetailPage() {
     if (trackedOcrJob.status === "succeeded") {
       handledOcrJobIds.current.add(trackedOcrJob.job_id);
       setOcrResultLoadError(false);
-      void fetchOcr(documentId)
+      if (!trackedOcrJob.result_artifact_id) {
+        setOcrResultLoadError(true);
+        return;
+      }
+      void fetchOcr(documentId, trackedOcrJob.result_artifact_id)
         .then((result) => {
           setText(result);
           setReviewTextMode("reading");
@@ -313,8 +340,11 @@ export default function DocumentDetailPage() {
       ? "current"
       : "stale";
   const currentPiiEntityContract =
-    piiStatus === "current" && piiEntityContract?.pii_artifact_id === piiArtifactId
-      ? piiEntityContract
+    piiStatus === "current" &&
+    piiEntityContractState.status === "ok" &&
+    piiEntityContractState.contract.pii_artifact_id === piiArtifactId &&
+    piiEntityContractState.contract.text_artifact_id === text?.id
+      ? piiEntityContractState.contract
       : null;
   const highlightModel = buildAnchorBoundPiiHighlights(currentPiiEntityContract);
   // Hide the recovered-job banner once a succeeded job's result has been applied (the loaded
@@ -326,7 +356,8 @@ export default function DocumentDetailPage() {
     trackedOcrJob !== null &&
     !(trackedOcrJob.status === "succeeded" && trackedJobHandled);
   // A full, current analysis exists once both OCR and PII match the latest upstream inputs.
-  const hasCurrentAnalysis = ocrStatus === "current" && piiStatus === "current";
+  const hasCurrentAnalysis =
+    ocrStatus === "current" && piiStatus === "current" && currentPiiEntityContract !== null;
   // Proactive hint when a station's runtime is not installed on this server (see
   // runtimeNotice.ts) — surfaces the same signal a run would otherwise only discover via a 503.
   const analysisRuntimeNotice = buildRuntimeNotice(appConfig);
@@ -524,10 +555,16 @@ export default function DocumentDetailPage() {
               message="Die Texterkennung wurde abgeschlossen, das Ergebnis konnte aber nicht geladen werden. Bitte laden Sie die Seite neu."
             />
           )}
-          {piiStatus === "current" && piiEntityContractError && (
+          {piiStatus === "current" && piiEntityContractState.status === "error" && (
             <StatusNotice
               status="error"
-              message="Die PII-Hervorhebungen konnten nicht geladen werden. Der erkannte Text ist weiterhin sichtbar, aber ohne Markierungen. Bitte laden Sie die Seite neu."
+              message="Das genaue PII-Ergebnis konnte nicht geladen werden. Text und Hervorhebungen bleiben aus Sicherheitsgründen verborgen. Bitte laden Sie die Seite neu."
+            />
+          )}
+          {piiStatus === "current" && piiEntityContractState.status === "incompatible" && (
+            <StatusNotice
+              status="error"
+              message="PII- und Textergebnis gehören nicht zum selben Lauf. Text und Hervorhebungen bleiben verborgen."
             />
           )}
           {piiStatus === "current" && reviewResult && reviewResult.has_stale_decisions && (
@@ -560,6 +597,11 @@ export default function DocumentDetailPage() {
                 extrahierten Text und erkannte sensible Daten zu sehen.
               </p>
             )
+          ) : piiStatus === "current" && currentPiiEntityContract === null ? (
+            <p className="rounded-lg bg-dropzone p-4 text-sm text-muted">
+              Das genaue PII-Ergebnis ist nicht verfügbar. Text und Hervorhebungen werden nicht
+              angezeigt.
+            </p>
           ) : (
             <div
               className={

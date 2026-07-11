@@ -163,20 +163,25 @@ def get_document_pii_review_result_artifact(
 @router.get(
     "/{document_id}/pii/entity-contract",
     response_model=PiiEntityContractV1,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_pii_entity_contract(
-    document_id: str, settings: Settings = Depends(get_settings)
+    document_id: str,
+    pii_artifact_id: str = Query(..., pattern=r"^[0-9a-f]{32}$"),
+    text_artifact_id: str = Query(..., pattern=r"^[0-9a-f]{32}$"),
+    settings: Settings = Depends(get_settings),
 ) -> PiiEntityContractV1:
-    """Return the review-ready PII entity contract for the document's latest PII result (ADR-0029).
+    """Return the exact requested review-ready PII entity contract (ADR-0029/0037).
 
     Additive alongside ``GET …/pii`` and ``GET …/pii/review``: a derived, review-facing view that
     connects each detected entity to the technical raw text and canonical reading text with an
     explicit mapping status, a stable entity id, deterministic overlap provenance, the resolved
-    review state, and a text-free display model. It never mutates the immutable ``pii_result`` and
-    raises the same clean 404 as ``GET …/pii/review`` when no PII result exists yet.
+    review state, and a text-free display model. It never mutates the immutable ``pii_result``;
+    missing exact artifacts return 404 and mixed PII/text lineage returns 409.
     """
-    return build_pii_entity_contract(settings, document_id)
+    return build_pii_entity_contract(
+        settings, document_id, pii_artifact_id, text_artifact_id
+    )
 
 
 @router.post(

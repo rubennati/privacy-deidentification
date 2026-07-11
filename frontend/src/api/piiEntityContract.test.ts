@@ -112,25 +112,34 @@ describe("fetchPiiEntityContract", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(JSON.stringify(contract), { status: 200 }));
 
-    const result = await fetchPiiEntityContract("doc-1");
+    const result = await fetchPiiEntityContract("doc-1", "pii-1", "text-1");
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/documents/doc-1/pii/entity-contract");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/documents/doc-1/pii/entity-contract?pii_artifact_id=pii-1&text_artifact_id=text-1",
+    );
     expect(result).toEqual({ status: "ok", contract });
   });
 
   it("returns not_found when there is no PII result yet (404) -- never treated as an error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 404 }));
-    expect(await fetchPiiEntityContract("doc-1")).toEqual({ status: "not_found" });
+    expect(await fetchPiiEntityContract("doc-1", "pii-1", "text-1")).toEqual({ status: "not_found" });
   });
 
   it("returns error on an unexpected server failure (5xx) instead of throwing", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 500 }));
-    expect(await fetchPiiEntityContract("doc-1")).toEqual({ status: "error" });
+    expect(await fetchPiiEntityContract("doc-1", "pii-1", "text-1")).toEqual({ status: "error" });
+  });
+
+  it("returns incompatible for a mixed artifact snapshot", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 409 }));
+    expect(await fetchPiiEntityContract("doc-1", "pii-1", "text-2")).toEqual({
+      status: "incompatible",
+    });
   });
 
   it("returns error on a network failure instead of throwing", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
-    expect(await fetchPiiEntityContract("doc-1")).toEqual({ status: "error" });
+    expect(await fetchPiiEntityContract("doc-1", "pii-1", "text-1")).toEqual({ status: "error" });
   });
 });
 

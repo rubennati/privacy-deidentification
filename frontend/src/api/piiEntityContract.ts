@@ -1,5 +1,5 @@
 // Client + types for the anchor-bound review-ready PII entity contract (ADR-0031 Phase C, on top of
-// ADR-0029). A derived, additive view over the latest pii_result: every detected entity is
+// ADR-0029). A derived, additive view over one exact pii_result: every detected entity is
 // normalized against the OCR/Text Text Anchor Graph into a stable anchor-bound entity. Entity
 // identity derives from anchor identity where an exact binding exists; raw offsets, canonical
 // ranges, and the value are evidence/display, not identity. This does not mutate offsets; the UI
@@ -204,18 +204,24 @@ export function resolveHighlightRange(entity: ReviewReadyAnchorBoundPiiEntity): 
 export type PiiEntityContractFetchResult =
   | { status: "ok"; contract: PiiEntityContractV1 }
   | { status: "not_found" }
+  | { status: "incompatible" }
   | { status: "error" };
 
 /** Fetch the review-ready entity contract for a document. Never throws. */
 export async function fetchPiiEntityContract(
   documentId: string,
+  piiArtifactId: string,
+  textArtifactId: string,
 ): Promise<PiiEntityContractFetchResult> {
   try {
     const response = await fetch(
-      `/api/documents/${encodeURIComponent(documentId)}/pii/entity-contract`,
+      `/api/documents/${encodeURIComponent(documentId)}/pii/entity-contract?pii_artifact_id=${encodeURIComponent(piiArtifactId)}&text_artifact_id=${encodeURIComponent(textArtifactId)}`,
     );
     if (response.status === 404) {
       return { status: "not_found" };
+    }
+    if (response.status === 409) {
+      return { status: "incompatible" };
     }
     if (!response.ok) {
       return { status: "error" };

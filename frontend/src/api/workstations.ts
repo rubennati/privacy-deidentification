@@ -402,7 +402,6 @@ export class WorkstationApiError extends Error {
   }
 }
 
-type Station = "audit" | "ocr" | "pii";
 const OCR_JOB_POLL_INTERVAL_MS = 2000;
 const OCR_JOB_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -414,8 +413,9 @@ export function runAudit(documentId: string): Promise<AuditArtifact> {
   return requestArtifact<AuditArtifact>(documentId, "audit", "POST");
 }
 
-export function fetchOcr(documentId: string): Promise<TextArtifact> {
-  return requestArtifact<TextArtifact>(documentId, "ocr", "GET");
+export function fetchOcr(documentId: string, artifactId?: string): Promise<TextArtifact> {
+  const suffix = artifactId ? `?artifact_id=${encodeURIComponent(artifactId)}` : "";
+  return requestArtifact<TextArtifact>(documentId, `ocr${suffix}`, "GET");
 }
 
 export async function runOcr(documentId: string): Promise<TextArtifact> {
@@ -424,8 +424,11 @@ export async function runOcr(documentId: string): Promise<TextArtifact> {
     const queuedJob = (await response.json()) as JobStatus;
     // Recorded immediately so any subscribed UI shows "accepted" before the first poll tick.
     jobActivityStore.record(queuedJob);
-    await waitForOcrJob(queuedJob.job_id);
-    return fetchOcr(documentId);
+    const completedJob = await waitForOcrJob(queuedJob.job_id);
+    if (!completedJob.result_artifact_id) {
+      throw new WorkstationApiError("Das OCR-Ergebnis ist nicht verfügbar.", 502);
+    }
+    return fetchOcr(documentId, completedJob.result_artifact_id);
   }
   if (!response.ok) {
     await throwApiError(response);
@@ -460,7 +463,7 @@ export function runPii(documentId: string, request?: PiiRunRequest): Promise<Pii
 
 async function requestArtifact<T>(
   documentId: string,
-  station: Station,
+  station: string,
   method: "GET" | "POST",
   body?: unknown,
 ): Promise<T> {
@@ -473,7 +476,7 @@ async function requestArtifact<T>(
 
 async function requestStation(
   documentId: string,
-  station: Station,
+  station: string,
   method: "GET" | "POST",
   body?: unknown,
 ): Promise<Response> {

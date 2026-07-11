@@ -236,7 +236,7 @@ def test_optional_missing_layers_do_not_crash() -> None:
     assert pii_input.is_available("structured_content") is False
 
 
-def test_empty_raw_text_is_not_a_hard_error_but_has_no_usable_text() -> None:
+def test_empty_raw_text_is_rejected_as_untrusted_input() -> None:
     content = TextContent(
         document_id=_DOCUMENT_ID,
         input_artifact_id=_ORIGINAL_ID,
@@ -257,10 +257,8 @@ def test_empty_raw_text_is_not_a_hard_error_but_has_no_usable_text() -> None:
         content=content,
     )
 
-    pii_input = PiiInputAdapter.from_text_artifact(artifact)
-
-    assert pii_input.contract_status == "invalid"
-    assert pii_input.has_usable_raw_text is False
+    with pytest.raises(PiiInputContractError):
+        PiiInputAdapter.from_text_artifact(artifact)
 
 
 def test_structurally_invalid_package_is_rejected() -> None:

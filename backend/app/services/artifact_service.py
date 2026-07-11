@@ -81,6 +81,18 @@ def get_latest_text_artifact(settings: Settings, document_id: str) -> TextArtifa
     return max(artifacts, key=lambda artifact: (artifact.created_at, artifact.id))
 
 
+def get_text_artifact(
+    settings: Settings, document_id: str, artifact_id: str
+) -> TextArtifact | None:
+    """Return one exact text artifact, never a newer artifact for the same document."""
+    if not _ID_PATTERN.fullmatch(artifact_id):
+        return None
+    path = _document_artifact_directory(settings, document_id) / f"{artifact_id}.json"
+    if not path.is_file():
+        return None
+    return _read_text_artifact(path, document_id)
+
+
 def get_latest_quality_report_artifact(
     settings: Settings, document_id: str
 ) -> QualityReportArtifact | None:
