@@ -555,6 +555,7 @@ def test_anchor_layout_range_is_emitted_when_available(
             "binding_role": "display_span",
             "confidence": None,
             "reason_codes": [],
+            "mapping_status": "exact",
         }
     ]
     assert body["binding_summary"]["entities_with_layout_range"] == 1

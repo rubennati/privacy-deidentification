@@ -81,6 +81,10 @@ export interface PiiEntityAnchorRef {
   binding_role: PiiAnchorBindingRole;
   confidence: number | null;
   reason_codes: string[];
+  // Present only on `binding_role: "display_span"` refs: whether the underlying view range was
+  // byte-exact ("exact") or reformatted/unioned ("normalized"/"merged"/...); null/absent for other
+  // roles and for refs built before this field existed.
+  mapping_status?: string | null;
 }
 
 export interface PiiEntityAnchorSet {

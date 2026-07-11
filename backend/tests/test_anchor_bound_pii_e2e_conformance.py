@@ -38,7 +38,9 @@ from app.schemas import (
     TextLineGeometry,
     TextPageResult,
 )
-from app.services.artifact_service import save_pii_artifact, save_text_artifact
+from app.services.artifact_service import get_text_artifact, save_pii_artifact, save_text_artifact
+from app.services.document_text_anchors import build_document_text_anchor_graph
+from app.services.document_text_package import build_document_text_package
 from app.services.reading_text import ReadingCell, ReadingRow, build_reading_text
 from app.services.reading_text_geometry_projection import (
     build_reading_text_geometry_projection_map,
@@ -978,3 +980,199 @@ def test_builder_emitted_row_lineage_resolves_repeated_token_and_duplicates_thro
         assert value not in json.dumps(entity["anchor_refs"])
         assert value not in json.dumps(entity["binding_reasons"])
         assert value not in json.dumps(entity["warnings"])
+
+
+# --- Row-construction lineage v2: a normalized (reformatted) row must not claim byte-exact mapping
+# ADR-0036 introduced ``RowLineageSegment.status`` of ``exact``/``normalized``/``merged``: a single
+# row whose rendered canonical line is *not* byte-identical to its raw span (e.g. a table/party cell
+# whose internal padding collapses during rendering) is ``normalized``, not ``exact``. The entity
+# contract's ``mapping_status`` must say so honestly (``projected``, the same non-exact state the
+# older post-hoc text-match path already uses for a reformatted value) instead of collapsing every
+# anchor-derived canonical range to ``exact`` regardless of the underlying row's own honesty.
+_NORMALIZED_RAW = "Beispiel   Bau GmbH\n"  # column padding: 3 raw spaces between words
+_NORMALIZED_READING = "Beispiel Bau GmbH"  # rendered with the padding collapsed to one space
+
+
+def _save_with_normalized_row_lineage(
+    settings: Settings, document_id: str, raw: str, entities: list[PiiEntity]
+) -> str:
+    """Persist a text + PII artifact pair whose only canonical lineage is one intentionally
+    "normalized" row-construction segment -- attached at collection time exactly like a real
+    table/party-column cell whose rendering collapses internal whitespace, never guessed by
+    comparing text after the fact. No ``reading_text_map``, no geometry projection map, so nothing
+    else could supply a canonical range."""
+    pages = [
+        TextPageResult(
+            page_number=1,
+            source="pdf_text_layer",
+            has_text_layer=True,
+            ocr_used=False,
+            text=raw,
+            text_char_count=len(raw),
+        )
+    ]
+    row = ReadingRow(
+        page_number=1,
+        y0=0.05,
+        y1=0.06,
+        cells=(ReadingCell(text=_NORMALIZED_READING, x0=0.05, x1=0.4),),
+        source_range=(0, len(raw.rstrip("\n"))),
+    )
+    reading = build_reading_text(raw, pages, None, [], None, positioned_rows=[row])
+    assert reading is not None
+    assert reading.row_lineage[0].status == "normalized"  # sanity: genuinely non-exact
+    row_lineage_map = build_reading_text_row_lineage_map(
+        document_id=document_id,
+        reading_text=reading.text,
+        pages=pages,
+        row_lineage=reading.row_lineage,
+    )
+    assert row_lineage_map is not None
+
+    text_id = uuid4().hex
+    save_text_artifact(
+        settings,
+        TextArtifact(
+            id=text_id,
+            document_id=document_id,
+            input_artifact_id="c" * 32,
+            input_audit_artifact_id="d" * 32,
+            created_at="2026-07-11T09:00:00.000000Z",
+            content=TextContent(
+                document_id=document_id,
+                input_artifact_id="c" * 32,
+                input_audit_artifact_id="d" * 32,
+                source="pdf_text_layer",
+                text=raw,
+                text_char_count=len(raw),
+                pages=pages,
+                tool_versions={"test": "1"},
+                flags=[],
+                reading_text_version="1",
+                reading_text=reading.text,
+                reading_text_status=reading.status,
+                reading_text_row_lineage_map_version="1",
+                reading_text_row_lineage_map=row_lineage_map,
+            ),
+        ),
+    )
+    counts: dict[str, int] = {}
+    for entity in entities:
+        counts[entity.entity_type] = counts.get(entity.entity_type, 0) + 1
+    save_pii_artifact(
+        settings,
+        PiiArtifact(
+            id=uuid4().hex,
+            document_id=document_id,
+            input_text_artifact_id=text_id,
+            created_at="2026-07-11T10:00:00.000000Z",
+            content=PiiContent(
+                document_id=document_id,
+                input_text_artifact_id=text_id,
+                profile="custom",
+                language="de",
+                score_threshold=0.5,
+                text_char_count=len(raw),
+                reading_text_char_count=len(reading.text),
+                configured_entity_types=sorted(counts),
+                entities=_sorted_entities(entities),
+                entity_counts=dict(sorted(counts.items())),
+                tool_versions={},
+                flags=[],
+                validation=PiiValidationSummary(
+                    enabled=True, kept=len(entities), dropped=0, score_down=0
+                ),
+            ),
+        ),
+    )
+    return reading.text
+
+
+def test_normalized_row_lineage_yields_honest_projected_mapping_status_through_contract(
+    client: TestClient, settings: Settings
+) -> None:
+    """The completion criterion for a *correct* v2 row-lineage consumer: a reformatted (not
+    byte-identical) canonical row must never be reported as an ``exact`` mapping."""
+    document_id = _upload_document(client)
+    raw = _NORMALIZED_RAW
+    org_value = raw.rstrip("\n")
+    entity = _entity_at(raw, "ORGANIZATION", 0, len(org_value))
+    reading_text = _save_with_normalized_row_lineage(settings, document_id, raw, [entity])
+
+    body = _get_contract(client, document_id)
+    org = _by_value(body, org_value)
+
+    # The binding itself is complete (the raw span fully contains its anchors) ...
+    assert org["binding_status"] == "exact"
+    assert org["identity_basis"] == "anchor_exact"
+    # ... but the canonical range came from a reformatted row, so the display mapping must say so
+    # honestly instead of claiming byte-exact identity for a line that does not read byte-for-byte
+    # like the raw span.
+    assert org["mapping_status"] == "projected"
+    canonical_range = org["display"]["canonical_highlight_range"]
+    assert canonical_range is not None
+    assert reading_text[canonical_range["start"] : canonical_range["end"]] == _NORMALIZED_READING
+    # A non-exact mapping is an honest display state, not a missing/partial/ambiguous gap -- it must
+    # not spuriously force review on its own.
+    missing_partial_ambiguous_codes = (
+        "canonical_mapping_missing",
+        "canonical_mapping_partial",
+        "canonical_mapping_ambiguous",
+    )
+    for code in missing_partial_ambiguous_codes:
+        assert code not in org["warnings"]
+
+
+# --- Fallback-only lineage: explicit and distinguishable, never confused with stronger lineage ----
+# When neither row-construction lineage nor the geometry-backed projection is available, the anchor
+# graph still supplies a canonical range through the older post-hoc unique-token
+# ``reading_text_map`` fallback. The binding/contract outcome for a clean, byte-identical value
+# stays "exact" (the fallback map only ever attributes byte-identical text), but *which mechanism*
+# produced it must remain visible one layer down on the Text Anchor Graph (OCR/Text owns anchor
+# provenance) rather than being indistinguishable from stronger row-construction/geometry-projection
+# lineage.
+
+
+def test_fallback_only_lineage_is_explicitly_labelled_and_never_confused_with_stronger_lineage(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    raw = "Anna Beispiel\noffice@muster.at\n"
+    reading = raw
+    entities = [
+        _entity(raw, "PERSON", "Anna Beispiel"),
+        _entity(raw, "EMAIL_ADDRESS", "office@muster.at"),
+    ]
+    _save_e2e(settings, document_id, raw, reading, entities)
+
+    body = _get_contract(client, document_id)
+    person = _by_value(body, "Anna Beispiel")
+    assert person["binding_status"] == "exact"
+    canonical_range = person["display"]["canonical_highlight_range"]
+    assert canonical_range is not None
+    assert reading[canonical_range["start"] : canonical_range["end"]] == "Anna Beispiel"
+
+    pii = client.get(f"/api/documents/{document_id}/pii").json()
+    text_artifact = get_text_artifact(settings, document_id, pii["input_text_artifact_id"])
+    assert text_artifact is not None
+    graph = build_document_text_anchor_graph(build_document_text_package(text_artifact))
+
+    # Document-level: the only lineage mechanism available was the post-hoc fallback map.
+    assert graph.lineage_summary is not None
+    assert graph.lineage_summary.lineage_source == "fallback_text_match"
+    assert graph.lineage_summary.row_construction_available is False
+    assert graph.lineage_summary.geometry_projection_available is False
+
+    # Anchor-level: every canonical-mapped anchor carries the fallback-specific flag, never the
+    # stronger construction-time/geometry-projection flags -- fallback provenance stays visible and
+    # distinguishable, never silently upgraded to look like stronger lineage.
+    canonical_anchors = [
+        anchor
+        for anchor in graph.anchors
+        if any(r.source_name == "canonical_reading_text" for r in anchor.source_ranges)
+    ]
+    assert canonical_anchors, "expected at least one canonical-mapped anchor"
+    for anchor in canonical_anchors:
+        assert "canonical_map_lineage" in anchor.flags
+        assert "canonical_row_construction" not in anchor.flags
+        assert "canonical_geometry_projection" not in anchor.flags

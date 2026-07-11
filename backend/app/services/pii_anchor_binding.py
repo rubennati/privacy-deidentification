@@ -44,6 +44,7 @@ from app.schemas import (
     AnchorBoundPiiEntityV1,
     DocumentTextAnchorGraphV1,
     DocumentTextAnchorSourceName,
+    DocumentTextAnchorStatus,
     PiiAnchorBindingReason,
     PiiAnchorBindingRole,
     PiiAnchorBindingStatus,
@@ -84,13 +85,21 @@ _REASON_ORDER: tuple[PiiAnchorBindingReason, ...] = (
 
 @dataclass(frozen=True)
 class _RawAnchor:
-    """One raw text-anchor reduced to what binding needs: its id, raw range, and canonical range."""
+    """One raw text-anchor reduced to what binding needs: its id, raw range, and canonical range.
+
+    ``canonical_mapping_status``/``layout_mapping_status`` carry the underlying
+    ``DocumentTextAnchorRange.mapping_status`` for the respective view range (``exact`` for a
+    byte-identical row, ``normalized``/``merged`` for a reformatted/unioned one) so a display range
+    built from this anchor can honestly say whether it is byte-exact -- never silently upgraded.
+    """
 
     anchor_id: str
     start: int
     end: int
     canonical_range: tuple[int, int] | None
+    canonical_mapping_status: DocumentTextAnchorStatus | None
     layout_range: tuple[int, int] | None
+    layout_mapping_status: DocumentTextAnchorStatus | None
     warnings: tuple[str, ...]
 
 
@@ -193,7 +202,11 @@ def _anchor_context(graph: DocumentTextAnchorGraphV1 | None) -> _AnchorContext:
                 canonical_range=(
                     (canonical.start, canonical.end) if canonical is not None else None
                 ),
+                canonical_mapping_status=(
+                    canonical.mapping_status if canonical is not None else None
+                ),
                 layout_range=((layout.start, layout.end) if layout is not None else None),
+                layout_mapping_status=(layout.mapping_status if layout is not None else None),
                 warnings=tuple(anchor.warnings),
             )
         )
@@ -402,6 +415,11 @@ def _display_ref(
         anchor.canonical_range if source_name == _CANONICAL_SOURCE else anchor.layout_range
     )
     assert source_range is not None
+    mapping_status = (
+        anchor.canonical_mapping_status
+        if source_name == _CANONICAL_SOURCE
+        else anchor.layout_mapping_status
+    )
     start, end = source_range
     return PiiEntityAnchorRef(
         anchor_id=anchor.anchor_id,
@@ -411,6 +429,7 @@ def _display_ref(
         binding_role="display_span",
         confidence=None,
         reason_codes=[],
+        mapping_status=mapping_status,
     )
 
 

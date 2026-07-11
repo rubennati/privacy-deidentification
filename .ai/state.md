@@ -890,6 +890,32 @@ backend tests passing, full suite green). See
 [ADR-0036](../docs/adr/0036-reading-text-row-construction-lineage-v2.md). Cell-level granularity and
 multi-column prose lineage remain open, re-scoped explicitly for a future PR rather than assumed.
 
+**Latest checkpoint (PII binding quality suite — Phase 3, correctness hardening):** Not an engine
+level change. Extends the Phase 2 hard-case corpus (`test_pii_binding_quality_suite.py`) with two
+more binding-layer regressions — trailing punctuation (no separating space) within a detected span
+still binds `exact` with a full canonical bridge, and mutually overlapping candidate anchors bind
+`ambiguous`/evidence-only rather than guessed — and extends
+`test_anchor_bound_pii_e2e_conformance.py` with two full HTTP entity-contract proofs. Scoping the
+first proof (ADR-0036's `normalized`/`merged` `RowLineageSegment.status`) found a **real,
+previously-untested defect**: `pii_entity_contract.py`'s `_mapping_status` collapsed every
+anchor-derived canonical range to `mapping_status: "exact"` regardless of whether the underlying
+row-lineage/geometry-projection segment was itself byte-exact, `normalized`, or `merged` — a
+reformatted table/party-column row (real length, not byte-identical to its raw span) was reported
+identically to a genuinely byte-exact one. Fixed by threading the per-view
+`DocumentTextAnchorRange.mapping_status` through `pii_anchor_binding.py`'s `_RawAnchor` and a new
+additive `PiiEntityAnchorRef.mapping_status` field (`None`-safe, legacy-compatible) into
+`_anchor_display_range`'s envelope computation, so a bridged range downgrades honestly to the
+existing `"projected"` state — the same non-exact state the older post-hoc projection path already
+used — whenever any contributing anchor was non-exact. The second new e2e proof confirms a
+fallback-only artifact (only the post-hoc `reading_text_map`, no row lineage, no geometry
+projection) remains visible and distinguishable one layer down on the Text Anchor Graph
+(`lineage_summary.lineage_source == "fallback_text_match"`, per-anchor `canonical_map_lineage` flag
+present and the stronger flags absent) even though its `mapping_status` legitimately stays `exact`
+for byte-identical fallback text. No recognizer, detection, tokenizer, active-PII-input, or
+binding-algorithm change; the previously-fixed cross-view organisation highlight behavior (repeated
+interior token, genuine duplicates, trailing newline) is unchanged and still covered by the existing
+corpus. 909 backend tests / 201 frontend tests pass.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next

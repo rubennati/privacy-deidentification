@@ -2707,7 +2707,14 @@ PiiDetectionRole = Literal["primary", "supporting"]
 
 
 class PiiEntityAnchorRef(BaseModel):
-    """One anchor an entity references, in a named text view. Offsets/ids/codes only — no text."""
+    """One anchor an entity references, in a named text view. Offsets/ids/codes only — no text.
+
+    ``mapping_status`` carries the referenced anchor's own view-range honesty for a
+    ``display_span`` ref (``exact`` for a byte-identical row, ``normalized``/``merged`` for a
+    reformatted/unioned one — see :class:`ReadingTextRowLineageMap`) so a bridged display range
+    can be told apart from a byte-exact one; it is ``None`` for ``entity_span``/``supporting_span``/
+    ``inferred_span`` roles, which describe raw-anchor overlap rather than a view projection.
+    """
 
     anchor_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     source_name: DocumentTextAnchorSourceName
@@ -2716,6 +2723,7 @@ class PiiEntityAnchorRef(BaseModel):
     binding_role: PiiAnchorBindingRole
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     reason_codes: list[PiiAnchorBindingReason] = Field(default_factory=list)
+    mapping_status: DocumentTextAnchorStatus | None = None
 
 
 class PiiEntityAnchorSet(BaseModel):

@@ -367,6 +367,63 @@ def test_docx_document_without_page_geometry_binds_normally() -> None:
     assert bound_entity.identity_basis == "anchor_exact"
 
 
+# --- Hard case 5: trailing punctuation within a detected span -----------------------------------
+
+
+def test_trailing_punctuation_within_span_does_not_downgrade_a_complete_binding() -> None:
+    """A detector span that runs one character past a value into trailing punctuation (no
+    separating space) must stay ``exact`` and keep its canonical range -- mirroring the existing
+    trailing-whitespace guarantee. The anchor graph gives every non-whitespace character its own
+    anchor (the tokenizer's symbol fallback), so a detection that fully contains that trailing
+    punctuation anchor is still a complete binding, never a partial one."""
+    raw = "Wien, Oesterreich liegt in Europa."
+    reading = raw
+    reading_map = [_segment(0, len(reading), 0, len(raw))]
+    graph = _graph_from_raw(raw, reading=reading, reading_map=reading_map)
+    end = raw.index(",") + 1  # span includes the trailing comma, no separating space
+    entity = _entity("LOCATION", raw[:end], 0)
+
+    bound, _summary = _bind([entity], graph)
+    [bound_entity] = bound
+
+    assert bound_entity.binding_status == "exact"
+    assert bound_entity.identity_basis == "anchor_exact"
+    assert "canonical_range_missing" not in bound_entity.binding_reasons
+    # One display ref per contributing anchor (the word "Wien" and the trailing comma symbol); their
+    # combined envelope -- the same min/max the entity contract computes -- must reach the comma,
+    # not stop short of it the way a partial/downgraded binding would.
+    canonical_refs = [
+        ref for ref in bound_entity.anchor_refs if ref.source_name == "canonical_reading_text"
+    ]
+    assert canonical_refs
+    starts = [ref.source_range.start for ref in canonical_refs if ref.source_range is not None]
+    ends = [ref.source_range.end for ref in canonical_refs if ref.source_range is not None]
+    assert (min(starts), max(ends)) == (0, end)
+
+
+# --- Hard case 6: genuinely ambiguous overlapping candidate anchors ------------------------------
+
+
+def test_mutually_overlapping_candidate_anchors_bind_ambiguous_never_guessed() -> None:
+    """Two candidate anchors whose raw ranges overlap each other give no single anchor set a
+    detection could unambiguously belong to. Binding must surface this honestly as ``ambiguous``,
+    evidence-only identity -- never silently picking one candidate (e.g. by anchor/processing
+    order) the way a weaker heuristic might."""
+    raw_char_count = 15
+    graph = _manual_graph_with_ids(raw_char_count, [(0, 10), (5, 15)], id_seed="overlap")
+    entity = _entity("MISC", "x" * raw_char_count, 0)
+
+    bound, summary = _bind([entity], graph)
+    [bound_entity] = bound
+
+    assert bound_entity.binding_status == "ambiguous"
+    assert bound_entity.identity_basis == "evidence_only"
+    assert "anchor_ambiguous" in bound_entity.binding_reasons
+    assert "evidence_only_identity" in bound_entity.binding_reasons
+    assert bound_entity.anchor_set.anchor_ids == []
+    assert summary.exact_bound_ratio == 0.0
+
+
 # --- Coverage-ratio gate --------------------------------------------------------------------------
 
 
@@ -382,6 +439,7 @@ def test_hard_case_corpus_coverage_ratios_meet_documented_floors() -> None:
     labeled_raw = "Geburtsdatum: 14.03.1978 Tel: 0664 1234567"
     truncated_raw = "Tel: +43 664 1234567"
     docx_raw = "Zwischen Anna Musterfrau und der Beispiel GmbH wird folgender Vertrag geschlossen."
+    punctuation_raw = "Wien, Oesterreich liegt in Europa."
 
     cases = [
         (
@@ -409,6 +467,16 @@ def test_hard_case_corpus_coverage_ratios_meet_documented_floors() -> None:
             "docx_no_geometry",
             [_entity("PERSON", "Anna Musterfrau", docx_raw.index("Anna Musterfrau"))],
             _graph_from_raw(docx_raw),
+            1.0,
+        ),
+        (
+            "trailing_punctuation",
+            [_entity("LOCATION", punctuation_raw[: punctuation_raw.index(",") + 1], 0)],
+            _graph_from_raw(
+                punctuation_raw,
+                reading=punctuation_raw,
+                reading_map=[_segment(0, len(punctuation_raw), 0, len(punctuation_raw))],
+            ),
             1.0,
         ),
     ]

@@ -164,12 +164,15 @@ def _to_review_ready(
     representative = review_by_occurrence[occurrence_ids[0]]
     representative_entity = entity_by_id[occurrence_ids[0]]
 
-    anchor_canonical_range = _anchor_display_range(bound, "canonical_reading_text")
+    anchor_canonical = _anchor_display_range(bound, "canonical_reading_text")
+    anchor_canonical_range = anchor_canonical[0] if anchor_canonical is not None else None
+    anchor_canonical_exact = anchor_canonical[1] if anchor_canonical is not None else True
     mapping_status = _mapping_status(
         representative_entity,
         canonical_available,
         reading_text,
         anchor_canonical_range=anchor_canonical_range,
+        anchor_canonical_exact=anchor_canonical_exact,
     )
     canonical_range = _canonical_range(
         representative_entity, mapping_status, anchor_canonical_range=anchor_canonical_range
@@ -214,16 +217,21 @@ def _mapping_status(
     reading_text: str | None,
     *,
     anchor_canonical_range: PiiEntityDisplaySpan | None,
+    anchor_canonical_exact: bool,
 ) -> PiiEntityMappingStatus:
     """Classify how the entity's raw span connects to the canonical reading text (display view).
 
     ``not_applicable`` when the run produced no canonical text at all; otherwise a mapped
     (``exact``/``projected``) or unmapped (``partial``/``missing``/``ambiguous``) state. An unmapped
     entity whose exact value appears more than once in the canonical text is ``ambiguous`` (multiple
-    candidate positions), else ``missing`` — never dropped in any case.
+    candidate positions), else ``missing`` — never dropped in any case. An anchor-derived range is
+    ``exact`` only when every contributing anchor's canonical range was itself byte-exact;
+    ``anchor_canonical_exact=False`` (a reformatted/merged row-lineage or geometry-projection
+    segment bridged the range) downgrades it to the honest ``projected`` state instead — never
+    claiming ``exact`` for a canonical line that does not read byte-for-byte like the raw span.
     """
     if anchor_canonical_range is not None:
-        return "exact"
+        return "exact" if anchor_canonical_exact else "projected"
     if not canonical_available:
         return "not_applicable"
     if entity.projection_status == "exact":
@@ -309,28 +317,32 @@ def _entity_warnings(
 
 def _anchor_display_range(
     bound: AnchorBoundPiiEntityV1, source_name: str
-) -> PiiEntityDisplaySpan | None:
-    display_ranges = [
-        ref.source_range
+) -> tuple[PiiEntityDisplaySpan, bool] | None:
+    """The entity's bridged display range for ``source_name``, plus whether every contributing
+    anchor ref was itself byte-exact (``ref.mapping_status`` is ``exact``/``None``, never
+    ``normalized``/``merged``). ``None`` is treated as exact for refs built before this field
+    existed and for the raw/entity-span roles, which never carry a display projection here."""
+    display_refs = [
+        (ref.source_range, ref.mapping_status)
         for ref in bound.anchor_refs
         if ref.source_name == source_name
         and ref.source_range is not None
         and ref.binding_role == "display_span"
     ]
-    if bound.binding_status != "exact" or not display_ranges:
+    if bound.binding_status != "exact" or not display_refs:
         return None
     # pii_anchor_binding only ever emits these display refs when the entity's own boundary anchors
     # resolved (bridgeable), so a non-empty list here is already a safe envelope even when an
     # interior anchor was skipped (e.g. individually ambiguous elsewhere in the document) — no
     # separate full-coverage check is needed.
-    ordered = sorted(
-        display_ranges, key=lambda source_range: (source_range.start, source_range.end)
-    )
-    return PiiEntityDisplaySpan(
-        start=ordered[0].start,
-        end=ordered[-1].end,
+    ordered = sorted(display_refs, key=lambda item: (item[0].start, item[0].end))
+    all_exact = all(status in (None, "exact") for _range, status in display_refs)
+    span = PiiEntityDisplaySpan(
+        start=ordered[0][0].start,
+        end=ordered[-1][0].end,
         projection_method="offset_map",
     )
+    return span, all_exact
 
 
 def _mapping_summary(
