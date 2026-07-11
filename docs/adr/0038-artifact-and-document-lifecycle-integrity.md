@@ -22,19 +22,29 @@ together. Other current artifact kinds use the same authority mechanism.
 
 Implicit-current reads resolve the exact id in that map. A missing, malformed, incompatible, or
 wrong-document pointed artifact is an explicit `409`; it never causes an older artifact to become
-current. Exact historical OCR and PII reads remain artifact-id based. Directories without an
-authority map retain the legacy newest-valid read path so pre-v1 installations remain readable;
-the first new publication creates the map and makes later authority explicit.
+current. Exact historical OCR and PII reads remain artifact-id based. A directory containing JSON
+artifacts without an authority map is invalid current state and is never scanned for a fallback.
+This intentionally breaks implicit-current reads for pre-v1 installations until a new coherent run
+publishes authority; their exact historical artifacts remain addressable where supported.
+
+Job-backed publications bind each current entry to the producing job id and the job's declared
+result artifact identity. The artifact files and authority entry are made durable first, but an
+implicit reader accepts that entry only after the exact job is durably `succeeded` with matching
+document, artifact id, and artifact type. A running, failed, missing, or mismatched job leaves the
+pointed state explicitly invalid. Thus a failed job-store completion cannot accidentally make its
+files consumable. Older id-only authority maps remain readable because they were explicit atomic
+publication commits under lifecycle v1; absence of the map is not treated the same way.
 
 Deletion takes the same lifecycle lock, writes a persistent text-free tombstone below the separate
 job-state root, removes job metadata, originals, and document-owned data, then releases the lock.
 All later publishers check the tombstone under that lock and refuse publication. Worker and inline
 job finalization treat a job row removed by concurrent document deletion as a terminal discard.
 
-The authority-map replacement is the run publication commit: before it, none of that run is
-current; after it, all run-owned files are durable and exact. The job's succeeded metadata is then
-recorded with the returned artifact id. Artifacts stay immutable JSON; the authority map and
-tombstone contain ids/state only and no document text or PII.
+The authority-map replacement makes a run a current *candidate*: before it, none of that run is
+selected; after it, all run-owned files are durable and exact. Job-backed candidates become
+authoritative only when the matching succeeded job metadata is durable. Artifacts stay immutable
+JSON; the authority map, job metadata, and tombstone contain ids/state only and no document text or
+PII.
 
 ## Consequences and limitations
 
@@ -43,6 +53,6 @@ tombstone contain ids/state only and no document text or PII.
 - Corruption of the current map or pointed file is visible and fail-closed.
 - Successful deletion is terminal even for already-claimed work and across process restarts.
 - Legacy directories without an authority map cannot retroactively prove which historic run was
-  intended as current; they keep the old compatibility selector until a new run is published.
+  intended as current, so implicit reads fail closed until a new run publishes explicit authority.
 - The lifecycle lock uses POSIX `flock`, matching the Linux container runtime. Sharing the data
   roots with non-POSIX filesystems that do not preserve advisory locking is unsupported.

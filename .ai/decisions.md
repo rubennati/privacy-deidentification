@@ -233,8 +233,10 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   document lifecycle integrity v1.** New runs publish through a per-document cross-process lock and
   atomic current-authority map; OCR commits text + quality as one run; invalid pointed current state
   fails explicitly instead of falling back; and deletion persists a job-state tombstone under the
-  same lock so delayed workers can never republish document-owned data. Legacy directories remain
-  readable until their first explicit publication. No engine-level advance or dependency change.
+  same lock so delayed workers can never republish document-owned data. Job-backed authority is
+  consumable only after the exact producing job is durably succeeded; missing authority fails
+  closed rather than scanning legacy artifacts, while exact historical reads remain available.
+  No engine-level advance or dependency change.
 - [ADR-0039](../docs/adr/0039-review-result-v1-unified-entity-contract.md) — **Review Result v1 —
   unified stable entity entries.** New `PiiReviewResultEntry` unifies detected occurrences and
   manual additions behind one shape on the existing `PiiReviewResult`/`PiiReviewResultArtifact`
