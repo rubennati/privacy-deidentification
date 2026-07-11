@@ -3,6 +3,11 @@
 > If this file conflicts with the current branch or commits, trust git.
 
 - Current phase: **Text Identity Phase C — Anchor-bound PII Entity Model v1**.
+- PII result-integrity hardening is delivered on `pii-result-integrity-v1` (ADR-0037): PII refuses
+  invalid/missing raw input instead of persisting a false empty success; partial same-type overlaps
+  preserve independent coverage; worker and entity-contract reads use exact artifact identity; and
+  the frontend clears private state on document transitions and requires a coherent exact contract
+  before treating a result as current. This is a stabilization change, not a maturity-level advance.
 - Current objective: ADR-0031 Phase C is now delivered additively. OCR/Text still owns the derived
   **Text Anchor Graph v1**; PII now consumes the matching graph through
   `backend/app/services/pii_anchor_binding.py` and normalizes offset-based detections into
@@ -535,11 +540,12 @@ Document Text Package. PII now consumes `DocumentTextPackageV1` through a dedica
 and only active detection input**; canonical reading text is contextual, `structured_content` a hint
 layer, and quality/noise evidence trust context — none applied to silently suppress an entity. A
 **structurally invalid** package (unsupported version, malformed source roles, unresolvable id) is
-rejected with a controlled `422`; a package invalid **only** because raw text is empty stays the
-existing benign empty-result path; a **degraded** package with raw text still processes.
+rejected with a controlled `422`; ADR-0037 also rejects missing/empty required raw text; a
+**degraded** package with trustworthy raw text still processes.
 Deterministic overlap resolution (`pii_overlap.py`) runs after candidate validation and before
 reading-text projection: exact duplicates merge (recording recognizers + superseded ids), same-type
-overlaps/nesting keep the strongest span and drop the rest (recorded, never silent), and
+fully contained same-type candidates may be superseded while partial overlaps remain to preserve
+coverage, and
 different-type overlaps are preserved and flagged for review (`ambiguous_overlap_review_required`) —
 a specific cross-type auto-suppression precedence table is deferred. Additive optional `pii_result`
 fields carry the outcome (`PiiEntity.provenance`, `PiiContent.input_contract`,

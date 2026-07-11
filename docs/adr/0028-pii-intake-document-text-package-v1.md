@@ -62,10 +62,9 @@ Consumer rules follow [ADR-0027](0027-ocr-output-contract-v1-strategy.md) exactl
 - **valid** → PII behaves normally.
 - **degraded** (missing optional layers/lineage) → PII continues as long as raw text exists and
   records the degraded status + warning codes on the result.
-- **invalid** → a *structurally* invalid package (unsupported version, malformed source roles,
-  unresolvable document id) is rejected with a controlled `422`. A package that is invalid *only*
-  because its raw text is empty is **not** a hard error: it stays the existing benign empty-result
-  path (`flags=["empty_text"]`), preserving backward compatibility.
+- **invalid** → rejected with a controlled `422`. ADR-0037 supersedes the original empty-text
+  exception: missing/empty required raw text is a trust failure, while a legitimate empty PII
+  result means trustworthy non-empty text was analyzed and produced zero entities.
 
 ### 3. Deterministic overlap resolution (PII L12)
 
@@ -123,6 +122,5 @@ merges/drops are safe (they are the same entity) and are always recorded.
   the contract no longer ripple into PII.
 - The final entity set is deterministically de-duplicated and overlap-resolved, with an auditable
   provenance trail and per-run overlap/contract summaries on the immutable artifact.
-- Backward compatibility holds: baseline raw-text detection is byte-identical, degraded packages with
-  raw text still process, empty text still yields an empty result, and legacy artifacts (without the
-  new optional fields) stay valid.
+- Baseline raw-text detection is byte-identical and degraded packages with raw text still process.
+  ADR-0037 intentionally breaks the former empty-input success behavior.

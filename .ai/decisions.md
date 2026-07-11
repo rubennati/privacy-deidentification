@@ -223,3 +223,9 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   projection, without needing the boundary-bridging fallback added for the post-hoc mechanisms at
   all. No detection, active-PII-input, routing, schema-breaking, pseudonymization, redaction,
   export, or dependency change; `reading_text` bytes remain byte-identical (907 tests passing).
+- [ADR-0037](../docs/adr/0037-pii-result-integrity-v1.md) — **PII Result Integrity v1.** PII now
+  rejects missing/untrusted raw input, overlap resolution preserves partial same-type coverage,
+  completed OCR jobs resolve their recorded text artifact, entity contracts require and validate
+  exact PII+Text artifact identity, and discriminated frontend state clears private data on identity
+  transitions and fails closed unless one coherent contract loaded successfully. No engine level
+  advance, dependency, detection-input switch, or future anchor-first package work.
