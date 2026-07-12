@@ -2,15 +2,19 @@
 
 The anchor graph is an OCR/Text-owned identity layer derived from the OCR Output Contract v1
 ``DocumentTextPackageV1``. It creates stable, deterministic anchors over technical raw text first,
-then attaches canonical reading-text ranges through two available *post-hoc* mechanisms, preferring
-whichever is stronger: the geometry-backed post-render projection
+then attaches canonical reading-text ranges, preferring builder-emitted **construction-time
+lineage** (``reading_text_row_lineage_map`` — raw<->canonical correspondence the reading-text
+builder itself emitted while rendering; the authoritative identity source) whenever it covers a
+token. Only for spans construction declined does it fall back to the two *post-hoc* mechanisms,
+each an explicitly identified, degraded fallback: the geometry-backed post-render projection
 (``reading_text_geometry_projection.py``, full-line granularity, declines ambiguous/duplicate
 values) when it resolves a token's line unambiguously, otherwise the older post-hoc unique-token
-``reading_text_map``. **Neither mechanism is builder-emitted construction-time lineage** — both
-re-derive canonical<->raw correspondence by searching the already-completed canonical text; genuine
-construction-time lineage (the reading-text builder itself emitting correspondence while rendering)
-remains unimplemented. Layout text is attached in v1 only when it is byte-aligned with raw text; any
-other layout text remains a single-source view instead of being guessed into raw identity.
+``reading_text_map``. Both fallbacks re-derive correspondence by searching the already-completed
+canonical text and are never authoritative construction identity; the per-anchor flag
+(``canonical_row_construction``/``canonical_geometry_projection``/``canonical_map_lineage``)
+records which mechanism won, so fallback identity can never be confused with construction
+identity. Layout text is attached in v1 only when it is byte-aligned with raw text; any other
+layout text remains a single-source view instead of being guessed into raw identity.
 
 Anchor metadata is deliberately text-free. Token strings are used only transiently inside this
 builder to classify spans and detect repeated-token ambiguity; they are never returned, logged, or
@@ -474,13 +478,16 @@ def _normalized_shape(kind: DocumentTextAnchorKind, value: str) -> str:
 def _row_lineage_segments(
     row_lineage_map: ReadingTextRowLineageMap | None,
 ) -> list[ReadingTextMapSegment]:
-    """Adapt builder-emitted row lineage segments to the offset projection shape.
+    """Adapt builder-emitted construction-time lineage segments to the offset projection shape.
 
-    A segment's own ``mapping_status`` (``exact``/``normalized``/``merged``) is honestly carried
-    through as exact-vs-normalized here, matching the same convention the geometry-projection
-    adapter below uses (``ReadingTextMapSegment`` has no separate "merged" state). An ``inserted``
-    synthetic-heading segment carries no source range and is excluded here exactly like an
-    ``ambiguous`` geometry-projection segment -- it was never a raw-token candidate.
+    A segment's own ``mapping_status`` (``exact``/``normalized``/``merged``/``split``) is honestly
+    carried through as exact-vs-normalized here, matching the same convention the
+    geometry-projection adapter below uses (``ReadingTextMapSegment`` has no separate
+    "merged"/"split" state): only byte-verified ``exact`` segments keep the exact status that
+    permits sub-token arithmetic projection; every reformatted/unioned/split segment degrades to
+    ``normalized`` so a projected range is never claimed more precise than its construction. An
+    ``inserted`` synthetic-heading segment carries no source range and is excluded here exactly
+    like an ``ambiguous`` geometry-projection segment -- it was never a raw-token candidate.
     """
     if row_lineage_map is None:
         return []
@@ -537,10 +544,11 @@ def _project_canonical_range(
 ) -> tuple[_CanonicalProjection | None, str]:
     """Project a raw token to canonical, preferring stronger evidence when several are available.
 
-    Builder-emitted row lineage (real construction-time identity, but sparse -- only the
-    plain-paragraph/body path) wins when it covers this token; otherwise the geometry-backed
-    post-render projection (fuller coverage, but re-derived by searching the finished text); finally
-    the post-hoc unique-token fallback map.
+    Builder-emitted construction-time lineage (the authoritative identity source) wins when it
+    covers this token; otherwise the geometry-backed post-render projection (an explicit fallback,
+    re-derived by searching the finished text); finally the post-hoc unique-token fallback map.
+    The returned flag names the winning mechanism so degraded fallback identity stays
+    distinguishable from construction identity on every anchor.
     """
     if row_lineage_segments:
         projection = _project_raw_token(token, row_lineage_segments)

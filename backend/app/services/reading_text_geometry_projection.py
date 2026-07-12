@@ -3,10 +3,11 @@
 **Canonical Reading Text already exists, fully rendered, by the time this module runs.** It is
 called from ``ocr_service._text_content`` *after* ``build_reading_text(...)`` has already returned a
 finished string; this module never receives control from, and is never called by, the reading-text
-builder (``reading_text.py``) itself. The builder's own per-fragment source knowledge
-(``ReadingRow``/``ReadingCell``, which carry fractional page coordinates but no raw offsets) is
-still discarded before this module ever sees anything — that gap is unchanged by this module and
-remains open future work (the real ``anchor-first-text-package-v2``).
+builder (``reading_text.py``) itself. The builder now emits its own construction-time lineage
+(``ReadingTextRowLineageMap``, built from per-fragment/per-row source ranges attached at collection
+time) — that layer is the authoritative identity source, and this projection is an explicitly
+identified *fallback* consulted only for spans construction declined (fused table headers,
+layout-block ordering, overlap-sweep drops, legacy artifacts).
 
 What this module actually does: it takes the OCR L10 ``text_geometry`` line boxes (an independently
 computed, raw-line-level artifact — not something the reading-text builder consulted to decide
@@ -43,9 +44,10 @@ Safety rules:
 
 This is a stronger, more structured *post-hoc* mechanism than the pre-existing unique-token
 ``reading_text_map`` (full-line granularity, geometry-anchored raw offsets), which is why it is
-*preferred* when it can resolve a line unambiguously. It is **not** authoritative construction
-identity, and it is **not** a substitute for genuine builder-emitted construction-time lineage —
-that remains a separate, unimplemented, future step (a real ``anchor-first-text-package-v2``).
+*preferred over that fallback* when it can resolve a line unambiguously. It is **not**
+authoritative construction identity and is never preferred over the builder-emitted
+``ReadingTextRowLineageMap``; consumers flag anything resolved here as degraded, fallback mapping
+(per-anchor ``canonical_geometry_projection``).
 """
 
 from __future__ import annotations
