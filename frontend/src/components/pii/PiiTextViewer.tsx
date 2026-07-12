@@ -38,6 +38,13 @@ const ENTITY_STYLES: Record<string, string> = {
   IBAN_CODE: "bg-indigo-200 text-indigo-950",
   BIC: "bg-indigo-200 text-indigo-950",
   URL: "bg-cyan-200 text-cyan-950",
+  IP_ADDRESS: "bg-cyan-200 text-cyan-950",
+  // Austrian company/tax identifiers share one hue; the highly sensitive SVNR stands apart.
+  UID_AT: "bg-lime-200 text-lime-950",
+  FN_AT: "bg-lime-200 text-lime-950",
+  TAX_ID_AT: "bg-lime-200 text-lime-950",
+  SVNR_AT: "bg-fuchsia-200 text-fuchsia-950",
+  CREDIT_CARD: "bg-rose-200 text-rose-950",
 };
 
 // A manually added span (PII L14 / Review L10, ADR-0035) stays visually distinct from a machine
@@ -158,13 +165,34 @@ export function PiiTextViewer({
               data-entity-ids={segment.highlights.map((highlight) => highlight.entity_id).join(" ")}
               data-source-name={segment.highlight.source_name}
               data-review-state={segment.highlight.review_state}
+              // A decidable highlight is a real control: reachable and activatable by keyboard,
+              // announced with its plain-language label instead of the raw enum.
+              role={onSelectEntity ? "button" : undefined}
+              tabIndex={onSelectEntity ? 0 : undefined}
+              aria-label={
+                onSelectEntity ? plainTooltip(segment.highlight, true) : undefined
+              }
               onClick={
                 onSelectEntity
                   ? (event) =>
                       onSelectEntity(segment.highlight.primary_source_entity_id, event.currentTarget)
                   : undefined
               }
-              className={`scroll-mt-16 rounded px-0.5 ${onSelectEntity ? "cursor-pointer" : ""} ${highlightStateClasses(segment.highlight)}`}
+              onKeyDown={
+                onSelectEntity
+                  ? (event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelectEntity(segment.highlight.primary_source_entity_id, event.currentTarget);
+                      }
+                    }
+                  : undefined
+              }
+              className={`scroll-mt-16 rounded px-0.5 ${
+                onSelectEntity
+                  ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+                  : ""
+              } ${highlightStateClasses(segment.highlight)}`}
               title={
                 showEntityMeta
                   ? technicalTooltip(segment)

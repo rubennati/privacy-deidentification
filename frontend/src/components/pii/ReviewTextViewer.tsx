@@ -156,7 +156,7 @@ export function ReviewTextViewer({
       )}
       {devMode && hasMissingAnchorBinding && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
-          Anchor-Bindung fehlt fuer einige PII-Entities. Diese Entities bleiben als Raw-Range
+          Anchor-Bindung fehlt für einige PII-Entities. Diese Entities bleiben als Raw-Range
           sichtbar und werden nicht in andere Views geraten.
         </p>
       )}
@@ -168,7 +168,7 @@ export function ReviewTextViewer({
       )}
       {devMode && hasEvidenceOnlyFallback && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
-          Evidence-only Fallback ist aktiv, wenn keine verlaessliche Anchor-Identitaet vorliegt.
+          Evidence-only Fallback ist aktiv, wenn keine verlässliche Anchor-Identität vorliegt.
         </p>
       )}
 

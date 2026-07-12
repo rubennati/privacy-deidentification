@@ -3,6 +3,19 @@
 > If this file conflicts with the current branch or commits, trust git.
 
 - Current phase: **Text Identity Phase C — Anchor-bound PII Entity Model v1**.
+- User flow & review comfort v1 is implemented on `user-flow-review-comfort-v1` (frontend only, no
+  engine or API change): a successful upload navigates straight to the document and auto-starts the
+  Audit → OCR → PII analysis (one-shot via router state, never re-triggered by reload); the
+  documents list shows a per-document analysis badge (Analysiert / Analyse läuft / Nicht
+  analysiert) derived from the metadata-only jobs endpoint, with a slow poll only while something
+  runs, and a quieter delete action; the review summary bar gained ↑/↓ jump navigation through the
+  visible highlights; an in-place decision now confirms with a bottom toast carrying a one-shot
+  undo (re-submitting the previous decision); the stale-decisions notice is an amber warning
+  instead of a red error; decidable highlights are keyboard-accessible (role=button, Enter/Space,
+  plain German aria-labels) and the decision popover manages focus (focus-in, Tab cycle, focus
+  restore); plus polish: German document-status chip ("Hochgeladen"), German entity-type labels in
+  the manual-add picker, proper umlauts in UI strings, and highlight colors for AT identifier
+  types.
 - User-view review UX v1 is implemented on `user-view-review-ux-v1` (frontend only, no engine or
   API change): the user view is single-column (no decision sidebar) with a count/legend summary
   bar; decisions happen in place via a click popover on a highlight that offers exactly the two

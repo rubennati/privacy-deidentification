@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import { fetchUploadConfig } from "../api/config";
 import { uploadDocument, UploadError } from "../api/uploads";
@@ -14,6 +14,7 @@ import {
 } from "../lib/fileValidation";
 
 export default function UploadPage() {
+  const navigate = useNavigate();
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [message, setMessage] = useState("");
   const [correlationId, setCorrelationId] = useState<string | null>(null);
@@ -52,7 +53,14 @@ export default function UploadPage() {
       try {
         const accepted = await uploadDocument(file);
         setStatus("success");
-        setMessage(`„${accepted.filename}“ — Dokument wurde entgegengenommen.`);
+        setMessage(`„${accepted.filename}“ — Analyse wird gestartet …`);
+        // Straight to the document with the analysis auto-started: the upload page promises
+        // "Inhalte werden extrahiert und analysiert", so nobody should have to find and press a
+        // second button for that. Router state (not a query param) so a copied link or a reload
+        // of the detail page never re-triggers a run.
+        navigate(`/documents/${encodeURIComponent(accepted.id)}`, {
+          state: { autoAnalyze: true },
+        });
       } catch (error) {
         setStatus("error");
         if (error instanceof UploadError) {
@@ -63,7 +71,7 @@ export default function UploadPage() {
         }
       }
     },
-    [constraints],
+    [constraints, navigate],
   );
 
   return (
@@ -83,13 +91,6 @@ export default function UploadPage() {
           accept={buildAcceptAttribute(constraints.allowedExtensions)}
         />
         <StatusNotice status={status} message={message} correlationId={correlationId} />
-        {status === "success" && (
-          <p className="mt-3 text-center text-sm">
-            <Link to="/documents" className="font-medium text-accent-dark hover:underline">
-              Zu den Dokumenten →
-            </Link>
-          </p>
-        )}
         <HowItWorks />
       </div>
     </main>

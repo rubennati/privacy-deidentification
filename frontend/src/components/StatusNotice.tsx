@@ -1,4 +1,4 @@
-export type UploadStatus = "idle" | "uploading" | "success" | "error";
+export type UploadStatus = "idle" | "uploading" | "success" | "warning" | "error";
 
 interface StatusNoticeProps {
   status: UploadStatus;
@@ -9,6 +9,8 @@ interface StatusNoticeProps {
 const STYLES: Record<Exclude<UploadStatus, "idle">, string> = {
   uploading: "bg-gray-50 text-gray-700 border-gray-200",
   success: "bg-accent-soft text-accent-dark border-accent/20",
+  // For "something needs your attention, but nothing is broken" — visibly calmer than an error.
+  warning: "bg-amber-50 text-amber-800 border-amber-200",
   error: "bg-red-50 text-red-800 border-red-200",
 };
 
@@ -50,6 +52,7 @@ function Indicator({ status }: { status: Exclude<UploadStatus, "idle"> }) {
     );
   }
 
+  // Warning and error share the alert glyph; the container color carries the severity.
   const path =
     status === "success" ? "m9 12 2 2 4-4" : "M12 8v4m0 4h.01";
   return (
