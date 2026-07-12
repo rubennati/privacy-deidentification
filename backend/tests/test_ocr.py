@@ -311,7 +311,7 @@ def test_pdf_text_layer_single_line_gets_real_row_construction_lineage(
     content = response.json()["content"]
     assert content["reading_text"] == "Digital text"
     row_lineage_map = content["reading_text_row_lineage_map"]
-    assert content["reading_text_row_lineage_map_version"] == "1"
+    assert content["reading_text_row_lineage_map_version"] == "2"
     assert row_lineage_map is not None
     assert row_lineage_map["lineage_source"] == "row_construction"
     assert len(row_lineage_map["segments"]) == 1

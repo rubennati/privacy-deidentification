@@ -522,12 +522,12 @@ class ReadingTextMapSegment(BaseModel):
 # Canonical Reading Text is already fully built by the time this layer runs. It re-derives
 # canonical<->raw correspondence by projecting known raw geometry-line offsets onto the *finished*
 # canonical string via exact, boundary-respecting line matching — it does not receive lineage from
-# the reading-text builder itself (the builder's own row/cell knowledge is discarded before this
-# layer ever runs; see ``reading_text_geometry_projection.py``). It is a stronger, more structured
-# post-hoc mechanism than the pre-existing unique-token ``reading_text_map`` (full-line granularity,
-# geometry-anchored raw offsets), which is why it is *preferred* when available — but it is not
-# authoritative construction identity, and genuine builder-emitted construction-time lineage
-# (`anchor-first-text-package-v2`) remains a separate, unimplemented future step.
+# the reading-text builder itself (see ``reading_text_geometry_projection.py``). It is a stronger,
+# more structured post-hoc mechanism than the pre-existing unique-token ``reading_text_map``
+# (full-line granularity, geometry-anchored raw offsets) — but it is not authoritative construction
+# identity. Genuine builder-emitted construction-time lineage exists as
+# ``ReadingTextRowLineageMap`` below and is preferred over both post-hoc mechanisms; this
+# projection remains an explicit fallback for exactly the spans construction declines.
 #
 # A full source line whose exact text is not globally unique among the collected source lines, or
 # whose exact text does not occur exactly once (line-bounded) in the canonical text, can never be
@@ -680,34 +680,44 @@ class ReadingTextRowLineageSummary(BaseModel):
     canonical_char_count: int = Field(default=0, ge=0)
     mapped_canonical_char_count: int = Field(default=0, ge=0)
     coverage_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Additive per-status counts (map_version "2"); legacy "1" maps omit them and default to 0.
+    exact_segment_count: int = Field(default=0, ge=0)
+    normalized_segment_count: int = Field(default=0, ge=0)
+    merged_segment_count: int = Field(default=0, ge=0)
+    split_segment_count: int = Field(default=0, ge=0)
+    inserted_segment_count: int = Field(default=0, ge=0)
 
 
 class ReadingTextRowLineageMap(BaseModel):
-    """Builder-emitted, construction-time row lineage (not a post-render search).
+    """Builder-emitted, construction-time lineage (not a post-render search).
 
     Unlike :class:`ReadingTextGeometryProjectionMap` and the legacy ``reading_text_map``, a segment
     here is never derived by scanning the finished canonical string for a match: its raw range was
-    already known and attached to the contributing ``ReadingRow`` at collection time, before its
-    line was ever rendered, and its canonical range is computed purely by walking the same
-    block/line join arithmetic the text was assembled with.
+    already known and attached to the contributing ``ReadingRow``/``ReadingCell`` at collection
+    time, before its line was ever rendered, and its canonical range is computed purely by walking
+    the same block/line join arithmetic the text was assembled with. This is the authoritative
+    canonical<->raw identity layer; the geometry projection and ``reading_text_map`` are post-hoc
+    fallbacks for the spans this map does not cover.
 
-    A segment's ``mapping_status`` is one of ``"exact"`` (the rendered line is byte-identical to its
-    raw span), ``"normalized"`` (same row, but whitespace/formatting changed length — e.g. a
-    reformatted table row or a party-column line), ``"merged"`` (a wrap continuation or adjacent
+    A segment's ``mapping_status`` is one of ``"exact"`` (the rendered span is byte-identical to
+    its raw span — verified by direct comparison at construction), ``"normalized"`` (one whole
+    row, but rendering changed its bytes — e.g. a reformatted table row or whitespace collapsing),
+    ``"split"`` (map_version "2": the span was constructed from a *subset* of one row's cells — an
+    in-row label/value split, a party-column cell, a redistributed multi-column cell run — and is
+    not byte-identical to that subset's raw span), ``"merged"`` (a wrap continuation or adjacent
     label/value pairing unioned *more than one* row's own ranges), or ``"inserted"`` (a synthetic
     heading this builder itself inserted — e.g. ``ANGEBOT``/``LEISTUNGEN``/``SUMMEN`` — carrying no
-    source range because none exists). There is still no ``ambiguous`` state here: an uncertain or
-    reordering rendering path this step cannot attribute simply contributes no segment (a canonical
-    gap) rather than a weaker claim.
+    source range because none exists). There is still no ``ambiguous`` state here: a rendering
+    path that cannot attribute without guessing simply contributes no segment (a canonical gap)
+    rather than a weaker claim.
 
-    Coverage remains **partial**, unlike the geometry projection's full-coverage model: rendering
-    paths that redistribute or reformat cells beyond what this step can safely attribute (e.g.
-    multi-column prose reconstruction, in-row label/value splitting, fused table headers) still
-    contribute no segment for those spans, and downstream consumers should keep falling back to
-    :class:`ReadingTextGeometryProjectionMap`/``reading_text_map`` for them.
+    Coverage may still be partial: fused table headers, layout-block ordering, spans dropped by
+    the document-level overlap sweep, and margin-filtered/whole-document-fallback renderings
+    contribute no segment, and downstream consumers should keep falling back to
+    :class:`ReadingTextGeometryProjectionMap`/``reading_text_map`` for exactly those spans.
     """
 
-    map_version: Literal["1"] = "1"
+    map_version: Literal["1", "2"] = "2"
     lineage_source: Literal["row_construction"] = "row_construction"
     segments: list[CanonicalTextSegmentV1] = Field(default_factory=list)
     summary: ReadingTextRowLineageSummary
@@ -717,9 +727,15 @@ class ReadingTextRowLineageMap(BaseModel):
         previous_canonical_end = 0
         raw_ranges: list[tuple[int, int]] = []
         for segment in self.segments:
-            if segment.mapping_status not in ("exact", "normalized", "merged", "inserted"):
+            if segment.mapping_status not in (
+                "exact",
+                "normalized",
+                "merged",
+                "split",
+                "inserted",
+            ):
                 raise ValueError(
-                    "row lineage segments must be exact, normalized, merged, or inserted"
+                    "row lineage segments must be exact, normalized, merged, split, or inserted"
                 )
             if segment.mapping_status == "inserted":
                 if segment.source_range is not None:
@@ -746,13 +762,14 @@ class DocumentTextPackageLineageSummary(BaseModel):
     """Compact, text-free summary of which mechanism connects raw↔canonical for a package.
 
     ``lineage_source`` names the preferred available mechanism, in preference order:
-    ``row_construction`` (sparse, builder-emitted, construction-time row lineage — real, but only
-    covers the plain-paragraph/body rendering path), ``geometry_projection`` (a geometry-backed,
-    post-render exact-line projection covering more of the document but not construction-time),
-    ``fallback_text_match`` (the post-hoc unique-token ``reading_text_map`` only), or
-    ``unavailable`` (no canonical text / no lineage at all). ``row_construction`` being preferred
-    does not mean it covers the whole document — a consumer that needs full coverage should still
-    consult ``geometry_projection``/``reading_text_map`` for the spans it leaves unattributed.
+    ``row_construction`` (builder-emitted, construction-time lineage — the authoritative identity
+    source), ``geometry_projection`` (a geometry-backed, post-render exact-line projection — an
+    explicit post-hoc fallback, not construction identity), ``fallback_text_match`` (the post-hoc
+    unique-token ``reading_text_map`` only — the weakest fallback), or ``unavailable`` (no
+    canonical text / no lineage at all). ``row_construction`` being preferred does not guarantee it
+    covers every span — a consumer that needs full coverage should still consult
+    ``geometry_projection``/``reading_text_map`` for exactly the spans it leaves unattributed, and
+    anything resolved that way is degraded, fallback identity, per-anchor flagged as such.
     """
 
     canonical_available: bool = False
@@ -1004,14 +1021,16 @@ class TextContent(BaseModel):
     # Optional/defaulted so artifacts written before this layer remain valid.
     reading_text_geometry_projection_map_version: Literal["1"] | None = None
     reading_text_geometry_projection_map: ReadingTextGeometryProjectionMap | None = None
-    # Additive, sparse, builder-emitted construction-time row lineage (OCR/Text stabilization step
-    # after L15). Unlike the geometry projection above, segments here are never derived by searching
-    # the finished ``reading_text`` string: each one traces back to a raw offset range already known
-    # on the contributing row before its line was rendered. It only covers the plain-paragraph/body
-    # rendering path — see ``ReadingTextRowLineageMap`` — so it is preferred but never a substitute
-    # for the geometry projection/``reading_text_map`` fallbacks on spans it leaves unattributed.
+    # Additive, builder-emitted construction-time lineage. Unlike the geometry projection above,
+    # segments here are never derived by searching the finished ``reading_text`` string: each one
+    # traces back to a raw offset range already known on the contributing row/cell before its line
+    # was rendered. Version "1" covered row granularity on a subset of rendering paths; version "2"
+    # adds cell-level identity (in-row splits, party-column cells, multi-column cell runs), the
+    # byte-verified ``split`` status, and raw-order fallback line coverage. This is the preferred
+    # canonical<->raw identity source; the geometry projection/``reading_text_map`` remain explicit
+    # post-hoc fallbacks for exactly the spans it leaves unattributed.
     # Optional/defaulted so artifacts written before this layer remain valid.
-    reading_text_row_lineage_map_version: Literal["1"] | None = None
+    reading_text_row_lineage_map_version: Literal["1", "2"] | None = None
     reading_text_row_lineage_map: ReadingTextRowLineageMap | None = None
     # Additive, optional human-readable layout reconstruction (OCR L9). It never feeds PII and is
     # not the raw offset text: ``text`` above stays the offset-stable coordinate source. ``None``
@@ -1160,8 +1179,14 @@ class TextContent(BaseModel):
     @model_validator(mode="after")
     def _validate_reading_text_row_lineage_map(self) -> TextContent:
         row_lineage_map = self.reading_text_row_lineage_map
-        if (row_lineage_map is not None) != (self.reading_text_row_lineage_map_version == "1"):
+        if (row_lineage_map is not None) != (
+            self.reading_text_row_lineage_map_version in ("1", "2")
+        ):
             raise ValueError("reading text row lineage map and version must be present together")
+        if row_lineage_map is not None and (
+            row_lineage_map.map_version != self.reading_text_row_lineage_map_version
+        ):
+            raise ValueError("reading text row lineage map version fields must agree")
         if row_lineage_map is None:
             return self
         if self.reading_text is None:

@@ -296,12 +296,13 @@ def _build_lineage_summary(
 ) -> DocumentTextPackageLineageSummary:
     """Name the preferred raw↔canonical lineage mechanism available for this package.
 
-    ``row_construction`` (sparse, builder-emitted, construction-time row lineage — real, but only
-    covering the plain-paragraph/body rendering path) is preferred over ``geometry_projection`` (a
-    geometry-backed, post-render exact-line projection with fuller coverage but not construction
-    identity), which is in turn preferred over the post-hoc unique-token ``reading_text_map``
-    (``fallback_text_match``); ``unavailable`` when there is no canonical text or no lineage at all.
-    Preferring ``row_construction`` never means it alone covers the whole document. Text-free:
+    ``row_construction`` (builder-emitted, construction-time lineage — the authoritative identity
+    source) is preferred over ``geometry_projection`` (a geometry-backed, post-render exact-line
+    projection — an explicit post-hoc fallback, not construction identity), which is in turn
+    preferred over the post-hoc unique-token ``reading_text_map`` (``fallback_text_match``);
+    ``unavailable`` when there is no canonical text or no lineage at all. Preferring
+    ``row_construction`` never guarantees it alone covers every span; anything a consumer resolves
+    through the fallbacks is degraded mapping and stays per-anchor flagged as such. Text-free:
     booleans, counts, and coverage ratios only.
     """
     canonical_available = _canonical_source_available(text_sources)

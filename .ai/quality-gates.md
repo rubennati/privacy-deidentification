@@ -118,16 +118,26 @@ Gates for the implemented **Text Anchor Graph v1** and any future PR that extend
   `backend/tests/test_anchor_bound_pii_e2e_conformance.py`.
 - **Technical raw text stays the offset authority and is never mutated**, and the active-PII-input
   `text_lineage_map` separation gate is not bypassed by anchor work.
-- **Row construction lineage is real, builder-emitted, construction-time lineage, but only for the
-  plain-paragraph/body rendering path — never describe it as full-document coverage.**
-  `reading_text.py`'s `ReadingRow` carries an optional `source_range` attached once at collection
-  time (before any rendering), and only `_join_continuations_with_flags` threads it through as text
-  is assembled; canonical offsets are computed by walking the same block/line join arithmetic the
-  text was built with, never by searching the finished string (`ReadingTextRowLineageMap`,
-  `lineage_source: row_construction`). Party columns, tables, multi-column reconstruction, metadata,
-  and post-table rendering redistribute/reformat cells and always emit no lineage for this
-  mechanism — that is a scope boundary, not a bug, and those spans still rely on the mechanisms
-  below. See [ADR-0032](../docs/adr/0032-reading-text-row-construction-lineage-v1.md).
+- **Construction-time lineage is builder-emitted and the authoritative canonical↔raw identity
+  source.** `reading_text.py`'s `ReadingRow`/`ReadingCell` carry optional `source_range`s attached
+  once at collection time (before any rendering) — for pypdf pages from the extraction process
+  itself (cursor accumulation over the extraction visitor's own chunks, **byte-verified** against
+  the stored raw page text, discarded entirely on any mismatch; no text search, no uniqueness
+  requirement, so repeated values keep distinct identities), for OCR/geometry pages from persisted
+  L10 line offsets. Rendering threads that identity through body paragraphs, party columns,
+  tables, metadata, in-row label/value splits, multi-column cell runs, post-table rendering, and
+  the raw-order fallback; canonical offsets are computed by walking the same block/line join
+  arithmetic the text was built with, never by searching the finished string
+  (`ReadingTextRowLineageMap` v2, `lineage_source: row_construction`). Segment statuses are
+  **byte-verified**: `exact` means byte-identical to the claimed raw span; `normalized` (whole
+  row), `split` (subset of a row's cells), `merged` (multi-row union), and `inserted` (synthetic
+  headings from the closed code-owned vocabulary) stay honest, and a document-level overlap sweep
+  drops colliding raw-range claims symmetrically (conflicted merge envelopes first, then both
+  sides of any precise-vs-precise conflict) rather than letting an envelope lie. Fused table
+  headers and layout-block ordering still decline — an explicit scope boundary served by the
+  fallbacks below. See [ADR-0032](../docs/adr/0032-reading-text-row-construction-lineage-v1.md),
+  [ADR-0036](../docs/adr/0036-reading-text-row-construction-lineage-v2.md), and
+  [ADR-0040](../docs/adr/0040-construction-time-canonical-lineage-v3.md).
 - **The geometry-backed reading projection is a preferred *post-hoc* mechanism, not construction-time
   lineage — never describe it as builder-emitted.** `reading_text_geometry_projection.py` runs
   *after* Canonical Reading Text already exists and re-derives canonical↔raw correspondence by
@@ -149,10 +159,15 @@ Gates for the implemented **Text Anchor Graph v1** and any future PR that extend
   same (declined) outcome under reversed processing order. A repeated *sub-token* inside two
   otherwise-unique, distinct multi-token values must still keep its canonical range (tested both
   ways). This mechanism changes no reading-text output bytes and no PII detection.
-- **Genuine construction-time lineage remains open.** No implemented mechanism has the reading-text
-  builder itself emit canonical↔raw correspondence while rendering; a real `anchor-first-text-package-v2`
-  (threading raw offsets through `reading_text.py`'s own `ReadingRow`/`ReadingCell` path) is future
-  work, not delivered.
+- **Post-hoc mechanisms are fallback-only and must stay unconfusable with construction identity.**
+  The anchor graph and package prefer `row_construction` per token; anything resolved through
+  `geometry_projection`/`fallback_text_match` is degraded fallback identity, per-anchor flagged
+  (`canonical_row_construction` / `canonical_geometry_projection` / `canonical_map_lineage`), and a
+  change must never blend the mechanisms or upgrade a fallback-resolved range into construction
+  precision (only byte-verified `exact` construction segments may feed sub-token arithmetic
+  projection). Legacy artifacts without a row-lineage map keep working through the explicit
+  fallbacks, and a regression test must keep construction and fallback flags distinguishable on
+  one document.
 - **Pseudonymization renders from decisions; reconstruction maps placeholders** — no blind string
   replacement, no fuzzy matching of private values; the reconstruction map (the only store of
   originals) is access-gated, audited, and deletable with the document.
