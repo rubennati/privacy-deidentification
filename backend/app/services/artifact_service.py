@@ -18,7 +18,9 @@ from app.schemas import (
 )
 from app.services.artifact_lifecycle import (
     InvalidCurrentArtifactError,
+    UncommittedArtifactError,
     current_artifact_id,
+    has_unique_succeeded_job,
     publish_artifact_files,
 )
 
@@ -144,6 +146,18 @@ def get_text_artifact(
     if not path.is_file():
         return None
     return _read_text_artifact(path, document_id)
+
+
+def get_committed_text_artifact(
+    settings: Settings, document_id: str, artifact_id: str
+) -> TextArtifact | None:
+    """Return exact OCR history only when one durable successful job proves its commit."""
+    artifact = get_text_artifact(settings, document_id, artifact_id)
+    if artifact is None:
+        return None
+    if not has_unique_succeeded_job(settings, document_id, artifact_id, artifact.artifact_type):
+        raise UncommittedArtifactError(artifact.artifact_type)
+    return artifact
 
 
 def get_latest_quality_report_artifact(

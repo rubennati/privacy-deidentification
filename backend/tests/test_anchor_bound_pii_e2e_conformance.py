@@ -24,6 +24,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+from tests.artifact_helpers import save_pii_artifact, save_text_artifact
 
 from app.config import Settings
 from app.schemas import (
@@ -38,7 +39,7 @@ from app.schemas import (
     TextLineGeometry,
     TextPageResult,
 )
-from app.services.artifact_service import get_text_artifact, save_pii_artifact, save_text_artifact
+from app.services.artifact_service import get_text_artifact
 from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.reading_text import ReadingCell, ReadingRow, build_reading_text

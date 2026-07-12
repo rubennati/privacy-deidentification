@@ -32,8 +32,18 @@ result artifact identity. The artifact files and authority entry are made durabl
 implicit reader accepts that entry only after the exact job is durably `succeeded` with matching
 document, artifact id, and artifact type. A running, failed, missing, or mismatched job leaves the
 pointed state explicitly invalid. Thus a failed job-store completion cannot accidentally make its
-files consumable. Older id-only authority maps remain readable because they were explicit atomic
-publication commits under lifecycle v1; absence of the map is not treated the same way.
+files consumable. Older id-only authority is migrated by proof, not trust. A `text_result` or
+`pii_result` entry is current only when exactly one durable succeeded job claims the same document,
+artifact id, and artifact type. An id-only `quality_report` fails closed because the OCR job records
+its paired text artifact rather than the report id, so that report's producing success cannot be
+proven safely from the old entry alone. Audit and review-result snapshots have no separate
+job-success transition; their atomic station publication remains their commit boundary. Absence of
+the map is never treated as authority.
+
+Public exact OCR history uses the same unique succeeded-job proof. File existence and a known id are
+not commitment evidence: a failed or uncommitted candidate returns an explicit `409`. Low-level
+internal artifact loaders remain byte-identity readers for lineage validation; callers that promise
+successfully committed history must use the committed-exact boundary.
 
 Deletion takes the same lifecycle lock, writes a persistent text-free tombstone below the separate
 job-state root, removes job metadata, originals, and document-owned data, then releases the lock.

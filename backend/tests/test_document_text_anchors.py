@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from pypdf import PdfWriter
+from tests.artifact_helpers import save_text_artifact
 
 from app.config import Settings
 from app.schemas import (
@@ -31,7 +32,6 @@ from app.schemas import (
     TextArtifact,
     TextContent,
 )
-from app.services.artifact_service import save_text_artifact
 from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.reading_text_projection import build_reading_text_map

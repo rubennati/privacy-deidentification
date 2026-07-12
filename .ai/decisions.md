@@ -235,8 +235,10 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   fails explicitly instead of falling back; and deletion persists a job-state tombstone under the
   same lock so delayed workers can never republish document-owned data. Job-backed authority is
   consumable only after the exact producing job is durably succeeded; missing authority fails
-  closed rather than scanning legacy artifacts, while exact historical reads remain available.
-  No engine-level advance or dependency change.
+  closed rather than scanning legacy artifacts. ID-only OCR/PII authority and public exact OCR
+  history require one matching durable succeeded job; ambiguous/unproven entries fail closed.
+  Jobless Audit/Review snapshots retain atomic publication as their commit boundary. No engine-level
+  advance or dependency change.
 - [ADR-0039](../docs/adr/0039-review-result-v1-unified-entity-contract.md) — **Review Result v1 —
   unified stable entity entries.** New `PiiReviewResultEntry` unifies detected occurrences and
   manual additions behind one shape on the existing `PiiReviewResult`/`PiiReviewResultArtifact`

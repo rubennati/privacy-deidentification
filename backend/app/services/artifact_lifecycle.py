@@ -15,6 +15,7 @@ from app.services.job_models import JobStatus
 from app.services.job_store import get_job_store
 
 _CURRENT_FILE = "current-artifacts"
+_LEGACY_JOB_BACKED_TYPES = frozenset({"text_result", "pii_result"})
 
 
 class DocumentDeletedError(ApiError):
@@ -29,6 +30,16 @@ class InvalidCurrentArtifactError(ApiError):
 
     def __init__(self, artifact_type: str) -> None:
         super().__init__(f"Current {artifact_type} artifact is invalid or incompatible.", 409)
+
+
+class UncommittedArtifactError(ApiError):
+    """Raised when exact access cannot prove a successful producing run."""
+
+    def __init__(self, artifact_type: str) -> None:
+        super().__init__(
+            f"Artifact {artifact_type} is not a successfully committed processing result.",
+            409,
+        )
 
 
 def current_artifact_id(settings: Settings, document_id: str, artifact_type: str) -> str | None:
@@ -49,9 +60,9 @@ def current_artifact_id(settings: Settings, document_id: str, artifact_type: str
     if artifact_id is None:
         return None
     if isinstance(artifact_id, str):
-        # Authority maps emitted by lifecycle v1 predate job binding but were already explicit,
-        # atomic publication commits. They remain readable; absent maps never trigger scanning.
-        return artifact_id
+        return _resolve_legacy_authority(
+            settings, document_id, artifact_id, artifact_type
+        )
     if not isinstance(artifact_id, dict):
         raise InvalidCurrentArtifactError(artifact_type)
     published_id = artifact_id.get("artifact_id")
@@ -75,6 +86,32 @@ def current_artifact_id(settings: Settings, document_id: str, artifact_type: str
     ):
         raise InvalidCurrentArtifactError(artifact_type)
     return published_id
+
+
+def has_unique_succeeded_job(
+    settings: Settings, document_id: str, artifact_id: str, artifact_type: str
+) -> bool:
+    """Return whether exactly one durable success proves this artifact's producing run."""
+    jobs = get_job_store(settings).list_succeeded_jobs_for_artifact(
+        document_id, artifact_id, artifact_type
+    )
+    return len(jobs) == 1
+
+
+def _resolve_legacy_authority(
+    settings: Settings, document_id: str, artifact_id: str, artifact_type: str
+) -> str:
+    if artifact_type in _LEGACY_JOB_BACKED_TYPES and not has_unique_succeeded_job(
+        settings, document_id, artifact_id, artifact_type
+    ):
+        raise InvalidCurrentArtifactError(artifact_type)
+    if artifact_type == "quality_report":
+        # Legacy OCR quality entries named only their own id, while the OCR job records the
+        # text_result id. The authority map alone cannot prove their producing job safely.
+        raise InvalidCurrentArtifactError(artifact_type)
+    # Audit and review-result stations have no separate job-success transition; their atomic
+    # ID-only publication remains their commit boundary.
+    return artifact_id
 
 
 def publish_artifact_files(
