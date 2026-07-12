@@ -15,7 +15,12 @@
   plain German aria-labels) and the decision popover manages focus (focus-in, Tab cycle, focus
   restore); plus polish: German document-status chip ("Hochgeladen"), German entity-type labels in
   the manual-add picker, proper umlauts in UI strings, and highlight colors for AT identifier
-  types.
+  types. The same branch also unifies the app shell: one shared layout (gradient background,
+  header with a "Privacy Pilot" placeholder wordmark, global footer on every page) instead of
+  per-page main/background wrappers; the documents list and upload page moved their headers out of
+  the cards (list rows sit directly on the page, with an upload action in the list header); and
+  the list badge treats a pending/running job with no progress for 15 minutes as abandoned
+  (display-only mitigation for the known Phase-3 stale-running gap; real reclaim stays Phase 4).
 - User-view review UX v1 is implemented on `user-view-review-ux-v1` (frontend only, no engine or
   API change): the user view is single-column (no decision sidebar) with a count/legend summary
   bar; decisions happen in place via a click popover on a highlight that offers exactly the two

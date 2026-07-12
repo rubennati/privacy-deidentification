@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { deleteDocument, DocumentsApiError, fetchDocuments } from "../api/documents";
 import type { DocumentSummary } from "../api/documents";
@@ -95,44 +96,50 @@ export default function DocumentsPage() {
   );
 
   return (
-    <main className="flex min-h-screen justify-center bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] p-4 py-12 sm:py-16">
-      <div className="h-fit w-full max-w-2xl rounded-2xl border border-card-border bg-card p-8 shadow-[0_2px_12px_rgba(31,79,67,0.05)] sm:p-10">
-        <header className="mb-6">
-          <h1 className="text-xl font-semibold text-ink">Dokumente</h1>
+    <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-12">
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div className="max-w-md">
+          <h1 className="text-2xl font-semibold text-ink">Dokumente</h1>
           <p className="mt-2 text-sm text-muted">
             Hier sehen Sie die Dateien, die für den nächsten Verarbeitungsschritt bereitstehen.
           </p>
-        </header>
+        </div>
+        <Link
+          to="/upload"
+          className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-dark focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+        >
+          Dokument hochladen
+        </Link>
+      </header>
 
-        <StatusNotice
-          status={notice.status}
-          message={notice.message}
-          correlationId={notice.correlationId}
-        />
+      <StatusNotice
+        status={notice.status}
+        message={notice.message}
+        correlationId={notice.correlationId}
+      />
 
-        {loading && documents.length === 0 && (
-          <p className="mt-6 text-sm text-muted">Dokumente werden geladen …</p>
-        )}
+      {loading && documents.length === 0 && (
+        <p className="mt-6 text-sm text-muted">Dokumente werden geladen …</p>
+      )}
 
-        {!loading && documents.length === 0 && <EmptyState />}
+      {!loading && documents.length === 0 && <EmptyState />}
 
-        {documents.length > 0 && (
-          <ul className="mt-6 flex flex-col gap-3">
-            {documents.map((document) => (
-              <DocumentCard
-                key={document.id}
-                id={document.id}
-                filename={document.filename}
-                size={document.size}
-                uploadedAt={document.uploaded_at}
-                analysis={analysisById[document.id]}
-                onDelete={(id) => void handleDelete(id)}
-                deleting={pendingDeleteId === document.id}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
-    </main>
+      {documents.length > 0 && (
+        <ul className="mt-6 flex flex-col gap-3">
+          {documents.map((document) => (
+            <DocumentCard
+              key={document.id}
+              id={document.id}
+              filename={document.filename}
+              size={document.size}
+              uploadedAt={document.uploaded_at}
+              analysis={analysisById[document.id]}
+              onDelete={(id) => void handleDelete(id)}
+              deleting={pendingDeleteId === document.id}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
