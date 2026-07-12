@@ -32,6 +32,9 @@ interface PiiDecisionPopoverProps {
   onClose: () => void;
   /** Called with the freshly-fetched review result after a decision is persisted. */
   onReviewChanged: (review: PiiReviewResult) => void;
+  /** Called once a decision was persisted, with the target as it was *before* the change — enough
+   *  for the caller to offer an undo (re-submitting `target.currentDecision`). */
+  onDecided?: (target: PiiDecisionTarget, decision: PiiReviewDecisionValue) => void;
 }
 
 const POPOVER_WIDTH = 288;
@@ -54,10 +57,44 @@ export function PiiDecisionPopover({
   anchorRect,
   onClose,
   onReviewChanged,
+  onDecided,
 }: PiiDecisionPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Keyboard support: focus moves into the dialog on open (first decision button), Tab cycles
+  // inside it, and closing hands focus back to the highlight that opened it (if still there).
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const buttons = popoverRef.current?.querySelectorAll("button");
+    const firstDecision = buttons && buttons.length > 1 ? buttons[1] : buttons?.[0];
+    firstDecision?.focus();
+    return () => {
+      if (opener && opener.isConnected) {
+        opener.focus();
+      }
+    };
+  }, []);
+
+  function onDialogKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab" || !popoverRef.current) {
+      return;
+    }
+    const buttons = [...popoverRef.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+    if (buttons.length === 0) {
+      return;
+    }
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   // Close on Escape, on any click outside the popover, and on scroll (the fixed-position anchor
   // would otherwise drift away from its highlight).
@@ -105,6 +142,7 @@ export function PiiDecisionPopover({
       if (updated) {
         onReviewChanged(updated);
       }
+      onDecided?.(target, decision);
       onClose();
     } catch {
       setError("Entscheidung konnte nicht gespeichert werden.");
@@ -126,7 +164,9 @@ export function PiiDecisionPopover({
     <div
       ref={popoverRef}
       role="dialog"
+      aria-modal="true"
       aria-label={`Entscheidung für ${entityTypeLabel(target.entityType)}`}
+      onKeyDown={onDialogKeyDown}
       data-testid="pii-decision-popover"
       className="fixed z-50 rounded-xl border border-card-border bg-card p-3 shadow-[0_8px_30px_rgba(17,24,39,0.16)]"
       style={{

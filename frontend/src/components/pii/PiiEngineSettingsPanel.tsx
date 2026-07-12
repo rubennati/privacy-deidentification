@@ -47,7 +47,7 @@ export function PiiEngineSettingsPanel({
             Dev Engine Settings
           </h3>
           <p className="mt-1 text-xs text-muted">
-            Nur fuer den naechsten PII-Lauf. Backend-Defaults bleiben unveraendert.
+            Nur für den nächsten PII-Lauf. Backend-Defaults bleiben unverändert.
           </p>
           <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-muted">
             PII-Profil

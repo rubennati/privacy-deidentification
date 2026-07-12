@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { fetchAppConfig, type AppConfig } from "../api/config";
 import { DocumentsApiError, fetchDocument, type DocumentSummary } from "../api/documents";
@@ -28,6 +28,9 @@ import {
 } from "../api/piiFeedback";
 import {
   fetchPiiReview,
+  reviewDecisionLabel,
+  submitPiiReviewDecision,
+  type PiiReviewDecisionValue,
   type PiiReviewResult,
 } from "../api/piiReview";
 import {
@@ -53,6 +56,7 @@ import {
   type StationStatus,
 } from "../components/workstations/StationPanel";
 import { StatusNotice } from "../components/StatusNotice";
+import { Toast } from "../components/Toast";
 import { DocumentAnalysisPanel } from "../components/DocumentAnalysisPanel";
 import { ViewModeToggle, type ViewMode } from "../components/ViewModeToggle";
 import {
@@ -62,7 +66,8 @@ import {
 } from "../lib/documentAnalysis";
 import { toStationError, type StationName } from "../lib/stationErrors";
 import { buildRuntimeNotice, buildStationRuntimeNotice } from "../lib/runtimeNotice";
-import { buildAnchorBoundPiiHighlights } from "../lib/piiHighlights";
+import { buildAnchorBoundPiiHighlights, buildManualAdditionHighlights } from "../lib/piiHighlights";
+import { scrollAndFlash } from "../lib/scrollAndFlash";
 import { formatBytes, formatTimestamp } from "../lib/format";
 
 interface UiError {
@@ -75,10 +80,12 @@ interface UiError {
 const RERUN_HINT =
   "Ein erneuter Lauf erzeugt ein neues Ergebnis. Vorherige Ergebnisse bleiben als Artefakte erhalten.";
 const DEV_PII_HINT =
-  "Ein neuer Lauf erzeugt ein neues Ergebnis. Ein gewaehltes Dev-Profil gilt nur fuer diesen Lauf.";
+  "Ein neuer Lauf erzeugt ein neues Ergebnis. Ein gewähltes Dev-Profil gilt nur für diesen Lauf.";
 
 export default function DocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [document, setDocument] = useState<DocumentSummary | null>(null);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [audit, setAudit] = useState<AuditArtifact | null>(null);
@@ -98,6 +105,10 @@ export default function DocumentDetailPage() {
     entityId: string;
     rect: { top: number; bottom: number; left: number; width: number };
   } | null>(null);
+  // One quiet confirmation after an in-place decision, with a one-shot undo. Never more than one.
+  const [toast, setToast] = useState<{ message: string; undo?: () => Promise<void> } | null>(null);
+  // Position of the ↑/↓ jump navigation through the currently visible highlights; -1 = not started.
+  const navPosition = useRef(-1);
   const [reviewTextMode, setReviewTextMode] = useState<ReviewTextMode>("reading");
   const [selectedTextRange, setSelectedTextRange] = useState<{
     start: number;
@@ -145,6 +156,8 @@ export default function DocumentDetailPage() {
     setPii(null);
     setReviewResult(null);
     setDecisionAnchor(null);
+    setToast(null);
+    navPosition.current = -1;
     setPiiEntityContractState({ status: "idle" });
     setLoading(true);
     setReviewTextMode("reading");
@@ -312,6 +325,66 @@ export default function DocumentDetailPage() {
     }
   }, [documentId, trackedOcrJob, noLocalOcrRunInFlight]);
 
+  // Auto-dismiss the decision toast after a few seconds; closing keeps the applied decision.
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+    const timer = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  // The user-view analysis action: run the existing Audit → OCR → PII stations in order via the
+  // shared orchestration, applying each returned artifact as it arrives so a later failure keeps
+  // the earlier results. Backend lineage validation stays authoritative; no IDs are constructed.
+  const runUserAnalysis = async () => {
+    if (!documentId || isAnalysisRunning(analysisStep)) {
+      return;
+    }
+    setAnalysisError(null);
+    // Tracks the station currently in flight so a failure maps to a safe, station-specific message.
+    let activeStation: StationName = "audit";
+    try {
+      await runDocumentAnalysis(documentId, {
+        onStep: (step) => {
+          setAnalysisStep(step);
+          if (step === "audit" || step === "ocr" || step === "pii") {
+            activeStation = step;
+          }
+        },
+        onAudit: setAudit,
+        onText: (result) => {
+          setText(result);
+          setReviewTextMode("reading");
+        },
+        onPii: setPii,
+      });
+    } catch (error) {
+      setAnalysisStep("idle");
+      setAnalysisError(toStationError(error, activeStation));
+    }
+  };
+
+  // Auto-start the analysis when arriving fresh from the upload page (router state, set exactly
+  // there). The state is cleared via replace before the run starts, so a reload, back/forward
+  // revisit, or copied URL never re-triggers an analysis; the ref guards the effect re-running
+  // while its own state updates are still in flight.
+  const autoAnalyzeRequested = Boolean(
+    (location.state as { autoAnalyze?: boolean } | null)?.autoAnalyze,
+  );
+  const autoAnalyzeTriggered = useRef(false);
+  useEffect(() => {
+    if (autoAnalyzeTriggered.current || !autoAnalyzeRequested || loading || !document) {
+      return;
+    }
+    autoAnalyzeTriggered.current = true;
+    navigate(location.pathname, { replace: true, state: null });
+    void runUserAnalysis();
+    // runUserAnalysis is intentionally not a dependency: it is recreated per render, and the ref
+    // above already guarantees a single trigger per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAnalyzeRequested, loading, document, navigate, location.pathname]);
+
   if (loading) {
     return (
       <main className="min-h-screen bg-page px-4 py-12">
@@ -360,6 +433,30 @@ export default function DocumentDetailPage() {
       ? piiEntityContractState.contract
       : null;
   const highlightModel = buildAnchorBoundPiiHighlights(currentPiiEntityContract);
+  // Ordered ↑/↓ jump targets: exactly the marks visible in the active text view, by position.
+  const manualHighlightViews = buildManualAdditionHighlights(reviewResult?.manual_additions ?? []);
+  const visibleHighlights =
+    reviewTextMode === "reading" && text?.content.reading_text != null
+      ? [...highlightModel.byView.canonical_reading_text, ...manualHighlightViews.canonical]
+      : [...highlightModel.byView.technical_raw_text, ...manualHighlightViews.raw];
+  const highlightNavIds = [
+    ...new Set(
+      [...visibleHighlights]
+        .sort((left, right) => left.start - right.start)
+        .map((highlight) => highlight.primary_source_entity_id),
+    ),
+  ];
+  const navigateHighlights = (direction: "prev" | "next") => {
+    const length = highlightNavIds.length;
+    if (length === 0) {
+      return;
+    }
+    navPosition.current =
+      navPosition.current === -1 && direction === "prev"
+        ? length - 1
+        : (navPosition.current + (direction === "next" ? 1 : -1) + length) % length;
+    scrollAndFlash(`pii-mark-${highlightNavIds[navPosition.current]}`);
+  };
   // Hide the recovered-job banner once a succeeded job's result has been applied (the loaded
   // content below speaks for itself); keep showing a failed/canceled job so the user always has a
   // controlled explanation, since that is the only user-view surface for a recovered failure.
@@ -441,6 +538,31 @@ export default function DocumentDetailPage() {
       currentDecision: group.review_decision ?? "pseudonymize",
     };
   })();
+
+  // After an in-place decision: confirm quietly and offer a one-shot undo that re-submits the
+  // decision that was in effect before (captured on the target at popover-open time).
+  const handleDecided = (target: PiiDecisionTarget, decision: PiiReviewDecisionValue) => {
+    const previousDecision = target.currentDecision;
+    setToast({
+      message: `Gespeichert: ${reviewDecisionLabel(decision)}`,
+      undo: async () => {
+        try {
+          await submitPiiReviewDecision(documentId, {
+            target_type: target.scope,
+            target_id: target.targetId,
+            decision: previousDecision,
+          });
+          const review = await fetchPiiReview(documentId);
+          if (review) {
+            await refreshPiiReviewAndContract(review);
+          }
+          setToast({ message: "Entscheidung wurde rückgängig gemacht." });
+        } catch {
+          setToast({ message: "Rückgängig machen ist fehlgeschlagen." });
+        }
+      },
+    });
+  };
   const piiRunRequest: PiiRunRequest | undefined =
     devPiiSettingsEnabled && selectedPiiProfile !== ""
       ? { pii_profile: selectedPiiProfile }
@@ -462,37 +584,6 @@ export default function DocumentDetailPage() {
       }));
     } finally {
       setPending((current) => ({ ...current, [station]: false }));
-    }
-  };
-
-  // The user-view analysis action: run the existing Audit → OCR → PII stations in order via the
-  // shared orchestration, applying each returned artifact as it arrives so a later failure keeps
-  // the earlier results. Backend lineage validation stays authoritative; no IDs are constructed.
-  const runUserAnalysis = async () => {
-    if (!documentId || isAnalysisRunning(analysisStep)) {
-      return;
-    }
-    setAnalysisError(null);
-    // Tracks the station currently in flight so a failure maps to a safe, station-specific message.
-    let activeStation: StationName = "audit";
-    try {
-      await runDocumentAnalysis(documentId, {
-        onStep: (step) => {
-          setAnalysisStep(step);
-          if (step === "audit" || step === "ocr" || step === "pii") {
-            activeStation = step;
-          }
-        },
-        onAudit: setAudit,
-        onText: (result) => {
-          setText(result);
-          setReviewTextMode("reading");
-        },
-        onPii: setPii,
-      });
-    } catch (error) {
-      setAnalysisStep("idle");
-      setAnalysisError(toStationError(error, activeStation));
     }
   };
 
@@ -525,7 +616,7 @@ export default function DocumentDetailPage() {
               </p>
             </div>
             <span className="w-fit rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent-dark">
-              {document.status}
+              {documentStatusLabel(document.status)}
             </span>
           </div>
           {isDevView && (
@@ -582,7 +673,7 @@ export default function DocumentDetailPage() {
             status={piiStatus}
             actionLabel={
               devPiiSettingsEnabled
-                ? "PII mit ausgewaehltem Profil starten"
+                ? "PII mit ausgewähltem Profil starten"
                 : pii
                   ? "PII erneut erstellen"
                   : "PII starten"
@@ -637,10 +728,12 @@ export default function DocumentDetailPage() {
               message="PII- und Textergebnis gehören nicht zum selben Lauf. Text und Hervorhebungen bleiben verborgen."
             />
           )}
+          {/* Warning, not error: earlier decisions were deliberately not reapplied to a new run —
+              nothing is broken, the reader just has to look at those spots again. */}
           {piiStatus === "current" && reviewResult && reviewResult.has_stale_decisions && (
             <StatusNotice
-              status="error"
-              message={`Es liegen ${reviewResult.stale_decision_count} Überprüfungsentscheidung(en) aus einem vorherigen PII-Lauf vor, die für das aktuelle Ergebnis nicht mehr gelten. Bitte prüfen Sie die betroffenen Einträge erneut.`}
+              status="warning"
+              message={`${reviewResult.stale_decision_count} frühere Überprüfungsentscheidung(en) beziehen sich auf einen vorherigen Analyse-Lauf und wurden nicht übernommen. Bitte prüfen Sie die betroffenen Stellen erneut.`}
             />
           )}
           {/* User view gets a single product-facing analysis action; dev view keeps its separate
@@ -691,7 +784,10 @@ export default function DocumentDetailPage() {
                 {/* User view: the former sidebar collapses into one quiet summary line; every
                     decision happens directly on the highlight via the popover below. */}
                 {!isDevView && reviewInteractive && reviewResult && (
-                  <ReviewSummaryBar review={reviewResult} />
+                  <ReviewSummaryBar
+                    review={reviewResult}
+                    onNavigate={highlightNavIds.length > 0 ? navigateHighlights : undefined}
+                  />
                 )}
                 <ReviewTextViewer
                   rawText={text.content.text}
@@ -699,7 +795,11 @@ export default function DocumentDetailPage() {
                   layoutText={text.content.layout_text_result}
                   highlightModel={highlightModel}
                   mode={reviewTextMode}
-                  onModeChange={setReviewTextMode}
+                  onModeChange={(mode) => {
+                    setReviewTextMode(mode);
+                    // The visible mark set changes with the view; restart the jump cycle.
+                    navPosition.current = -1;
+                  }}
                   devMode={isDevView}
                   showEntityMeta={isDevView}
                   onSelectEntity={
@@ -779,6 +879,24 @@ export default function DocumentDetailPage() {
             anchorRect={decisionAnchor.rect}
             onClose={() => setDecisionAnchor(null)}
             onReviewChanged={(review) => void refreshPiiReviewAndContract(review)}
+            onDecided={handleDecided}
+          />
+        )}
+
+        {toast && (
+          <Toast
+            message={toast.message}
+            actionLabel={toast.undo ? "Rückgängig" : undefined}
+            onAction={
+              toast.undo
+                ? () => {
+                    const undo = toast.undo;
+                    setToast(null);
+                    void undo?.();
+                  }
+                : undefined
+            }
+            onClose={() => setToast(null)}
           />
         )}
 
@@ -790,6 +908,12 @@ export default function DocumentDetailPage() {
       </div>
     </main>
   );
+}
+
+/** The backend status is a technical enum ("received"); the chip shows plain German, with the raw
+ *  value as fallback so an unknown future status is never hidden. */
+function documentStatusLabel(status: string): string {
+  return status === "received" ? "Hochgeladen" : status;
 }
 
 function Metadata({ label, value, code = false }: { label: string; value: string; code?: boolean }) {
