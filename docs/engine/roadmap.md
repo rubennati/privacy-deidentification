@@ -350,9 +350,10 @@ columns use L7 `quality_report` with a legacy artifact fallback. Benchmark matur
 anchor** identity layer: raw/canonical/layout/structured are *views* of one document, married by an
 OCR/Text-owned anchor graph (`text_lineage_map` made concrete). Phase B is now implemented
 additively as Text Anchor Graph v1 (`document_text_anchors.py`, `GET …/text-anchors`): raw anchors
-are primary, canonical ranges attach through the geometry-backed, post-render reading projection
-first and the post-hoc `reading_text_map` as a labelled fallback (per-anchor and graph
-`lineage_summary` reporting) — neither is builder-emitted construction identity — layout ranges
+are primary, canonical ranges attach preferring builder-emitted construction-time lineage
+(`reading_text_row_lineage_map`, the authoritative identity source), then the geometry-backed,
+post-render reading projection, then the post-hoc `reading_text_map` — the latter two are labelled,
+degraded fallbacks (per-anchor and graph `lineage_summary` reporting) — layout ranges
 attach only when safely byte-aligned in v1, and missing/partial/ambiguous
 states are explicit. Phase C is now
 implemented additively as PII anchor binding (`pii_anchor_binding.py`,
@@ -380,10 +381,19 @@ resolves a line unambiguously, so repeated-*suffix* multi-token entities keep th
 while a genuinely duplicated full-line/label value is explicitly declined (never guessed by
 processing order — a reproduced identity defect from the first attempt is now fixed). It stays
 line-level and geometry-gated (text-layer PDFs), verbatim-only, and declines rather than guesses
-elsewhere. **Genuine construction-time lineage remains unimplemented**; a real
-`anchor-first-text-package-v2` (the reading-text builder itself emitting correspondence while
-rendering), word-level/OCR-page geometry, and `text_match` retirement remain later work. Next:
-`pii-binding-quality-suite`, then `review-result-v1`.
+elsewhere. **Genuine construction-time lineage is now delivered** in three steps: row-granularity
+lineage on the body path ([ADR-0032](../adr/0032-reading-text-row-construction-lineage-v1.md)),
+row-granularity coverage of party columns/tables/metadata/post-table paths plus explicit `inserted`
+headings ([ADR-0036](../adr/0036-reading-text-row-construction-lineage-v2.md)), and the real
+`anchor-first-text-package-v2` ([ADR-0040](../adr/0040-construction-time-canonical-lineage-v3.md)):
+cell-level identity captured at collection time (pypdf extraction-offset capture, byte-verified; L10
+line offsets per cell), attribution of in-row splits/fused metadata/multi-column cell runs/raw-order
+fallback lines, byte-verified statuses including `split`, a symmetric overlap sweep, and
+`ReadingTextRowLineageMap` map_version "2" — making construction lineage the preferred identity
+boundary, with the post-hoc mechanisms demoted to explicitly flagged fallbacks for the spans it
+declines (fused table headers, layout-block ordering, margin-filtered documents, legacy artifacts).
+Word-level/OCR-page geometry and any measured `text_match` retirement remain later work; the audit's
+follow-up branches `pii-binding-quality-suite` and `review-result-v1` are delivered.
 
 ### Redaction remains blocked
 

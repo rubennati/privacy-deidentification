@@ -984,6 +984,49 @@ checkpoint loop against this file's current-sequence section for the next engine
 Replacement Plan consuming `PiiReviewResultEntry` is the next step this branch was scoped to
 unblock, explicitly not implemented here.
 
+**Latest checkpoint (Construction-time canonical lineage v3 — anchor-first text package v2):** No
+engine level change (OCR/Text stays L15); this closes the feasibility audit's Phase 1 gap for real —
+the reading-text builder itself now emits canonical↔raw correspondence at cell granularity across
+its rendering paths, and construction-time lineage is the preferred identity boundary rather than a
+partial optimization. Delivered per [ADR-0040](../docs/adr/0040-construction-time-canonical-lineage-v3.md):
+(1) `ReadingCell.source_range` attached at collection time — pypdf pages capture per-fragment raw
+offsets from the extraction process itself (cursor accumulation over the extraction visitor's own
+chunks, byte-verified against the stored raw page text; on any mismatch every offset is discarded
+and the old globally-unique row matching remains the explicit fallback, which now also refuses raw
+lines already covered by extraction offsets), OCR/geometry pages keep per-line offsets per cell;
+repeated values and repeated suffixes keep distinct identities with **no uniqueness requirement**.
+(2) Previously-declining paths attribute honestly: in-row label/value splits (each line owns
+exactly its two cells; sibling unions must be known and strictly raw-ordered or all decline
+together), party cells split across columns (per-cell identity through the reorder), fused two-cell
+metadata rows (split parts attributed only when every boundary coincides with a cell boundary,
+walked with the same join arithmetic the text was built with), multi-column prose (synthesized
+column rows own exactly their contributing cells' union), post-table joined prose, and the
+raw-order fallback (one output line per raw line via cursor arithmetic — DOCX/minimal inputs now
+get construction lineage; layout-text and whole-document fallbacks still decline). Fused table
+headers and the layout-block path remain explicit declines served by the fallbacks. (3) Statuses
+are **byte-verified** at the join point: `exact` now means byte-identical (a bullet-substituted
+line honestly downgrades to `normalized`), new `split` marks sub-row cell attributions with changed
+bytes, `merged` multi-row unions; `ReadingTextRowLineageMap` bumps to `map_version: "2"` (legacy
+"1" artifacts stay readable; `TextContent` cross-checks version agreement; summary gains additive
+per-status counts; split segments carry an `in_row_split` reason code). (4) A document-level
+symmetric overlap sweep (`_resolve_raw_overlaps`) drops conflicted merge envelopes first (precise
+claims win), then both sides of any precise-vs-precise conflict — set-based, processing-order
+independent, so an interleaved-column wrap merge loses lineage rather than lying. (5) The Text
+Anchor Graph/package preference (`row_construction` → `geometry_projection` →
+`fallback_text_match`) is unchanged in mechanism but now rides on broad construction coverage;
+module/schema docs state plainly that the post-hoc mechanisms are degraded fallback identity, and
+only byte-verified `exact` construction segments feed sub-token arithmetic projection. Proven by
+`backend/tests/test_reading_text_construction_lineage.py` (real-PDF extraction-offset capture with
+repeated values, mismatch fallback, GmbH-suffix anchor distinctness, split/party/metadata/
+multi-column/fallback attribution, sweep behavior both interleaved and sequential, byte-verification
+honesty, legacy-artifact fallback, construction-vs-fallback non-confusability, an entity-contract
+e2e on a span only cell lineage can resolve, and a no-copied-text leak test) plus updated
+row-lineage/ocr/e2e suites; `reading_text` bytes unchanged (full backend suite green, lint/mypy
+clean). No detection, recognizer, active-PII-input, `pii_result` schema, runtime, frontend,
+pseudonymization, redaction, export, or dependency change; artifact identity, committed-run
+authority, and fail-closed behavior untouched. Next: re-run the checkpoint loop; fused-header
+sub-cell attribution and any `reading_text_map` retirement stay explicitly re-scoped future work.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next

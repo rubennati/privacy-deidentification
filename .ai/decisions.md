@@ -247,3 +247,16 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   reference, and mapping quality that a decision never upgrades. No SQLite, new endpoint,
   detection, anchor-graph, pseudonymization, redaction, or export change; closes the feasibility
   audit's third recommended branch.
+- [ADR-0040](../docs/adr/0040-construction-time-canonical-lineage-v3.md) — **Construction-time
+  canonical lineage v3 (anchor-first text package v2).** `ReadingCell` gains collection-time
+  source identity: pypdf pages capture per-fragment raw offsets from the extraction process itself
+  (cursor accumulation over the extraction visitor's own chunks, byte-verified against the stored
+  raw text, discarded entirely on mismatch — no uniqueness requirement, so repeated values keep
+  distinct identities), OCR/geometry pages keep per-line offsets. In-row label/value splits, fused
+  two-cell metadata rows, party cells split across columns, multi-column cell runs, and raw-order
+  fallback lines now attribute construction lineage; statuses are byte-verified
+  (`exact`/`normalized`/`merged`/new `split`), a symmetric document-level sweep drops colliding
+  raw-range claims, and `ReadingTextRowLineageMap` bumps to map_version "2" (legacy "1" readable).
+  Construction lineage is the authoritative identity boundary; geometry projection and the
+  unique-token map remain explicitly demoted, per-anchor-flagged fallbacks. `reading_text` bytes
+  unchanged; no detection, active-PII-input, or dependency change.
