@@ -14,7 +14,7 @@ from app.schemas import (
     JobStatusResponse,
     TextArtifact,
 )
-from app.services.artifact_service import get_text_artifact
+from app.services.artifact_service import get_committed_text_artifact
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
@@ -141,7 +141,7 @@ def get_document_ocr(
 ) -> TextArtifact:
     """Return an exact text result when requested; otherwise return the newest."""
     if artifact_id is not None:
-        artifact = get_text_artifact(settings, document_id, artifact_id)
+        artifact = get_committed_text_artifact(settings, document_id, artifact_id)
         if artifact is None:
             raise TextArtifactNotFoundError
         return artifact

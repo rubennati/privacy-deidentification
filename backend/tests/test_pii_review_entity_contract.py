@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+from tests.artifact_helpers import save_pii_artifact, save_text_artifact
 
 from app.config import Settings
 from app.schemas import (
@@ -35,7 +36,6 @@ from app.schemas import (
     TextArtifact,
     TextContent,
 )
-from app.services.artifact_service import save_pii_artifact, save_text_artifact
 from app.services.pii_overlap import resolve_pii_overlaps
 
 _CONTRACT_URL = "/api/documents/{document_id}/pii/entity-contract"

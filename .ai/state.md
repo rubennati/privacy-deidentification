@@ -35,8 +35,10 @@
   activate only after the exact producing job is durably succeeded; OCR text + quality publish as
   one coherent run; pointed or missing authority fails explicitly without legacy scanning; and a
   persistent deletion tombstone plus cross-process lock prevents delayed workers from recreating
-  deleted data. Exact historical reads remain intentionally available. This is stabilization, not
-  an engine maturity-level advance.
+  deleted data. Legacy ID-only OCR/PII authority and public exact OCR history are accepted only when
+  exactly one matching durable succeeded job proves commitment; unproven or ambiguous candidates
+  fail closed. Jobless Audit/Review snapshots keep atomic publication as their commit boundary.
+  This is stabilization, not an engine maturity-level advance.
 - PII result-integrity hardening is delivered on `pii-result-integrity-v1` (ADR-0037): PII refuses
   invalid/missing raw input instead of persisting a false empty success; partial same-type overlaps
   preserve independent coverage; worker and entity-contract reads use exact artifact identity; and

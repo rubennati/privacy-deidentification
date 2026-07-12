@@ -16,10 +16,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+from tests.artifact_helpers import save_pii_artifact
 
 from app.config import Settings
 from app.schemas import PiiArtifact, PiiContent, PiiEntity, PiiValidationSummary
-from app.services.artifact_service import save_pii_artifact
 
 _SECRET_ORG = "TopSecret Insurance GmbH"
 

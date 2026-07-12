@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from pypdf import PdfWriter
+from tests.artifact_helpers import save_pii_artifact
 
 from app.config import Settings
 from app.schemas import (
@@ -26,7 +27,6 @@ from app.schemas import (
     PiiReviewResultArtifact,
     PiiValidationSummary,
 )
-from app.services.artifact_service import save_pii_artifact
 
 
 def _pdf_bytes() -> bytes:

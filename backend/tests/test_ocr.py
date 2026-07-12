@@ -803,7 +803,7 @@ def test_missing_authority_is_explicit_and_exact_history_remains_available(
     assert historical.json()["id"] == created.json()["id"]
 
 
-def test_unfinished_job_bound_run_is_not_current_or_consumable(
+def test_id_only_authority_without_durable_success_is_not_current_or_historical(
     client: TestClient,
     document_data_dir: Path,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
@@ -823,6 +823,12 @@ def test_unfinished_job_bound_run_is_not_current_or_consumable(
         document_data_dir, upload["id"], "text_result"
     )
     assert len(artifacts) == 1
+    authority_path = (
+        document_data_dir / str(upload["id"]) / "artifacts" / "current-artifacts"
+    )
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority["text_result"] = artifacts[0]["id"]
+    authority_path.write_text(json.dumps(authority), encoding="utf-8")
 
     current = client.get(f"/api/documents/{upload['id']}/ocr")
     assert current.status_code == 409
@@ -830,7 +836,36 @@ def test_unfinished_job_bound_run_is_not_current_or_consumable(
         f"/api/documents/{upload['id']}/ocr",
         params={"artifact_id": artifacts[0]["id"]},
     )
-    assert exact.status_code == 200
+    assert exact.status_code == 409
+    assert "not a successfully committed" in exact.json()["detail"]
+
+
+def test_id_only_authority_is_accepted_when_one_successful_job_proves_it(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
+    )
+    created = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert created.status_code == 201
+    authority_path = (
+        document_data_dir / str(upload["id"]) / "artifacts" / "current-artifacts"
+    )
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority["text_result"] = created.json()["id"]
+    authority_path.write_text(json.dumps(authority), encoding="utf-8")
+
+    current = client.get(f"/api/documents/{upload['id']}/ocr")
+    historical = client.get(
+        f"/api/documents/{upload['id']}/ocr",
+        params={"artifact_id": created.json()["id"]},
+    )
+
+    assert current.status_code == 200
+    assert current.json()["id"] == created.json()["id"]
+    assert historical.status_code == 200
 
 
 def test_rerun_creates_new_immutable_quality_report(

@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+from tests.artifact_helpers import save_text_artifact
 
 from app.api.pii import provide_pii_analyzer
 from app.config import Settings
@@ -23,7 +24,6 @@ from app.schemas import (
     TextContent,
     TextPageResult,
 )
-from app.services.artifact_service import save_text_artifact
 from app.services.job_models import JobContext, JobExecutionMode, JobKind, JobRecord
 from app.services.job_store import get_job_store
 from app.services.pii_adapters import DetectedEntity, PiiUnavailableError

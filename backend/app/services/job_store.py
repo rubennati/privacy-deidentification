@@ -264,6 +264,33 @@ class JobStore:
 
         return self._run(_list)
 
+    def list_succeeded_jobs_for_artifact(
+        self, document_id: str, artifact_id: str, artifact_type: str
+    ) -> list[JobRecord]:
+        """Return every durable success claiming one exact document artifact identity."""
+
+        def _list(connection: sqlite3.Connection) -> list[JobRecord]:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE document_id = ?
+                  AND status = ?
+                  AND result_artifact_id = ?
+                  AND result_artifact_type = ?
+                ORDER BY finished_at ASC, job_id ASC
+                """,
+                (
+                    document_id,
+                    JobStatus.SUCCEEDED.value,
+                    artifact_id,
+                    artifact_type,
+                ),
+            ).fetchall()
+            return [_row_to_record(row) for row in rows]
+
+        return self._run(_list)
+
     def delete_jobs_for_document(self, document_id: str) -> int:
         """Delete job metadata for a document deletion boundary."""
 
