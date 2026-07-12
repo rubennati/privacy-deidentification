@@ -75,24 +75,25 @@ export default function UploadPage() {
   );
 
   return (
-    <main className="flex min-h-screen justify-center bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] p-4 py-12 sm:py-16">
-      <div className="h-fit w-full max-w-2xl rounded-2xl border border-card-border bg-card p-8 shadow-[0_2px_12px_rgba(31,79,67,0.05)] sm:p-10">
-        <header className="mb-6">
-          <h1 className="text-xl font-semibold text-ink">Dokumente sicher vorbereiten</h1>
-          <p className="mt-2 text-sm text-muted">
-            Laden Sie Dateien hoch, um sensible Inhalte für Review, De-Identification und sichere
-            Weiterverarbeitung vorzubereiten.
-          </p>
-        </header>
+    <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6 sm:py-12">
+      <header>
+        <h1 className="text-2xl font-semibold text-ink">Dokumente sicher vorbereiten</h1>
+        <p className="mt-2 text-sm text-muted">
+          Laden Sie Dateien hoch, um sensible Inhalte für Review, De-Identification und sichere
+          Weiterverarbeitung vorzubereiten.
+        </p>
+      </header>
 
+      <div className="mt-6 rounded-2xl border border-card-border bg-card p-6 shadow-[0_2px_12px_rgba(31,79,67,0.05)] sm:p-8">
         <UploadDropzone
           onFile={(file) => void handleFile(file)}
           disabled={status === "uploading"}
           accept={buildAcceptAttribute(constraints.allowedExtensions)}
         />
         <StatusNotice status={status} message={message} correlationId={correlationId} />
-        <HowItWorks />
       </div>
-    </main>
+
+      <HowItWorks />
+    </div>
   );
 }

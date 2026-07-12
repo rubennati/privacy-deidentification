@@ -39,7 +39,7 @@ export function DocumentCard({
   const badge = analysis ? ANALYSIS_BADGES[analysis] : null;
 
   return (
-    <li className="flex items-center justify-between gap-4 rounded-xl border border-card-border bg-card p-4 transition-colors hover:border-accent/40">
+    <li className="flex items-center justify-between gap-4 rounded-xl border border-card-border bg-card p-4 shadow-[0_1px_6px_rgba(31,79,67,0.05)] transition-colors hover:border-accent/40">
       <Link
         to={`/documents/${encodeURIComponent(id)}`}
         className="min-w-0 flex-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent"

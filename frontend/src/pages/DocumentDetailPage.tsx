@@ -387,15 +387,15 @@ export default function DocumentDetailPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-page px-4 py-12">
+      <div className="px-4 py-12 sm:px-6">
         <p className="mx-auto max-w-6xl text-sm text-muted">Dokument wird geladen …</p>
-      </main>
+      </div>
     );
   }
 
   if (!document || !documentId) {
     return (
-      <main className="min-h-screen bg-page px-4 py-12">
+      <div className="px-4 py-12 sm:px-6">
         <div className="mx-auto max-w-2xl">
           <Link to="/documents" className="text-sm font-medium text-accent-dark hover:underline">
             ← Zurück zu Dokumenten
@@ -406,7 +406,7 @@ export default function DocumentDetailPage() {
             correlationId={pageError?.correlationId}
           />
         </div>
-      </main>
+      </div>
     );
   }
 
@@ -588,7 +588,7 @@ export default function DocumentDetailPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] px-4 py-10 sm:py-14">
+    <div className="px-4 py-10 sm:px-6 sm:py-12">
       <div className="mx-auto max-w-6xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link to="/documents" className="text-sm font-medium text-accent-dark hover:underline">
@@ -900,13 +900,8 @@ export default function DocumentDetailPage() {
           />
         )}
 
-        {/* A quiet page ending instead of an abrupt white cut-off below the last card. */}
-        <footer className="mt-12 border-t border-card-border pb-2 pt-5 text-center text-xs text-muted">
-          Alle Analysen laufen lokal auf diesem Server. Inhalte werden angezeigt, aber nie
-          verändert.
-        </footer>
       </div>
-    </main>
+    </div>
   );
 }
 

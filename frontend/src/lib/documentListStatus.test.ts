@@ -30,13 +30,30 @@ describe("deriveAnalysisState", () => {
   });
 
   it("returns running while any job is pending or running, even after a past success", () => {
+    const now = new Date("2026-07-11T10:01:00Z");
     expect(
-      deriveAnalysisState([
-        job({ kind: "pii_detection", status: "succeeded" }),
-        job({ kind: "ocr_text", status: "running" }),
-      ]),
+      deriveAnalysisState(
+        [
+          job({ kind: "pii_detection", status: "succeeded" }),
+          job({ kind: "ocr_text", status: "running" }),
+        ],
+        now,
+      ),
     ).toBe("running");
-    expect(deriveAnalysisState([job({ status: "pending" })])).toBe("running");
+    expect(deriveAnalysisState([job({ status: "pending" })], now)).toBe("running");
+  });
+
+  it("stops reporting an abandoned running job as active after 15 minutes without progress", () => {
+    // Runtime Phase 3 has no stale-lease reclaim: a worker killed mid-job leaves the row
+    // "running" forever. The badge must fall back instead of claiming endless activity.
+    const now = new Date("2026-07-11T11:00:00Z");
+    expect(deriveAnalysisState([job({ status: "running" })], now)).toBe("none");
+    expect(
+      deriveAnalysisState(
+        [job({ status: "running" }), job({ kind: "pii_detection", status: "succeeded" })],
+        now,
+      ),
+    ).toBe("analyzed");
   });
 
   it("returns analyzed once a PII detection succeeded", () => {

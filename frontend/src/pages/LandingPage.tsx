@@ -21,18 +21,16 @@ const INFORMATION_TYPES = [
 
 export default function LandingPage() {
   return (
-    <main className="bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)]">
-      <div className="mx-auto flex max-w-4xl flex-col gap-16 px-4 py-16 sm:py-20">
-        <Hero />
-        <RedactionContextSection />
-        <WorkflowSection />
-        <ExampleSection />
-        <ChipSection title="Welche Datenarten wir erkennen" items={INFORMATION_TYPES} />
-        <FormatsSection />
-        <AudienceSection />
-        <ArchitectureSection />
-        <FinalCta />
-      </div>
-    </main>
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-16 px-4 py-16 sm:px-6 sm:py-20">
+      <Hero />
+      <RedactionContextSection />
+      <WorkflowSection />
+      <ExampleSection />
+      <ChipSection title="Welche Datenarten wir erkennen" items={INFORMATION_TYPES} />
+      <FormatsSection />
+      <AudienceSection />
+      <ArchitectureSection />
+      <FinalCta />
+    </div>
   );
 }
