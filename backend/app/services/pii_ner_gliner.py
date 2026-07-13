@@ -14,6 +14,7 @@ overlap resolution run unchanged.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
@@ -22,6 +23,8 @@ from threading import Lock
 
 from app.errors import ApiError
 from app.services.pii_adapters import DetectedEntity
+
+logger = logging.getLogger(__name__)
 
 # Free-form GLiNER label <-> our entity type. GLiNER owns exactly these NER types.
 _TYPE_TO_LABEL: dict[str, str] = {
@@ -97,6 +100,7 @@ class GlinerNerDetector:
             if self._model is not None:
                 return self._model
             if not self._model_path.exists():
+                logger.error("GLiNER model directory not found: %s", self._model_path)
                 raise GlinerUnavailableError
             try:
                 gliner = import_module("gliner")
@@ -104,6 +108,14 @@ class GlinerNerDetector:
                     str(self._model_path), local_files_only=True
                 )
             except Exception as exc:
+                # Surface the real cause (missing backbone, offline lookup, corrupt files, OOM). The
+                # message is a model-loading error over the mounted model path — no document text.
+                logger.error(
+                    "GLiNER model failed to load from %s: %s: %s",
+                    self._model_path,
+                    type(exc).__name__,
+                    exc,
+                )
                 raise GlinerUnavailableError from exc
             return self._model
 

@@ -17,7 +17,7 @@ FRONTEND_RUN := docker run --rm -v "$(CURDIR)/frontend":/app -v privacy-deidenti
 RUNTIME_RUN := docker run --rm -v "$(CURDIR)":/repo -w /repo python:3.12-slim sh -lc
 BENCHMARK_RUN := docker run --rm -v "$(CURDIR)":/repo -w /repo python:3.12-slim sh -lc
 
-.PHONY: help runtime-dirs up dev update rebuild stop down prune ocr-models ocr-smoke pii-smoke \
+.PHONY: help runtime-dirs up dev update rebuild stop down prune ocr-models ner-models ocr-smoke pii-smoke \
 	logs ps shell-api lint typecheck test lock benchmark-private benchmark-private-json \
 	benchmark-test docker-df
 
@@ -27,7 +27,7 @@ help: ## Show this help
 
 runtime-dirs: ## Create local bind-mount roots used by Compose
 	mkdir -p $(DATA_ROOT)/uploads $(DATA_ROOT)/document-store $(DATA_ROOT)/job-state \
-		$(DATA_ROOT)/pii-feedback-archive $(DATA_ROOT)/ocr-models
+		$(DATA_ROOT)/pii-feedback-archive $(DATA_ROOT)/ocr-models $(DATA_ROOT)/ner-models
 
 # --- Lifecycle (each command maps 1:1 to docker compose) -----------------------------------------
 # up / dev / stop / down never build, so daily start/stop can't hit the Colima build race; only
@@ -68,6 +68,9 @@ prune: ## Reclaim this project's rebuild leftovers (dangling images + build cach
 
 ocr-models: ## Download PaddleOCR models into volumes/ocr-models (idempotent)
 	./scripts/fetch-ocr-models.sh
+
+ner-models: ## Download the GLiNER NER model + backbone into volumes/ner-models (idempotent; needed for make dev)
+	./scripts/fetch-ner-models.sh
 
 ocr-smoke: ## Smoke-test the real OCR runtime (needs provisioned models)
 	$(COMPOSE) build api

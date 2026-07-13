@@ -97,6 +97,11 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
 
+[[tool.mypy.overrides]]
+# tldextract ships no type stubs; offline_ml_runtime only touches it to force snapshot-only resolution.
+module = ["tldextract", "tldextract.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

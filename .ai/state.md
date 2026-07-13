@@ -73,6 +73,21 @@
   next engine priority.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
+- **GLiNER offline backbone fix (`fix/gliner-offline-backbone`, runtime/infra — no engine level
+  change).** The `gliner` NER backend was never truly offline: `gliner_multi-v2.1` references its
+  `microsoft/mdeberta-v3-base` backbone by HuggingFace id and only the head was provisioned, so
+  GLiNER fetched the backbone at runtime. That was invisible while the api had egress but became a
+  hard `503` ("GLiNER NER model is not available") once the offline isolation (`internal: true`,
+  PR #84) removed egress and a container restart dropped the transient HF cache. Fix: `make
+  ner-models` now provisions the head **and** backbone and rewrites the head `model_name` to the
+  local backbone path; runtime is pinned offline (`HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` default 1
+  in the shared compose env, `app.services.offline_ml_runtime` also switches Presidio's tldextract
+  email-domain check to its bundled snapshot); `make dev` API memory raised 3g→4g (the fp32 backbone
+  peaks ~3 GiB while loading); `pii_ner_gliner._get_model` now logs the real load cause instead of
+  swallowing it. `.env`/`.env.example` no longer pin `API_MEMORY_LIMIT` (that override defeated the
+  make-dev default). Verified end-to-end offline: GLiNER loads with no network and analysis produces
+  entities (PERSON/ORGANIZATION from GLiNER + all pattern types). Detection semantics, `pii_result`
+  schema, and the active raw-text input are unchanged.
 
 ## Product snapshot
 
