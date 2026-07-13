@@ -44,9 +44,14 @@ with a no-true-positive-loss invariant.
     its end is clipped to that boundary (an entity does not span two cells).
   - `structural_label_value_trimmed` — an entity that swallowed a field label is trimmed to the
     paired value.
-  - `structural_heading_rejected` — a **name/organization/address-family** entity fully contained in
-    a section heading is dropped. Hard structured identifiers (IBAN, national IDs, cards, plates) are
-    **never** dropped here — a miss is a leak (gate: P3 recall ≥ 0.98).
+  - `structural_heading_rejected` — a **line/place-family** entity (`ADDRESS`, `CONTACT_LINE`,
+    `CUSTOMER_LINE`, `LOCATION`, `BIRTH_PLACE`) fully contained in a section heading is dropped: a
+    labelled-line/location recognizer misfiring on a section title ("Leistungen und Positionen" →
+    ADDRESS). **Names and organizations are deliberately excluded** — on real documents a person or
+    company name legitimately *is* a heading (letterhead, addressee, signatory), so heading
+    membership is not FP evidence for them (see the corpus finding below). Hard structured
+    identifiers (IBAN, national IDs, cards, plates) are **never** dropped here — a miss is a leak
+    (gate: P3 recall ≥ 0.98).
   A clip/trim only ever **narrows** a span (never widens, moves, empties, or relabels) and shifts
   page offsets consistently; matching is on the global raw offsets.
 
@@ -69,7 +74,21 @@ with a no-true-positive-loss invariant.
   plus wiring tests (disabled no-op, enabled trim, enabled heading drop). The no-TP-loss invariant is
   the primary acceptance signal until the gold-standard GT exists, since the current benchmark ground
   truth is an incomplete candidate signal.
-- **Deferred:** default remains **off** until a private-corpus pass confirms FP↓ with no TP loss;
+- **Corpus A/B (2026-07-13, 4 GT-matched TEST docs, GLiNER, review-heavy).** The only variable was
+  the flag on the same image. The first ON run **violated no-TP-loss**: TP 132→129, recall 0.88→0.86,
+  because rule 2 dropped **3 real ORGANIZATION true positives** sitting in section headings (letter/
+  company-name headings) versus only 1 PERSON false positive removed. Fix: narrow the heading-
+  rejectable set to line/place types (above). After the fix the ON run is byte-for-byte the flag-off
+  result — **TP=132, FP=31, R=0.88, F1=0.844, no TP loss** — but with **no measurable FP reduction**
+  on this corpus: the heading rule now fires 0× (no ADDRESS-as-heading in these 4 docs' detections)
+  and the 3 remaining `structural_cell_clip`s are score-neutral (they narrow non-GT or
+  boundary-tolerant spans). The corpus is too thin in the targeted FP patterns (ADDRESS-heading,
+  cross-cell overflow) to demonstrate the precision gain.
+- **Decision: keep the default OFF.** The mechanism is proven *safe* (no TP loss) but its benefit is
+  not yet *demonstrated* on the corpus, so the gate's dual condition (FP↓ **and** no TP loss) is only
+  half met. Re-run the A/B once the gold-standard GT lands (or a document with the real ADDRESS-
+  heading/cell-overflow patterns is added) before flipping the default.
+- **Deferred:** flipping the default (pending a demonstrated FP↓ with no TP loss);
   the optional token-edge trim rule; a cross-type precedence table (still `ambiguous_overlap_review`);
   the honorific-title question (decided separately against trustworthy GT); the anchor/canonical
   display question (tracked separately — this ADR is detection-quality only).

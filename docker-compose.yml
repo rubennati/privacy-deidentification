@@ -27,6 +27,10 @@ x-app-environment: &app-environment
   PII_PROFILE: ${PII_PROFILE:-review-heavy}
   PII_ENTITY_TYPES: ${PII_ENTITY_TYPES:-}
   PII_CANDIDATE_VALIDATION_ENABLED: ${PII_CANDIDATE_VALIDATION_ENABLED:-true}
+  # Structural-context validation: a second subtractive stage that clips/rejects boundary/structural
+  # false positives using the OCR contract's structured_content spans. Additive/reversible, no-TP-loss
+  # invariant. See ADR-0043.
+  PII_STRUCTURAL_VALIDATION_ENABLED: ${PII_STRUCTURAL_VALIDATION_ENABLED:-false}
   # NER backend for PERSON/ORGANIZATION. `gliner` sources them from a local GLiNER model mounted
   # read-only below (provision it first with scripts/fetch-ner-models.sh); `spacy` keeps the small
   # CNN NER. Other types are unaffected. See ADR-0042.

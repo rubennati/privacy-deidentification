@@ -1146,9 +1146,11 @@ def test_structural_validation_enabled_drops_heading_false_positive(
     settings.pii_candidate_validation_enabled = False
     settings.pii_structural_validation_enabled = True
     document_id = str(_upload_document(client)["id"])
-    raw = "Kundendaten Uebersicht"
+    raw = "Leistungen und Positionen"
     _save_text(settings, document_id, raw, pages=[raw], structured_content=_heading_structure(raw))
-    pii_fake.results[raw] = [_entity("PERSON", 0, len(raw), 0.9)]  # a heading, not a person
+    # A labelled-line recognizer misfiring on a section title — the motivating ADDRESS FP. Names and
+    # organizations are intentionally NOT heading-rejectable (they legitimately are headings).
+    pii_fake.results[raw] = [_entity("ADDRESS", 0, len(raw), 0.9)]
 
     content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
 

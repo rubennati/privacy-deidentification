@@ -111,6 +111,19 @@ detections carry `page_number = None`, so only the raw offsets align there.
   independent of the private corpus.
 - A local private-corpus pass reporting, per document, FP removed vs. any TP touched (no raw text).
 
+### Corpus A/B result (2026-07-13, 4 GT-matched TEST docs, GLiNER, review-heavy)
+
+Same image, only the flag toggled. **First ON run failed no-TP-loss** (TP 132→129, R 0.88→0.86):
+rule 2 dropped **3 real ORGANIZATION true positives** in section headings vs. 1 PERSON FP removed —
+company/person names legitimately *are* headings. **Fix:** the heading-rejectable set is narrowed to
+line/place types only (`ADDRESS`/`CONTACT_LINE`/`CUSTOMER_LINE`/`LOCATION`/`BIRTH_PLACE`); names and
+organizations are never heading-rejected. After the fix the ON run equals the OFF run exactly
+(**TP=132, FP=31, R=0.88, F1=0.844**) — no TP loss, but **no measurable FP↓**: the heading rule fires
+0× (no ADDRESS-as-heading in these docs) and the 3 remaining cell-clips are score-neutral. The corpus
+is too thin in the targeted FP patterns to show the precision gain. **Default stays OFF** until the
+gold-standard GT (or a document exhibiting the real ADDRESS-heading/cross-cell patterns) demonstrates
+FP↓ with no TP loss.
+
 ## Sequence note
 
 This is the highest-leverage detection-quality architecture step and is complementary to — not

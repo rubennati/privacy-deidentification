@@ -179,10 +179,23 @@ def test_heading_rejection_never_drops_a_hard_identifier() -> None:
     assert result.dropped_entity_ids == ()
 
 
+@pytest.mark.parametrize("entity_type", ["PERSON", "ORGANIZATION", "GIVEN_NAME", "FAMILY_NAME"])
+def test_heading_rejection_never_drops_a_name_or_organization(entity_type: str) -> None:
+    # A person/company name legitimately IS a heading (letterhead, addressee, signatory). A corpus
+    # A/B caught rule 2 dropping real ORGANIZATION true positives here — heading membership is not
+    # FP evidence for a name/org, so they must survive.
+    raw = "Sachverstaendigenbuero Mustermann GmbH"
+    heading = _span("heading", 0, len(raw), container_id="section-p1-1", role="section")
+    entity = _entity(raw, entity_type, 0, len(raw))
+    result = validate_structural_context([entity], [heading], enabled=True)
+    assert [e.id for e in result.entities] == [entity.id]
+    assert result.dropped_entity_ids == ()
+
+
 def test_heading_rejection_requires_containment_not_mere_overlap() -> None:
-    raw = "Kundendaten Max Mustermann"
-    heading = _span("heading", 0, 11, container_id="section-p1-1", role="section")
-    entity = _entity(raw, "PERSON", 5, 26)  # spills past the heading; not contained
+    raw = "Standort Wien Landstrasse 5"
+    heading = _span("heading", 0, 8, container_id="section-p1-1", role="section")
+    entity = _entity(raw, "ADDRESS", 5, 27)  # spills past the heading; not contained
     result = validate_structural_context([entity], [heading], enabled=True)
     assert [e.id for e in result.entities] == [entity.id]
     assert result.summary.dropped_count == 0
@@ -211,10 +224,10 @@ def test_result_is_independent_of_input_order() -> None:
     heading = _span("heading", 22, 32, container_id="section-p1-1", role="section")
     cell = _span("table_cell", 34, 42, container_id="table-p1-1")  # "City AB " region
     person = _entity(raw, "PERSON", 0, 20)
-    org = _entity(raw, "ORGANIZATION", 22, 32)  # dropped by heading
+    heading_addr = _entity(raw, "ADDRESS", 22, 32)  # line-type contained in a heading -> dropped
     addr = _entity(raw, "ADDRESS", 36, 47)  # starts in cell, overflows
     spans = [label, value, heading, cell]
-    entities = [person, org, addr]
+    entities = [person, heading_addr, addr]
 
     forward = validate_structural_context(entities, spans, enabled=True)
     reverse = validate_structural_context(

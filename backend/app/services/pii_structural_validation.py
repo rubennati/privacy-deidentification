@@ -41,16 +41,17 @@ STRUCTURAL_HEADING_REJECTED = "structural_heading_rejected"
 # Value-bearing structural regions an entity must not overflow (rule 1).
 _VALUE_KINDS = frozenset({"table_cell", "field_value"})
 
-# A heading is prose. Only the name/organization/address family is a plausible heading false
-# positive; hard structured identifiers (IBAN, national IDs, cards, plates) are deliberately never
-# rejected by rule 2 — a miss there is a leak (quality gate: P3 recall >= 0.98). This is a
-# structural judgement, not a corpus-fitted list.
+# Only "line/place" content types are plausible heading false positives — a labelled-line or
+# location recognizer misfiring on a section title ("Leistungen und Positionen" -> ADDRESS). Names
+# and organizations are deliberately EXCLUDED: on real documents a person or company name
+# legitimately *is* a heading (letterhead, addressee block, signatory) — a corpus A/B showed rule 2
+# dropping real ORGANIZATION true positives that sit in section headings (no-TP-loss violation), so
+# heading membership is not FP evidence for a name/org (their precision is a separate NER concern).
+# Hard structured identifiers (IBAN, national IDs, cards, plates) are likewise never rejected — a
+# miss there is a leak (quality gate: P3 recall >= 0.98). This is a structural judgement, not a
+# corpus-fitted list.
 _HEADING_REJECTABLE_TYPES = frozenset(
     {
-        "PERSON",
-        "ORGANIZATION",
-        "GIVEN_NAME",
-        "FAMILY_NAME",
         "ADDRESS",
         "CONTACT_LINE",
         "CUSTOMER_LINE",
