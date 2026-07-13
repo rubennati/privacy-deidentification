@@ -1,6 +1,7 @@
 # PII Structural-Context Validation (views → false-positive reduction)
 
-> **Design plan, not yet implemented.** Realizes the OCR Output Contract's unfulfilled promise: the
+> **Design plan; Step 1 (plumbing) landed, the validation mechanism (Steps 2–4) not yet.** Realizes
+> the OCR Output Contract's unfulfilled promise: the
 > structural text views (`structured_content`, `layout`) are currently carried through the contract
 > but **inert** — they reduce no false positives. This plan uses them as post-detection *context* to
 > fix boundary/structural FPs, **without changing the detection input or the contract**.
@@ -35,10 +36,22 @@ availability flags, and candidate validation ignores them.
 detect (raw)  →  candidate validation (L6/L7)  →  [NEW] structural-context validation  →  overlap resolution  →  entity contract
 ```
 
-It consumes `structured_content`/`layout` spans threaded through `PiiInputDocumentV1` (today only a
-flag; extend it to expose the actual structural spans). Alignment key: structured cells/fields carry
-**page-local** spans and detected entities carry **page-local** offsets — they align on the same
-page coordinate system (verify at implementation).
+It consumes `structured_content` spans threaded through `PiiInputDocumentV1`. **Step 1 (below) is
+implemented**: the adapter now exposes them as offset-only `PiiInputStructuralSpan`s, not a flag.
+
+**Alignment key — verified.** Both coordinate systems line up, checked against the OCR structure
+builder, the schema validator, and PII's own per-page detection loop (all use the identical
+`len(page.text) + 2` page accumulation over the *raw* per-page text):
+
+- Page-local: `PiiInputStructuralSpan.page_start/page_end` ↔ `PiiEntity.page_start_offset/
+  page_end_offset` — both into the raw per-page text.
+- Global: `PiiInputStructuralSpan.raw_start/raw_end` ↔ `PiiEntity.start_offset/end_offset` — both
+  into the combined raw text. Despite the `StructuredSpan` schema's `canonical_*` naming, those
+  offsets reference the **raw** text (the validator enforces it), not `reading_text`.
+
+The global `raw_*` pair is the robust alignment key for Step 2: a paged document also matches on
+`page_number`, but a non-paged document (DOCX) carries structural `page_number = 1` while its
+detections carry `page_number = None`, so only the raw offsets align there.
 
 ## Rules (v1 — each deterministic, structural, individually toggle/reason-coded)
 
@@ -66,9 +79,13 @@ page coordinate system (verify at implementation).
 
 ## Plumbing (implementation outline)
 
-1. Extend `pii_input.py` to expose concrete `structured_content` spans (cells, field values,
-   headings) with their page-local offsets — realizing the `structured_hint` role as data, not a
-   flag. Contract and package schema unchanged (additive read).
+1. **Done.** `pii_input.py` exposes concrete `structured_content` spans (table cells, field labels,
+   field values, section headings) as offset-only `PiiInputStructuralSpan`s on
+   `PiiInputDocumentV1.structural_spans`, with page-local **and** global raw offsets, a structural
+   `kind`, a bounded `role` code, and the owning `container_id` — realizing the `structured_hint`
+   role as data, not a flag. No source text is copied (offsets/codes only). Contract and package
+   schema unchanged (additive read). Covered by `backend/tests/test_pii_input.py` (kinds, offset
+   alignment invariant, no-text-leak). Nothing consumes it yet — it is inert until Step 3 wires it.
 2. New `pii_structural_validation.py`: pure function `(entities, structural_spans) → (kept, trimmed,
    dropped, provenance)`; deterministic, order-independent.
 3. Wire it into `pii_service` after candidate validation, before `pii_overlap`. Record outcomes in
