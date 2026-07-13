@@ -261,6 +261,9 @@ export interface PiiEntityProvenance {
   overlap_decision?: string | null;
   review_required: boolean;
   superseded_candidate_ids: string[];
+  // Structural-context validation outcomes (ADR-0043). Additive/optional: omitted on artifacts
+  // written before the stage, empty unless it clipped or trimmed this entity's span.
+  structural_reasons?: string[];
 }
 
 export interface PiiEntity {
@@ -311,6 +314,16 @@ export interface PiiOverlapResolutionSummary {
   by_reason: Record<string, number>;
 }
 
+export interface PiiStructuralValidationSummary {
+  applied: boolean;
+  input_candidate_count: number;
+  output_entity_count: number;
+  clipped_count: number;
+  trimmed_count: number;
+  dropped_count: number;
+  by_reason: Record<string, number>;
+}
+
 export interface PiiValidationSummary {
   enabled: boolean;
   kept: number;
@@ -357,6 +370,9 @@ export interface PiiArtifact {
     input_contract?: PiiInputContractSummary | null;
     // Deterministic overlap-resolution summary (PII L12). Absent on legacy artifacts.
     overlap_resolution?: PiiOverlapResolutionSummary | null;
+    // Structural-context validation summary (ADR-0043). Absent on legacy artifacts or when the
+    // stage was disabled for this run.
+    structural_validation?: PiiStructuralValidationSummary | null;
   };
 }
 

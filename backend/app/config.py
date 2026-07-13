@@ -138,6 +138,13 @@ class Settings(BaseSettings):
     pii_candidate_validation_enabled: bool = Field(
         default=True, alias="PII_CANDIDATE_VALIDATION_ENABLED"
     )
+    # Structural-context validation: a second subtractive stage that uses the OCR contract's
+    # structured_content spans (table cells, label/value fields, headings) to clip or reject
+    # boundary/structural false positives. Additive and reversible; defaults OFF while the
+    # mechanism lands with the no-true-positive-loss invariant (see ADR-0043).
+    pii_structural_validation_enabled: bool = Field(
+        default=False, alias="PII_STRUCTURAL_VALIDATION_ENABLED"
+    )
     enable_dev_engine_settings: bool = Field(
         default=False, alias="ENABLE_DEV_ENGINE_SETTINGS"
     )

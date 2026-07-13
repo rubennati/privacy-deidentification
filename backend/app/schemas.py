@@ -1926,6 +1926,14 @@ PiiOverlapReason = Literal[
     "dropped_lower_confidence_duplicate",
     "merged_provenance",
 ]
+# Structural-context validation reason codes (subtractive; see ADR-0043). A code is never removed
+# or repurposed. ``structural_heading_rejected`` marks a dropped candidate and so is recorded only
+# in the run summary, not on a surviving entity's provenance.
+PiiStructuralReason = Literal[
+    "structural_cell_clip",
+    "structural_label_value_trimmed",
+    "structural_heading_rejected",
+]
 
 
 class PiiEntityProvenance(BaseModel):
@@ -1945,6 +1953,9 @@ class PiiEntityProvenance(BaseModel):
     overlap_decision: PiiOverlapReason | None = None
     review_required: bool = False
     superseded_candidate_ids: list[str] = Field(default_factory=list)
+    # Structural-context validation outcomes applied to this surviving entity (span clipped/trimmed
+    # to a structural boundary). Empty unless the stage ran and modified this entity. Text-free.
+    structural_reasons: list[PiiStructuralReason] = Field(default_factory=list)
 
 
 class PiiInputContractSummary(BaseModel):
@@ -1985,6 +1996,30 @@ class PiiOverlapResolutionSummary(BaseModel):
             self.dropped_count
         ):
             raise ValueError("input candidates must equal output plus merged plus dropped")
+        return self
+
+
+class PiiStructuralValidationSummary(BaseModel):
+    """Structural-context validation outcome (ADR-0043). Reason codes and counts only, never text.
+
+    A strictly subtractive stage: ``clipped``/``trimmed`` narrow a surviving span to a structural
+    boundary; ``dropped`` rejects a heading false positive. ``applied`` is false when the stage is
+    disabled, in which case the counts are all zero and no entity was touched.
+    """
+
+    applied: bool
+    input_candidate_count: int = Field(ge=0)
+    output_entity_count: int = Field(ge=0)
+    clipped_count: int = Field(ge=0)
+    trimmed_count: int = Field(ge=0)
+    dropped_count: int = Field(ge=0)
+    by_reason: dict[str, int] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_counts(self) -> PiiStructuralValidationSummary:
+        # Clipping/trimming keep the entity (only drops remove one), so input == output + dropped.
+        if self.input_candidate_count != self.output_entity_count + self.dropped_count:
+            raise ValueError("input candidates must equal output plus dropped")
         return self
 
 
@@ -2136,6 +2171,13 @@ class PiiContent(BaseModel):
         description=(
             "Deterministic overlap-resolution summary (PII L12). None on artifacts written before "
             "overlap resolution existed."
+        ),
+    )
+    structural_validation: PiiStructuralValidationSummary | None = Field(
+        default=None,
+        description=(
+            "Structural-context validation summary (ADR-0043). None on artifacts written before "
+            "the stage existed, or when it was disabled for this run."
         ),
     )
 

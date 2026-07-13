@@ -71,6 +71,9 @@ export interface PiiEntityProvenance {
   overlap_decision: string | null;
   review_required: boolean;
   superseded_candidate_ids: string[];
+  // Structural-context validation outcomes (ADR-0043). Additive/optional: omitted on artifacts
+  // written before the stage, empty unless it clipped or trimmed this entity's span.
+  structural_reasons?: string[];
 }
 
 export interface PiiEntityAnchorRef {

@@ -1,7 +1,8 @@
 # PII Structural-Context Validation (views → false-positive reduction)
 
-> **Design plan; Step 1 (plumbing) landed, the validation mechanism (Steps 2–4) not yet.** Realizes
-> the OCR Output Contract's unfulfilled promise: the
+> **Mechanism implemented, default-off ([ADR-0043](../adr/0043-pii-structural-context-validation.md));
+> pending a private-corpus no-TP-loss pass before it is enabled.** Realizes the OCR Output Contract's
+> unfulfilled promise: the
 > structural text views (`structured_content`, `layout`) are currently carried through the contract
 > but **inert** — they reduce no false positives. This plan uses them as post-detection *context* to
 > fix boundary/structural FPs, **without changing the detection input or the contract**.
@@ -86,11 +87,19 @@ detections carry `page_number = None`, so only the raw offsets align there.
    role as data, not a flag. No source text is copied (offsets/codes only). Contract and package
    schema unchanged (additive read). Covered by `backend/tests/test_pii_input.py` (kinds, offset
    alignment invariant, no-text-leak). Nothing consumes it yet — it is inert until Step 3 wires it.
-2. New `pii_structural_validation.py`: pure function `(entities, structural_spans) → (kept, trimmed,
-   dropped, provenance)`; deterministic, order-independent.
-3. Wire it into `pii_service` after candidate validation, before `pii_overlap`. Record outcomes in
-   the existing additive `PiiEntity.provenance` / a content summary (reason codes/counts only).
-4. Config flag + `.env.example` + ADR (0043) when implemented.
+2. **Done.** `pii_structural_validation.py`: pure function `(entities, structural_spans) → (kept,
+   trimmed, dropped, provenance)`; deterministic, order-independent, fixed rule precedence
+   (heading → label/value trim → cell clip). Reason codes `structural_cell_clip`,
+   `structural_label_value_trimmed`, `structural_heading_rejected`; hard structured identifiers are
+   never heading-rejected (P3 leak guard). Covered by `backend/tests/test_pii_structural_validation.py`.
+3. **Done.** Wired into `pii_service._analyze_text` after candidate validation, before `pii_overlap`.
+   Structural reasons are attached to the surviving entities *after* overlap (which rebuilds
+   provenance) via preserved ids; outcomes recorded on additive optional `PiiEntity.provenance.
+   structural_reasons` and `PiiContent.structural_validation` (`PiiStructuralValidationSummary`),
+   reason codes/counts only. With the flag off the stage is a byte-identical no-op. Covered by
+   wiring tests in `backend/tests/test_pii.py`.
+4. **Done.** Config flag `PII_STRUCTURAL_VALIDATION_ENABLED` (default off) + `.env.example` +
+   [ADR-0043](../adr/0043-pii-structural-context-validation.md); additive frontend TS types.
 
 ## Acceptance / measurement
 
