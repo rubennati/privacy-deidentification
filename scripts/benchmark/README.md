@@ -174,6 +174,53 @@ file → `make benchmark-private` reports per-type P/R/F1 **and** boundary accur
 near-exact) against real gold GT, so a structural-context A/B (flag off vs on) can finally show FP↓
 with no true-positive loss.
 
+### Two review channels (don't confuse them)
+
+The Review UI records reviewer input in **two separate channels**, with different purposes:
+
+| Channel | UI control | Purpose | On disk | Consumed by |
+| --- | --- | --- | --- | --- |
+| **Binding decision** | *Bindende Entscheidung* (`keep`/`false_positive`/`pseudonymize`) + *Manuell hinzufügen* | the **truth** (what is PII, exactly where) → **gold GT** | `review/pii_review_decisions.jsonl` → `pii_review_result` snapshot | `harvest_groundtruth.py` |
+| **Dev feedback** | *Review-Feedback (dev)* ("Problem auswählen" + comment) | the **error diagnosis** (which errors occur, how often) | `feedback/pii_feedback.jsonl` | `analyze_feedback.py` |
+
+Both are text-free (offsets, types, codes). A reviewer often uses mostly one channel — that is fine,
+they answer different questions. Use the binding decision to *build the gold standard*, and the dev
+feedback to *see what to fix*.
+
+### Analysing the dev feedback
+
+```
+python scripts/benchmark/analyze_feedback.py --document-data-dir volumes/document-store
+```
+
+`analyze_feedback.py` turns the dev-feedback channel into a text-free **error-taxonomy + consistency
+report**: verdict counts, issue types sorted by frequency (`span_too_long_right`, `overlap_conflict`,
+…), affected entity types, and a **recognizer issue-rate** ranking (the fix candidates — a recognizer
+with a high issue share is a systematic detector problem). It is tolerant of reviewer mistakes: the
+log is append-only, so it reads the **latest verdict per entity** (a revision wins) and reports how
+many entities were revised, so a slip can be re-checked rather than trusted blindly. It never emits
+the free-text comment — only whether one exists.
+
+## Persistence model: private corpus vs. shared committed dataset
+
+A recurring question: how do these annotations become a **persistent repository asset** everyone
+benefits from, rather than sitting in local `volumes/`?
+
+- **Real customer documents + their ground truth stay private** (`volumes/`, git-ignored). Even
+  though the harvested GT is text-free (offsets/types), it is tied to real documents and their
+  filenames, is useless to anyone who does not have those documents, and carries residual risk — so
+  it is **local validation only**.
+- **The shareable, committed dataset is built on synthetic documents** — realistic fixtures with
+  *fake* PII (like the `TEST_0x` docs), whose full content and gold GT contain no real personal data
+  and can safely live in the repo. Anyone who clones/pulls gets the corpus **and** its gold GT, runs
+  the same benchmark, and is protected against regressions. That is the "everyone profits" asset.
+
+This is **not** machine learning that auto-updates weights. It is a **human-in-the-loop quality
+benchmark**: annotations → measured gaps + the error taxonomy above → deliberate code fixes
+(recognizer tuning, cross-type precedence, the structural-context flag) → those *fixes* land in the
+repo. The shared synthetic gold GT is the yardstick that makes the improvement measurable and keeps
+it from regressing.
+
 ## Privacy guard
 
 `privacy_guard.py` is a last-resort, defense-in-depth check run immediately before anything is
