@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from app.errors import ApiError
 from app.schemas import (
@@ -34,6 +35,7 @@ from app.schemas import (
     DocumentTextSourceV1,
     PiiInputSourceRole,
     ReadingTextMapSegment,
+    StructuredSpan,
     TextArtifact,
 )
 from app.services.document_text_package import build_document_text_package
@@ -88,6 +90,45 @@ class PiiInputTextSource:
     flags: tuple[str, ...] = ()
 
 
+# Structural kinds PII structural-context validation cares about. ``table_cell`` bounds a candidate
+# to its cell, ``field_label``/``field_value`` a label/value pair, ``heading`` a section title.
+PiiStructuralSpanKind = Literal["table_cell", "field_label", "field_value", "heading"]
+
+
+@dataclass(frozen=True)
+class PiiInputStructuralSpan:
+    """One ``structured_content`` region exposed as offsets + role, never as text.
+
+    This realizes the ``structured_hint`` role as *data* (not just an availability flag) so a later,
+    strictly subtractive PII structural-context validation stage can clip or reject candidates. Both
+    offset pairs index the **technical raw text PII detects on**, verified against the OCR builder,
+    the schema validator, and PII's own per-page detection loop:
+
+    - ``page_start``/``page_end`` are page-local into the raw per-page text (``PiiInputPage.text``),
+      aligning with ``PiiEntity.page_start_offset``/``page_end_offset``.
+    - ``raw_start``/``raw_end`` are global into the combined raw text (``primary_source.text``),
+      aligning with ``PiiEntity.start_offset``/``end_offset``. Despite the ``StructuredSpan``
+      schema's ``canonical_*`` naming, these offsets reference the raw text, not ``reading_text``.
+
+    The global ``raw_*`` pair is the robust alignment key: a paged document also matches on
+    ``page_number``, but a non-paged document (DOCX) carries structural ``page_number = 1`` while
+    its detections carry ``page_number = None`` — only the raw offsets align there.
+
+    ``role`` is a bounded code interpreted in the context of ``kind`` (the table cell role for
+    ``table_cell``; the field type hint for ``field_label``/``field_value``; ``"section"`` for a
+    heading). ``container_id`` is the owning table/field/section id. No source text is copied.
+    """
+
+    kind: PiiStructuralSpanKind
+    page_number: int
+    page_start: int
+    page_end: int
+    raw_start: int
+    raw_end: int
+    container_id: str
+    role: str
+
+
 @dataclass(frozen=True)
 class PiiInputQualityHint:
     """Trust/uncertainty context from the package's quality evidence. Counts/flags only, no text."""
@@ -117,6 +158,7 @@ class PiiInputDocumentV1:
     reading_text: str | None
     reading_text_map: tuple[ReadingTextMapSegment, ...]
     quality_hint: PiiInputQualityHint | None
+    structural_spans: tuple[PiiInputStructuralSpan, ...] = ()
     warnings: tuple[str, ...] = ()
     blockers: tuple[str, ...] = ()
     missing_capabilities: tuple[str, ...] = ()
@@ -144,6 +186,11 @@ class PiiInputDocumentV1:
     def has_usable_raw_text(self) -> bool:
         """True when the primary raw source has non-empty text to detect on."""
         return self.primary_source.available
+
+    @property
+    def has_structural_spans(self) -> bool:
+        """True when ``structured_content`` exposed at least one usable structural region."""
+        return bool(self.structural_spans)
 
     def source(self, name: str) -> PiiInputTextSource | None:
         return next((source for source in self.text_sources if source.name == name), None)
@@ -176,6 +223,7 @@ def build_pii_input_document(
         reading_text=_canonical_text(text_sources),
         reading_text_map=tuple(package.reading_text_map),
         quality_hint=_build_quality_hint(package),
+        structural_spans=_build_structural_spans(package),
         warnings=tuple(package.warnings),
         blockers=tuple(package.blockers),
         missing_capabilities=tuple(package.missing_capabilities),
@@ -250,6 +298,65 @@ def _canonical_text(sources: tuple[PiiInputTextSource, ...]) -> str | None:
         (source for source in sources if source.name == "canonical_reading_text"), None
     )
     return canonical.text if canonical is not None else None
+
+
+def _build_structural_spans(
+    package: DocumentTextPackageV1,
+) -> tuple[PiiInputStructuralSpan, ...]:
+    """Flatten ``structured_content`` into offset-only structural spans (no source text).
+
+    Emits one span per table cell, per field label and value, and per section heading. Table
+    captions are skipped: the schema carries them as text without an offset span, and this stage is
+    strictly offset-driven. The package is only read, never mutated.
+    """
+    structured = package.structured_content
+    if structured is None:
+        return ()
+    spans: list[PiiInputStructuralSpan] = []
+    for page in structured.pages:
+        for table in page.tables:
+            for cell in table.cells:
+                spans.append(
+                    _structural_span("table_cell", table.page_number, cell.span,
+                                     container_id=table.table_id, role=cell.role)
+                )
+        for field in page.fields:
+            spans.append(
+                _structural_span("field_label", field.page_number, field.label_span,
+                                 container_id=field.field_id, role=field.field_type_hint)
+            )
+            spans.append(
+                _structural_span("field_value", field.page_number, field.value_span,
+                                 container_id=field.field_id, role=field.field_type_hint)
+            )
+        for section in page.sections:
+            spans.append(
+                _structural_span("heading", section.page_number, section.heading_span,
+                                 container_id=section.section_id, role="section")
+            )
+    return tuple(spans)
+
+
+def _structural_span(
+    kind: PiiStructuralSpanKind,
+    page_number: int,
+    span: StructuredSpan,
+    *,
+    container_id: str,
+    role: str,
+) -> PiiInputStructuralSpan:
+    # ``StructuredSpan.canonical_*`` indexes the combined *raw* text (schema misnomer); expose it as
+    # ``raw_*`` so consumers align on the raw coordinate system PII detects on.
+    return PiiInputStructuralSpan(
+        kind=kind,
+        page_number=page_number,
+        page_start=span.page_start,
+        page_end=span.page_end,
+        raw_start=span.canonical_start,
+        raw_end=span.canonical_end,
+        container_id=container_id,
+        role=role,
+    )
 
 
 def _build_quality_hint(package: DocumentTextPackageV1) -> PiiInputQualityHint | None:

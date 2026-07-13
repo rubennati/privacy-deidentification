@@ -20,6 +20,11 @@ from app.main import app
 from app.schemas import (
     LayoutBlock,
     StructuredContent,
+    StructuredContentSummary,
+    StructuredField,
+    StructuredPageContent,
+    StructuredSection,
+    StructuredSpan,
     TextArtifact,
     TextContent,
     TextPageResult,
@@ -219,6 +224,7 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
             "overlap_decision": None,
             "review_required": False,
             "superseded_candidate_ids": [],
+            "structural_reasons": [],
         },
     }
     # PII now consumes the OCR Output Contract v1 package via the intake adapter (ADR-0028).
@@ -1043,3 +1049,111 @@ def test_validation_summary_and_reasons_never_contain_the_raw_secret(
     assert set(content["validation"]["score_down_by_reason"]).issubset(known_reason_codes)
     assert secret not in str(content["validation"])
     assert all(secret not in record.getMessage() for record in caplog.records)
+
+
+# --- Structural-context validation wiring (ADR-0043, config-flagged, default off) ----------------
+
+
+def _field_structure(raw: str, label: str, value: str) -> StructuredContent:
+    def _span(sub: str) -> StructuredSpan:
+        start = raw.index(sub)
+        return StructuredSpan(
+            canonical_start=start, canonical_end=start + len(sub),
+            page_start=start, page_end=start + len(sub),
+        )
+
+    field = StructuredField(
+        field_id="field-p1-1", page_number=1, label=label,
+        label_span=_span(label), value_span=_span(value),
+        field_type_hint="person_name", confidence=0.9, source="canonical_text",
+    )
+    return StructuredContent(
+        pages=[StructuredPageContent(page_number=1, fields=[field], source="canonical_text",
+                                     confidence=0.9)],
+        summary=StructuredContentSummary(page_count=1, table_count=0, field_count=1,
+                                         section_count=0),
+        flags=["span_backed"],
+    )
+
+
+def _heading_structure(raw: str) -> StructuredContent:
+    span = StructuredSpan(
+        canonical_start=0, canonical_end=len(raw), page_start=0, page_end=len(raw)
+    )
+    section = StructuredSection(
+        section_id="section-p1-1", page_number=1, heading=raw, heading_span=span, span=span,
+        source="canonical_text", confidence=0.9, flags=["heading_only"],
+    )
+    return StructuredContent(
+        pages=[StructuredPageContent(page_number=1, sections=[section], source="canonical_text",
+                                     confidence=0.9)],
+        summary=StructuredContentSummary(page_count=1, table_count=0, field_count=0,
+                                         section_count=1),
+        flags=["span_backed"],
+    )
+
+
+def test_structural_validation_off_by_default_leaves_entity_untouched(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_candidate_validation_enabled = False
+    document_id = str(_upload_document(client)["id"])
+    raw = "Name: Max Mustermann"
+    _save_text(settings, document_id, raw, pages=[raw], structured_content=_field_structure(
+        raw, "Name", "Max Mustermann"))
+    pii_fake.results[raw] = [_entity("PERSON", 0, 20, 0.9)]  # captured the whole labelled line
+
+    content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
+
+    assert content["structural_validation"] is None
+    (entity,) = content["entities"]
+    assert (entity["start_offset"], entity["end_offset"]) == (0, 20)
+    assert entity["provenance"]["structural_reasons"] == []
+
+
+def test_structural_validation_enabled_trims_label_value(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_candidate_validation_enabled = False
+    settings.pii_structural_validation_enabled = True
+    document_id = str(_upload_document(client)["id"])
+    raw = "Name: Max Mustermann"
+    _save_text(settings, document_id, raw, pages=[raw], structured_content=_field_structure(
+        raw, "Name", "Max Mustermann"))
+    pii_fake.results[raw] = [_entity("PERSON", 0, 20, 0.9)]
+
+    content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
+
+    (entity,) = content["entities"]
+    assert (entity["start_offset"], entity["end_offset"]) == (6, 20)
+    assert entity["text"] == "Max Mustermann"
+    assert entity["page_start_offset"] == 6
+    assert entity["provenance"]["structural_reasons"] == ["structural_label_value_trimmed"]
+    assert content["structural_validation"] == {
+        "applied": True,
+        "input_candidate_count": 1,
+        "output_entity_count": 1,
+        "clipped_count": 0,
+        "trimmed_count": 1,
+        "dropped_count": 0,
+        "by_reason": {"structural_label_value_trimmed": 1},
+    }
+
+
+def test_structural_validation_enabled_drops_heading_false_positive(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_candidate_validation_enabled = False
+    settings.pii_structural_validation_enabled = True
+    document_id = str(_upload_document(client)["id"])
+    raw = "Leistungen und Positionen"
+    _save_text(settings, document_id, raw, pages=[raw], structured_content=_heading_structure(raw))
+    # A labelled-line recognizer misfiring on a section title — the motivating ADDRESS FP. Names and
+    # organizations are intentionally NOT heading-rejectable (they legitimately are headings).
+    pii_fake.results[raw] = [_entity("ADDRESS", 0, len(raw), 0.9)]
+
+    content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
+
+    assert content["entities"] == []
+    assert content["structural_validation"]["dropped_count"] == 1
+    assert content["structural_validation"]["by_reason"] == {"structural_heading_rejected": 1}

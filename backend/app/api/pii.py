@@ -38,8 +38,14 @@ _JOB_ID_HEADER = "X-Job-Id"
 
 
 def provide_pii_analyzer(settings: Settings = Depends(get_settings)) -> PiiAnalyzer:
-    """Bind the configured single language and local spaCy package to the adapter."""
-    return get_pii_analyzer(settings.pii_language, settings.pii_spacy_model)
+    """Bind the configured language, spaCy package, and NER backend to the adapter."""
+    return get_pii_analyzer(
+        settings.pii_language,
+        settings.pii_spacy_model,
+        settings.pii_ner_backend,
+        str(settings.gliner_model_dir),
+        settings.gliner_model_name,
+    )
 
 
 @router.post(

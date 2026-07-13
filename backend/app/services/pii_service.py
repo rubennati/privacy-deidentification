@@ -16,6 +16,7 @@ from app.schemas import (
     PiiEntity,
     PiiInputContractSummary,
     PiiRunRequest,
+    PiiStructuralValidationSummary,
     PiiValidationSummary,
 )
 from app.services.artifact_service import (
@@ -30,6 +31,10 @@ from app.services.pii_candidate_validation import ValidatedEntity, validate_cand
 from app.services.pii_input import PiiInputAdapter, PiiInputDocumentV1
 from app.services.pii_overlap import resolve_pii_overlaps
 from app.services.pii_profiles import PiiProfileName, get_pii_profile
+from app.services.pii_structural_validation import (
+    StructuralValidationResult,
+    validate_structural_context,
+)
 from app.services.reading_text_projection import project_pii_entities_to_reading_text
 
 
@@ -70,6 +75,7 @@ class ResolvedPiiRunSettings:
     pii_language: str
     pii_score_threshold: float
     pii_candidate_validation_enabled: bool
+    pii_structural_validation_enabled: bool
     source: Literal["server-default", "dev-ui-override"]
 
 
@@ -172,7 +178,20 @@ def _analyze_text(
 
     try:
         entities = _build_entities(text, validated_detected)
+        # Structural-context validation is a second subtractive stage after candidate validation and
+        # before overlap resolution (config-flagged, default off). It clips/rejects boundary and
+        # structural false positives using the contract's structured_content spans; detection input
+        # stays raw and no entity is expanded, moved, or relabelled.
+        structural = validate_structural_context(
+            entities,
+            pii_input.structural_spans,
+            enabled=run_settings.pii_structural_validation_enabled,
+        )
+        entities = structural.entities
         entities, overlap_summary = resolve_pii_overlaps(entities)
+        # Overlap resolution rebuilds provenance from scratch, so structural reasons are attached to
+        # the surviving entities afterwards (matched by the ids the structural stage preserved).
+        entities = _apply_structural_provenance(entities, structural)
         entities = project_pii_entities_to_reading_text(
             entities,
             pii_input.reading_text_map,
@@ -216,6 +235,43 @@ def _analyze_text(
         ),
         input_contract=_build_input_contract_summary(pii_input),
         overlap_resolution=overlap_summary,
+        structural_validation=_build_structural_summary(structural),
+    )
+
+
+def _apply_structural_provenance(
+    entities: list[PiiEntity], structural: StructuralValidationResult
+) -> list[PiiEntity]:
+    """Record structural reason codes on the surviving entities' (overlap-built) provenance."""
+    reasons_by_id = structural.reasons_by_entity_id
+    if not reasons_by_id:
+        return entities
+    updated: list[PiiEntity] = []
+    for entity in entities:
+        reasons = reasons_by_id.get(entity.id)
+        if not reasons or entity.provenance is None:
+            updated.append(entity)
+            continue
+        provenance = entity.provenance.model_copy(update={"structural_reasons": list(reasons)})
+        updated.append(entity.model_copy(update={"provenance": provenance}))
+    return updated
+
+
+def _build_structural_summary(
+    structural: StructuralValidationResult,
+) -> PiiStructuralValidationSummary | None:
+    """Map the pure stage's summary onto the persisted artifact model; None when it was disabled."""
+    summary = structural.summary
+    if not summary.applied:
+        return None
+    return PiiStructuralValidationSummary(
+        applied=True,
+        input_candidate_count=summary.input_count,
+        output_entity_count=summary.output_count,
+        clipped_count=summary.clipped_count,
+        trimmed_count=summary.trimmed_count,
+        dropped_count=summary.dropped_count,
+        by_reason=dict(sorted(summary.by_reason.items())),
     )
 
 
@@ -244,6 +300,7 @@ def _resolve_run_settings(
             pii_language=settings.pii_language,
             pii_score_threshold=settings.pii_score_threshold,
             pii_candidate_validation_enabled=settings.pii_candidate_validation_enabled,
+            pii_structural_validation_enabled=settings.pii_structural_validation_enabled,
             source="server-default",
         )
     if not settings.enable_dev_engine_settings:
@@ -257,6 +314,7 @@ def _resolve_run_settings(
         pii_language=settings.pii_language,
         pii_score_threshold=settings.pii_score_threshold,
         pii_candidate_validation_enabled=settings.pii_candidate_validation_enabled,
+        pii_structural_validation_enabled=settings.pii_structural_validation_enabled,
         source="dev-ui-override",
     )
 

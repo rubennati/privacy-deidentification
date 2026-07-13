@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import asdict
 
 import pytest
 
@@ -19,7 +20,10 @@ from app.schemas import (
     StructuredContentSummary,
     StructuredField,
     StructuredPageContent,
+    StructuredSection,
     StructuredSpan,
+    StructuredTable,
+    StructuredTableCell,
     TextArtifact,
     TextContent,
     TextPageResult,
@@ -77,6 +81,73 @@ def _structured_content(raw: str) -> StructuredContent:
     )
 
 
+def _rich_structured_content(raw: str) -> StructuredContent:
+    """A single-page structure with a table cell pair, a label/value field, and a section heading.
+
+    Offsets are resolved from ``raw`` by substring lookup, so each fixture value must be unique.
+    Single page ⇒ ``canonical_base = 0`` ⇒ canonical (global) and page-local offsets coincide.
+    """
+
+    def _span(sub: str) -> StructuredSpan:
+        start = raw.index(sub)
+        end = start + len(sub)
+        return StructuredSpan(
+            canonical_start=start, canonical_end=end, page_start=start, page_end=end
+        )
+
+    table = StructuredTable(
+        table_id="table-p1-1",
+        page_number=1,
+        row_count=1,
+        column_count=2,
+        cells=[
+            StructuredTableCell(row_index=0, column_index=0, span=_span("Artikel"), role="header"),
+            StructuredTableCell(row_index=0, column_index=1, span=_span("Menge"), role="header"),
+        ],
+        source="canonical_text",
+        confidence=0.9,
+    )
+    field = StructuredField(
+        field_id="field-p1-1",
+        page_number=1,
+        label="Name",
+        label_span=_span("Name"),
+        value_span=_span("Max Mustermann"),
+        field_type_hint="person_name",
+        confidence=0.9,
+        source="canonical_text",
+    )
+    section = StructuredSection(
+        section_id="section-p1-1",
+        page_number=1,
+        heading="Kundendaten",
+        heading_span=_span("Kundendaten"),
+        span=StructuredSpan(
+            canonical_start=0, canonical_end=len(raw), page_start=0, page_end=len(raw)
+        ),
+        field_ids=["field-p1-1"],
+        table_ids=["table-p1-1"],
+        source="canonical_text",
+        confidence=0.9,
+    )
+    return StructuredContent(
+        pages=[
+            StructuredPageContent(
+                page_number=1,
+                tables=[table],
+                fields=[field],
+                sections=[section],
+                source="canonical_text",
+                confidence=0.9,
+            )
+        ],
+        summary=StructuredContentSummary(
+            page_count=1, table_count=1, field_count=1, section_count=1
+        ),
+        flags=["span_backed"],
+    )
+
+
 def _text_artifact(
     *,
     raw: str = _RAW,
@@ -84,6 +155,7 @@ def _text_artifact(
     include_layout: bool = True,
     include_structured: bool = True,
     include_quality: bool = True,
+    structured_override: StructuredContent | None = None,
 ) -> TextArtifact:
     page = TextPageResult(
         page_number=1,
@@ -93,7 +165,12 @@ def _text_artifact(
         text=raw,
         text_char_count=len(raw),
     )
-    structured = _structured_content(raw) if include_structured else None
+    if structured_override is not None:
+        structured: StructuredContent | None = structured_override
+    elif include_structured:
+        structured = _structured_content(raw)
+    else:
+        structured = None
     reading: ReadingTextResult | None = None
     reading_map: list[ReadingTextMapSegment] = []
     if include_canonical:
@@ -131,7 +208,7 @@ def _text_artifact(
         reading_text_map_version=("1" if include_canonical else None),
         reading_text_map=reading_map,
         layout_text_result=(raw if include_layout else None),
-        structured_content_version=("1" if include_structured else None),
+        structured_content_version=("1" if structured is not None else None),
         structured_content=structured,
         quality_evidence_version=("1" if include_quality else None),
         quality_evidence=quality,
@@ -335,3 +412,80 @@ def test_no_raw_snippets_duplicated_into_metadata() -> None:
     for source in pii_input.text_sources:
         if source.name not in ("technical_raw_text", "layout_text"):
             assert source.text is None
+
+
+# --- 4. Structural spans exposed as data (structural-context validation plumbing) ----------------
+
+
+def test_structural_spans_absent_without_structured_content() -> None:
+    pii_input = PiiInputAdapter.from_text_artifact(_text_artifact(include_structured=False))
+    assert pii_input.structural_spans == ()
+    assert pii_input.has_structural_spans is False
+
+
+def test_structural_spans_expose_field_label_and_value() -> None:
+    # The default fixture carries one label/value field ("Hello" -> "world").
+    pii_input = PiiInputAdapter.from_text_artifact(_text_artifact())
+    assert pii_input.has_structural_spans is True
+    by_kind = {span.kind: span for span in pii_input.structural_spans}
+    assert set(by_kind) == {"field_label", "field_value"}
+    label, value = by_kind["field_label"], by_kind["field_value"]
+    assert (label.raw_start, label.raw_end) == (0, 5)
+    assert (value.raw_start, value.raw_end) == (6, 11)
+    assert label.container_id == value.container_id == "field-p1-1"
+    assert _RAW[label.raw_start : label.raw_end] == "Hello"
+    assert _RAW[value.raw_start : value.raw_end] == "world"
+
+
+def test_structural_spans_cover_cell_field_and_heading_kinds() -> None:
+    raw = "Kundendaten\nName: Max Mustermann\nArtikel Menge Wert\n"
+    artifact = _text_artifact(raw=raw, structured_override=_rich_structured_content(raw))
+    pii_input = PiiInputAdapter.from_text_artifact(artifact)
+
+    spans = pii_input.structural_spans
+    assert {span.kind for span in spans} == {"table_cell", "field_label", "field_value", "heading"}
+
+    cells = [span for span in spans if span.kind == "table_cell"]
+    assert {raw[span.raw_start : span.raw_end] for span in cells} == {"Artikel", "Menge"}
+    assert all(span.container_id == "table-p1-1" and span.role == "header" for span in cells)
+
+    heading = next(span for span in spans if span.kind == "heading")
+    assert raw[heading.raw_start : heading.raw_end] == "Kundendaten"
+    assert heading.container_id == "section-p1-1"
+    assert heading.role == "section"
+
+    value = next(span for span in spans if span.kind == "field_value")
+    assert raw[value.raw_start : value.raw_end] == "Max Mustermann"
+    assert value.role == "person_name"
+
+
+def test_structural_span_offsets_align_with_raw_and_page_text() -> None:
+    # The core invariant: page-local and global raw offsets both slice the SAME text PII detects on,
+    # exactly as PiiEntity.page_*_offset / start_offset|end_offset do.
+    raw = "Kundendaten\nName: Max Mustermann\nArtikel Menge Wert\n"
+    artifact = _text_artifact(raw=raw, structured_override=_rich_structured_content(raw))
+    pii_input = PiiInputAdapter.from_text_artifact(artifact)
+
+    combined = pii_input.primary_source.text
+    assert combined is not None
+    page_text = {page.page_number: page.text for page in pii_input.pages}
+    for span in pii_input.structural_spans:
+        assert combined[span.raw_start : span.raw_end] == (
+            page_text[span.page_number][span.page_start : span.page_end]
+        )
+
+
+def test_structural_spans_carry_no_source_text() -> None:
+    marker = "AT611904300234573201"
+    raw = f"IBAN {marker}."
+    artifact = _text_artifact(
+        raw=raw, include_canonical=False, include_quality=False, include_layout=False
+    )
+    pii_input = PiiInputAdapter.from_text_artifact(artifact)
+
+    serialized = json.dumps([asdict(span) for span in pii_input.structural_spans])
+    assert marker not in serialized
+    # The offsets still locate the value in the raw text source, without copying it into metadata.
+    value = next(span for span in pii_input.structural_spans if span.kind == "field_value")
+    assert pii_input.primary_source.text is not None
+    assert pii_input.primary_source.text[value.raw_start : value.raw_end] == marker

@@ -341,7 +341,11 @@ def test_broad_and_review_heavy_profiles_keep_ner_explicit() -> None:
     broad = Settings(PII_PROFILE="broad-review")
     review_heavy = Settings(PII_PROFILE="review-heavy")
 
-    assert {"PERSON", "ORGANIZATION", "LOCATION"}.issubset(broad.pii_entity_types)
+    assert {"PERSON", "ORGANIZATION"}.issubset(broad.pii_entity_types)
+    # LOCATION is deliberately excluded from every named profile (it over-tags; residence is
+    # covered by ADDRESS, birthplace by BIRTH_PLACE) — selectable only via a custom allowlist.
+    assert "LOCATION" not in broad.pii_entity_types
+    assert "LOCATION" not in review_heavy.pii_entity_types
     assert "DATE_TIME" not in broad.pii_entity_types
     assert "DATE_TIME" in review_heavy.pii_entity_types
 
