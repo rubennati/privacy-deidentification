@@ -2,6 +2,8 @@
 
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
+# Developer-mode overlay (dev settings + GLiNER + more memory), applied only by `make dev`.
+DEV := -f docker-compose.yml -f docker-compose.dev.yml
 # Single host data root, mirrored from docker-compose.yml's DATA_ROOT default. Override to relocate
 # all bind-mounted storage (uploads, document-store, job-state, feedback archive, OCR models).
 DATA_ROOT ?= volumes
@@ -15,8 +17,9 @@ FRONTEND_RUN := docker run --rm -v "$(CURDIR)/frontend":/app -v privacy-deidenti
 RUNTIME_RUN := docker run --rm -v "$(CURDIR)":/repo -w /repo python:3.12-slim sh -lc
 BENCHMARK_RUN := docker run --rm -v "$(CURDIR)":/repo -w /repo python:3.12-slim sh -lc
 
-.PHONY: help runtime-dirs up down build rebuild ocr-models ocr-smoke pii-smoke logs ps shell-api \
-	lint typecheck test lock benchmark-private benchmark-private-json benchmark-test docker-df
+.PHONY: help runtime-dirs up dev update rebuild stop down prune ocr-models ocr-smoke pii-smoke \
+	logs ps shell-api lint typecheck test lock benchmark-private benchmark-private-json \
+	benchmark-test docker-df
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -26,17 +29,42 @@ runtime-dirs: ## Create local bind-mount roots used by Compose
 	mkdir -p $(DATA_ROOT)/uploads $(DATA_ROOT)/document-store $(DATA_ROOT)/job-state \
 		$(DATA_ROOT)/pii-feedback-archive $(DATA_ROOT)/ocr-models
 
-up: runtime-dirs ## Build and start frontend + api + ocr-worker (http://localhost:8080)
-	$(COMPOSE) up -d --build
+# --- Lifecycle (each command maps 1:1 to docker compose) -----------------------------------------
+# up / dev / stop / down never build, so daily start/stop can't hit the Colima build race; only
+# update / rebuild build (when you actually changed code), and those retry the transient race.
+# _build_retry: run the given compose build up to 3 times (the containerd content store can fail to
+# commit the large venv layer — a transient Colima bug — see README "Known local build issue").
+define _build_retry
+	n=1; while [ $$n -le 3 ]; do $(1) && break; \
+		echo "  build attempt $$n/3 failed (Colima containerd race) — retrying"; \
+		docker image prune -f >/dev/null 2>&1; sleep 3; n=$$((n+1)); done; \
+	[ $$n -le 3 ] || { echo "  build failed 3x — Colima containerd race; see README"; exit 1; }
+endef
 
-down: ## Stop the stack; uploads, artifacts, models, and SQLite job state remain on disk
+up: runtime-dirs ## Run the stack, production-local (http://localhost:8080); no build
+	$(COMPOSE) up -d
+
+dev: runtime-dirs ## Run in developer mode (dev feedback UI + GLiNER + more memory); no build
+	$(COMPOSE) $(DEV) up -d
+
+update: runtime-dirs ## Apply code changes: rebuild only the changed layers, then restart
+	@$(call _build_retry,$(COMPOSE) build)
+	$(COMPOSE) up -d
+
+rebuild: runtime-dirs ## Force a full no-cache rebuild, restart, then drop the superseded layers
+	@$(call _build_retry,$(COMPOSE) build --no-cache)
+	$(COMPOSE) up -d
+	docker image prune -f
+
+stop: ## Stop the stack; containers are kept, all data stays on disk
+	$(COMPOSE) stop
+
+down: ## Stop and remove the containers; uploads, artifacts, models, and job state remain on disk
 	$(COMPOSE) down
 
-build: ## Build the frontend and shared api/ocr-worker image
-	$(COMPOSE) build
-
-rebuild: ## Rebuild images without cache
-	$(COMPOSE) build --no-cache
+prune: ## Reclaim this project's rebuild leftovers (dangling images + build cache; safe)
+	docker image prune -f
+	docker builder prune -f
 
 ocr-models: ## Download PaddleOCR models into volumes/ocr-models (idempotent)
 	./scripts/fetch-ocr-models.sh

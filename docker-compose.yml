@@ -151,10 +151,13 @@ services:
     # --- Storage ---
 
     # --- Networking ---
+    # Bind to localhost by default (no LAN exposure). Set WEB_BIND=0.0.0.0 to reach it from other
+    # machines on the LAN (e.g. a demo). The frontend is the only service on the ingress network.
     ports:
-      - "${WEB_PORT:-8080}:8080"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
     networks:
       - private
+      - ingress
 
     # --- Health ---
     healthcheck:
@@ -170,6 +173,16 @@ services:
           memory: ${FRONTEND_MEMORY_LIMIT:-128M}
 
 networks:
+  # Backend network for api + ocr-worker (+ frontend, to reach the api). `internal: true` gives it
+  # no gateway, so these containers — which do ALL document/PII processing (OCR, PII, GLiNER) —
+  # provably cannot reach the internet. Container-to-container DNS still works. Verified: api egress
+  # is blocked while the app stays reachable.
   private:
     name: ${COMPOSE_PROJECT_NAME:-privacy-deidentification}-private
+    driver: bridge
+    internal: true
+  # Ingress-only network carrying the published web port. Only the frontend (static SPA + reverse
+  # proxy, never touches documents/PII) is attached here; a published port needs a non-internal net.
+  ingress:
+    name: ${COMPOSE_PROJECT_NAME:-privacy-deidentification}-ingress
     driver: bridge

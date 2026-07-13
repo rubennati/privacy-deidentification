@@ -1,0 +1,22 @@
+# Developer-mode overlay for docker-compose.yml. Applied by `make dev`; NOT loaded by `make up`
+# (the production-local / handover mode). It only flips developer conveniences on top of the base:
+#
+#   - ENABLE_DEV_ENGINE_SETTINGS=true  → the dev-only review feedback + per-run engine-setting UI.
+#   - PII_NER_BACKEND=gliner           → the stronger local NER (needs the offline model; provision
+#                                        it with scripts/fetch-ner-models.sh) and more memory.
+#
+# No image change, no network/port change, no external calls — everything stays local.
+services:
+  api:
+    environment:
+      ENABLE_DEV_ENGINE_SETTINGS: "true"
+      PII_NER_BACKEND: "gliner"
+    deploy:
+      resources:
+        limits:
+          memory: ${API_MEMORY_LIMIT:-3g}
+
+  ocr-worker:
+    environment:
+      ENABLE_DEV_ENGINE_SETTINGS: "true"
+      PII_NER_BACKEND: "gliner"
