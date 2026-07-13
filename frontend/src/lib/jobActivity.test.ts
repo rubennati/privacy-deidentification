@@ -9,16 +9,19 @@ import {
 } from "./jobActivity";
 
 function job(overrides: Partial<JobStatus> = {}): JobStatus {
+  // A fresh timestamp by default: persisted *non-terminal* jobs older than the stale-activity
+  // bound are intentionally dropped at load (see the dedicated tests below).
+  const now = new Date().toISOString();
   return {
     job_id: "job-1",
     document_id: "doc-1",
     kind: "ocr_text",
     status: "pending",
     execution_mode: "future_worker",
-    created_at: "2026-07-09T10:00:00.000000Z",
+    created_at: now,
     started_at: null,
     finished_at: null,
-    updated_at: "2026-07-09T10:00:00.000000Z",
+    updated_at: now,
     attempt_count: 0,
     error_code: null,
     error_message: null,
@@ -274,5 +277,135 @@ describe("resumeActiveJobs", () => {
 
     expect(() => resumeActiveJobs(store, "doc-1", fetchStatus, fetchDocumentJobs)).not.toThrow();
     await vi.waitFor(() => expect(fetchDocumentJobs).toHaveBeenCalled());
+  });
+});
+
+// --- Runtime recovery hardening (ADR-0041) -----------------------------------------------------
+
+describe("poll failure handling", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("retries transient fetch failures and still reaches the terminal status", async () => {
+    const store = createJobActivityStore(null);
+    const fetchStatus = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Netzwerkfehler"))
+      .mockRejectedValueOnce(new Error("Netzwerkfehler"))
+      .mockResolvedValue(job({ status: "succeeded" }));
+
+    const pending = pollJobUntilTerminal(store, "job-1", fetchStatus, { intervalMs: 10 });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+
+    expect(result.status).toBe("succeeded");
+    expect(store.getPollFailure("job-1")).toBeUndefined();
+  });
+
+  it("gives up after repeated failures, records the failure, and rejects — never hangs", async () => {
+    const store = createJobActivityStore(null);
+    const fetchStatus = vi.fn().mockRejectedValue(new Error("Server nicht erreichbar"));
+
+    const pending = pollJobUntilTerminal(store, "job-1", fetchStatus, { intervalMs: 10 });
+    const outcome = pending.catch((error: Error) => error);
+    await vi.runAllTimersAsync();
+    const error = await outcome;
+
+    expect(error).toBeInstanceOf(Error);
+    expect(store.getPollFailure("job-1")).toBe("Server nicht erreichbar");
+    expect(store.isPolling("job-1")).toBe(false);
+  });
+
+  it("a concurrent waiter settles when the owning loop gives up (no unresolved waiters)", async () => {
+    const store = createJobActivityStore(null);
+    const fetchStatus = vi.fn().mockRejectedValue(new Error("kaputt"));
+
+    const owner = pollJobUntilTerminal(store, "job-1", fetchStatus, { intervalMs: 10 });
+    const ownerOutcome = owner.catch((error: Error) => error);
+    const waiter = pollJobUntilTerminal(store, "job-1", fetchStatus, { intervalMs: 10 });
+    const waiterOutcome = waiter.catch((error: Error) => error);
+    await vi.runAllTimersAsync();
+
+    expect(await ownerOutcome).toBeInstanceOf(Error);
+    const waiterError = await waiterOutcome;
+    expect(waiterError).toBeInstanceOf(Error);
+    expect((waiterError as Error).message).toBe("kaputt");
+  });
+
+  it("a 404 removes the vanished job from tracking instead of retrying forever", async () => {
+    const store = createJobActivityStore(null);
+    store.record(job({ status: "running" }));
+    const gone = Object.assign(new Error("Job not found."), { status: 404 });
+    const fetchStatus = vi.fn().mockRejectedValue(gone);
+
+    const pending = pollJobUntilTerminal(store, "job-1", fetchStatus, { intervalMs: 10 });
+    const outcome = pending.catch((error: Error) => error);
+    await vi.runAllTimersAsync();
+
+    expect(await outcome).toBe(gone);
+    expect(store.getJob("job-1")).toBeUndefined();
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("a concurrent waiter settles when the owner stops at its deadline", async () => {
+    const store = createJobActivityStore(null);
+    const fetchStatus = vi.fn().mockResolvedValue(job({ status: "running" }));
+
+    const owner = pollJobUntilTerminal(store, "job-1", fetchStatus, {
+      intervalMs: 10,
+      deadlineAt: Date.now(),
+    });
+    const waiter = pollJobUntilTerminal(store, "job-1", fetchStatus);
+    await vi.runAllTimersAsync();
+
+    expect((await owner).status).toBe("running");
+    expect((await waiter).status).toBe("running");
+  });
+
+  it("resumeActiveJobs records a resume failure without an unhandled rejection", async () => {
+    const storage = createFakeStorage();
+    const bootstrap = createJobActivityStore(storage);
+    bootstrap.record(job({ job_id: "resumed", status: "running" }));
+    const store = createJobActivityStore(storage);
+    const fetchStatus = vi.fn().mockRejectedValue(new Error("dauerhaft kaputt"));
+
+    resumeActiveJobs(store, "doc-1", fetchStatus);
+    await vi.runAllTimersAsync();
+
+    expect(store.getPollFailure("resumed")).toBe("dauerhaft kaputt");
+    expect(store.isPolling("resumed")).toBe(false);
+  });
+});
+
+describe("persisted activity hygiene", () => {
+  it("drops a persisted non-terminal job that is too old to still be running", () => {
+    const storage = createFakeStorage();
+    const bootstrap = createJobActivityStore(storage);
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    bootstrap.record(job({ job_id: "stale-running", status: "running", updated_at: twoDaysAgo }));
+    bootstrap.record(job({ job_id: "old-terminal", status: "succeeded", updated_at: twoDaysAgo }));
+
+    const store = createJobActivityStore(storage);
+    store.loadPersisted();
+
+    expect(store.getJob("stale-running")).toBeUndefined();
+    expect(store.getJob("old-terminal")?.status).toBe("succeeded");
+  });
+
+  it("drops a persisted job whose status this build does not understand", () => {
+    const storage = createFakeStorage();
+    storage.setItem(
+      "runtime.job-activity.v1",
+      JSON.stringify([{ ...job({ job_id: "future" }), status: "paused" }]),
+    );
+
+    const store = createJobActivityStore(storage);
+    store.loadPersisted();
+
+    expect(store.getJob("future")).toBeUndefined();
   });
 });
