@@ -3,11 +3,13 @@ from __future__ import annotations
 from artifact_loader import DetectedEntity, ValidationSummary
 from document_matching import GroundTruthEntityAnchor
 from pii_matching import (
+    BoundaryAccuracy,
     aggregate_validation_summaries,
     build_document_pii_metrics,
     build_global_pii_metrics,
     canonicalize,
     match_document_entities,
+    span_iou,
     spans_overlap_enough,
     type_group,
 )
@@ -220,3 +222,83 @@ def test_aggregate_validation_summaries_handles_empty_input() -> None:
     assert summary.documents_considered == 0
     assert summary.total_kept == 0
     assert summary.dropped_by_reason == {}
+
+
+# --- Boundary accuracy (additive; credits clip/trim without changing TP/FP/FN) --------------------
+
+
+def test_span_iou_exact_overlap_and_disjoint() -> None:
+    assert span_iou(10, 30, 10, 30) == 1.0
+    assert span_iou(0, 10, 100, 110) == 0.0
+    # Over-capture: detected [10,40] vs gt [10,30] -> overlap 20 / union 30.
+    assert span_iou(10, 40, 10, 30) == 20 / 30
+
+
+def test_boundary_accuracy_empty_is_zero_without_div_error() -> None:
+    empty = BoundaryAccuracy()
+    assert empty.matched_pairs == 0
+    assert empty.iou_mean == 0.0
+    assert empty.exact_rate == 0.0
+    assert empty.near_exact_rate == 0.0
+
+
+def test_exact_match_scores_perfect_boundary() -> None:
+    result = match_document_entities(
+        [_detected("ADDRESS", 1, 10, 30)], [_gt("ADDRESS", 1, 10, 30)], "page_aware"
+    )
+    assert (result.tp, result.fp, result.fn) == (1, 0, 0)
+    assert result.boundary.matched_pairs == 1
+    assert result.boundary.iou_mean == 1.0
+    assert result.boundary.exact_rate == 1.0
+    assert result.boundary.near_exact_rate == 1.0
+
+
+def test_over_capture_still_a_lenient_tp_but_low_boundary() -> None:
+    # Detected bleeds past the gt end (whole-line ADDRESS). Lenient matcher still counts it a TP.
+    result = match_document_entities(
+        [_detected("ADDRESS", 1, 10, 40)], [_gt("ADDRESS", 1, 10, 30)], "page_aware"
+    )
+    assert (result.tp, result.fp, result.fn) == (1, 0, 0)
+    assert result.boundary.iou_mean == 20 / 30  # < 0.8
+    assert result.boundary.exact_rate == 0.0
+    assert result.boundary.near_exact_rate == 0.0
+
+
+def test_clip_is_measurable_while_tp_fp_fn_unchanged() -> None:
+    # The core reason for this metric: an over-capture and its clipped version score IDENTICAL
+    # lenient TP/FP/FN, but the clip must be visible as a boundary-accuracy gain.
+    gt = [_gt("ADDRESS", 1, 10, 30)]
+    over = match_document_entities([_detected("ADDRESS", 1, 10, 40)], gt, "page_aware")
+    clipped = match_document_entities([_detected("ADDRESS", 1, 10, 30)], gt, "page_aware")
+    assert (over.tp, over.fp, over.fn) == (clipped.tp, clipped.fp, clipped.fn) == (1, 0, 0)
+    assert clipped.boundary.iou_mean > over.boundary.iou_mean
+    assert clipped.boundary.exact_rate == 1.0 and over.boundary.exact_rate == 0.0
+
+
+def test_strict_policy_turns_over_capture_into_a_miss() -> None:
+    detected = [_detected("ADDRESS", 1, 10, 40)]  # IoU 0.667 vs gt -> below near-exact threshold
+    gt = [_gt("ADDRESS", 1, 10, 30)]
+    lenient = match_document_entities(detected, gt, "page_aware")
+    strict = match_document_entities(detected, gt, "page_aware", boundary_policy="strict")
+    assert (lenient.tp, lenient.fp, lenient.fn) == (1, 0, 0)
+    assert (strict.tp, strict.fp, strict.fn) == (0, 1, 1)
+
+
+def test_global_boundary_aggregates_across_documents() -> None:
+    gt = [_gt("ADDRESS", 1, 10, 30)]
+    doc_exact = build_document_pii_metrics(
+        "d1", "A.pdf", [_detected("ADDRESS", 1, 10, 30)], ["ADDRESS"], gt, "page_aware"
+    )
+    doc_over = build_document_pii_metrics(
+        "d2", "B.pdf", [_detected("ADDRESS", 1, 10, 40)], ["ADDRESS"], gt, "page_aware"
+    )
+    global_metrics = build_global_pii_metrics([doc_exact, doc_over])
+    assert global_metrics.boundary.matched_pairs == 2
+    assert global_metrics.boundary.exact_count == 1  # only the exact document
+    assert global_metrics.boundary.iou_mean == (1.0 + 20 / 30) / 2
+
+
+def test_document_level_mode_has_no_boundary_pairs() -> None:
+    detected = [_detected("ORGANIZATION", None, 0, 10, None, None)]
+    result = match_document_entities(detected, [_gt("ORG", None, 0, 0)], "document_level")
+    assert result.boundary.matched_pairs == 0

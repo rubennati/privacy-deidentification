@@ -17,6 +17,7 @@ from artifact_loader import LocalDocument
 from document_matching import AmbiguousMatch, MatchedDocument, MatchResult
 from ocr_metrics import ArtifactAvailability, DocumentOcrMetrics, OcrAggregateMetrics
 from pii_matching import (
+    BoundaryAccuracy,
     DocumentPiiMetrics,
     EntityTypeMetrics,
     GlobalPiiMetrics,
@@ -129,6 +130,17 @@ def _entity_type_metrics_to_dict(metrics: EntityTypeMetrics) -> dict[str, Any]:
     }
 
 
+def _boundary_to_dict(boundary: BoundaryAccuracy) -> dict[str, Any]:
+    """Additive boundary-accuracy block. Credits boundary-tightening (structural clip/trim) without
+    changing TP/FP/FN — the lenient matcher still decides matches."""
+    return {
+        "matched_pairs": boundary.matched_pairs,
+        "iou_mean": round(boundary.iou_mean, 4),
+        "exact_rate": round(boundary.exact_rate, 4),
+        "near_exact_rate": round(boundary.near_exact_rate, 4),
+    }
+
+
 def _pii_metrics_to_dict(metrics: DocumentPiiMetrics) -> dict[str, Any]:
     return {
         "document_id": metrics.document_id,
@@ -146,6 +158,7 @@ def _pii_metrics_to_dict(metrics: DocumentPiiMetrics) -> dict[str, Any]:
         "extra_entity_types": list(metrics.extra_entity_types),
         "unsupported_entity_types": list(metrics.unsupported_entity_types),
         "by_type": [_entity_type_metrics_to_dict(t) for t in metrics.by_type],
+        "boundary": _boundary_to_dict(metrics.boundary),
     }
 
 
@@ -165,6 +178,7 @@ def _global_pii_to_dict(metrics: GlobalPiiMetrics) -> dict[str, Any]:
             for group, group_metrics in metrics.by_type_group.items()
         },
         "unsupported_entity_types": list(metrics.unsupported_entity_types),
+        "boundary": _boundary_to_dict(metrics.boundary),
     }
 
 
@@ -358,6 +372,13 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- PII vs. candidate ground truth: precision={g['precision']}, recall={g['recall']}, "
             f"f1={g['f1']} (tp={g['total_tp']}, fp={g['total_fp']}, fn={g['total_fn']})"
         )
+        b = g.get("boundary")
+        if b and b["matched_pairs"]:
+            lines.append(
+                f"  - Boundary accuracy over {b['matched_pairs']} matched pairs: "
+                f"IoU mean={b['iou_mean']}, exact={b['exact_rate']}, "
+                f"near-exact(≥0.8)={b['near_exact_rate']} (additive; does not change TP/FP/FN)"
+            )
         if g["unsupported_entity_types"]:
             lines.append(
                 f"  - Unsupported entity types: {', '.join(g['unsupported_entity_types'])}"

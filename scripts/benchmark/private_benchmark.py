@@ -436,6 +436,13 @@ def main(argv: list[str] | None = None) -> int:
             f"tp={g['total_tp']} fp={g['total_fp']} fn={g['total_fn']} "
             f"precision={g['precision']} recall={g['recall']} f1={g['f1']}"
         )
+        b = g.get("boundary")
+        if b and b["matched_pairs"]:
+            print(
+                "PII boundary accuracy (matched pairs, additive): "
+                f"pairs={b['matched_pairs']} iou_mean={b['iou_mean']} "
+                f"exact={b['exact_rate']} near_exact={b['near_exact_rate']}"
+            )
         validation = report["pii_benchmark"].get("validation")
         if validation:
             print(
