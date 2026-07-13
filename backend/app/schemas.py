@@ -1925,6 +1925,10 @@ PiiOverlapReason = Literal[
     "ambiguous_overlap_review_required",
     "dropped_lower_confidence_duplicate",
     "merged_provenance",
+    # Cross-type precedence: a higher-precedence type suppresses a fully-contained lower-precedence
+    # one (e.g. EMAIL_ADDRESS over a URL matched on the email's domain). Deterministic, table-driven.
+    "cross_type_precedence",
+    "dropped_cross_type_subordinate",
 ]
 # Structural-context validation reason codes (subtractive; see ADR-0043). A code is never removed
 # or repurposed. ``structural_heading_rejected`` marks a dropped candidate and so is recorded only

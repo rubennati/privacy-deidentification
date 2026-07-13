@@ -47,6 +47,7 @@ def resolve_pii_overlaps(
     merged_count = len(entities) - len(survivors)
 
     survivors = _resolve_same_type_overlaps(survivors, provenance, reasons)
+    survivors = _resolve_cross_type_precedence(survivors, provenance, reasons)
     dropped_count = len(entities) - merged_count - len(survivors)
 
     review_required = _flag_cross_type_overlaps(survivors, provenance, reasons)
@@ -167,6 +168,52 @@ def _resolve_same_type_overlaps(
             for _ in losers:
                 _count(reasons, "dropped_lower_confidence_duplicate")
     return survivors
+
+
+# Deterministic cross-type precedence: a key type suppresses a fully-contained value type. Kept
+# minimal and structural — a URL matched on an email's domain (``max@example.at`` → ``example.at``)
+# is spurious, so EMAIL_ADDRESS wins. Only a *contained* subordinate is dropped; a genuinely
+# separate overlapping entity is still preserved and flagged by ``_flag_cross_type_overlaps``.
+_CROSS_TYPE_PRECEDENCE: dict[str, frozenset[str]] = {
+    "EMAIL_ADDRESS": frozenset({"URL"}),
+}
+
+
+def _resolve_cross_type_precedence(
+    entities: list[PiiEntity],
+    provenance: dict[str, PiiEntityProvenance],
+    reasons: dict[str, int],
+) -> list[PiiEntity]:
+    """Drop a lower-precedence entity fully contained in a higher-precedence one (table-driven)."""
+    dropped: set[str] = set()
+    ordered = _sorted(entities)
+    for winner in ordered:
+        subordinate_types = _CROSS_TYPE_PRECEDENCE.get(winner.entity_type)
+        if not subordinate_types:
+            continue
+        for loser in ordered:
+            if loser.id == winner.id or loser.id in dropped:
+                continue
+            if loser.entity_type in subordinate_types and _covers(winner, loser):
+                dropped.add(loser.id)
+                existing = provenance[winner.id]
+                provenance[winner.id] = existing.model_copy(
+                    update={
+                        "candidate_count": existing.candidate_count + 1,
+                        "overlap_decision": existing.overlap_decision or "cross_type_precedence",
+                        "superseded_candidate_ids": sorted(
+                            {*existing.superseded_candidate_ids, loser.id}
+                        ),
+                    }
+                )
+                _count(reasons, "cross_type_precedence")
+                _count(reasons, "dropped_cross_type_subordinate")
+    return [entity for entity in entities if entity.id not in dropped]
+
+
+def _covers(outer: PiiEntity, inner: PiiEntity) -> bool:
+    """``inner`` sits fully within ``outer`` (equal spans included)."""
+    return outer.start_offset <= inner.start_offset and inner.end_offset <= outer.end_offset
 
 
 def _flag_cross_type_overlaps(
