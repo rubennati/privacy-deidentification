@@ -148,6 +148,32 @@ the gold GT. The exporter is **offset-only and never reads or writes document te
 text-free loader, so a reviewer judges each anchor in the Review UI, which renders the document. The
 proposal output belongs under the git-ignored `volumes/` tree, never the repo.
 
+### Harvesting gold GT from Review-UI decisions
+
+Rather than hand-editing the proposal, the preferred path is to **review the documents in the app**
+(binding decision `keep` / `false_positive` / `pseudonymize` per entity, plus manual additions for
+missed ones) and then harvest those decisions:
+
+```
+python scripts/benchmark/harvest_groundtruth.py \
+    --document-data-dir volumes/document-store \
+    --out volumes/benchmark/gold-gt.local.json
+```
+
+`harvest_groundtruth.py` reads the latest immutable `pii_review_result` snapshot per document (saved
+after every decision) and emits gold GT: confirmed detections (`accepted`/`kept`) plus accepted
+manual additions, **minus `rejected` false positives**. It is offset-only and reads no document text
+— the snapshot is text-free, and the referenced text artifact is read only for per-page char counts,
+used to map the snapshot's global raw offsets onto page-local benchmark coordinates. Documents with
+no review snapshot are listed under `skipped_without_review` (review them first). A detection *kept*
+at its detected boundary bakes that boundary into the GT; for boundary-exact GT, reject an
+over-capture and re-add the correct span rather than merely keeping it.
+
+The full loop: review in the app → `harvest_groundtruth.py` → point `--groundtruth` at the harvested
+file → `make benchmark-private` reports per-type P/R/F1 **and** boundary accuracy (IoU/exact/
+near-exact) against real gold GT, so a structural-context A/B (flag off vs on) can finally show FP↓
+with no true-positive loss.
+
 ## Privacy guard
 
 `privacy_guard.py` is a last-resort, defense-in-depth check run immediately before anything is
