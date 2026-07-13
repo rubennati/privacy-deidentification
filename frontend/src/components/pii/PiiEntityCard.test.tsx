@@ -72,6 +72,43 @@ describe("PiiEntityCard header controls", () => {
     expect(html).toContain(`id="pii-entity-card-${entity.id}"`);
   });
 
+  it("labels the raw offset and shows the reading offset when it maps exactly", () => {
+    const mapped: PiiEntity = {
+      ...entity,
+      projection_status: "exact",
+      reading_start_offset: 40,
+      reading_end_offset: 44,
+    };
+    const html = render(
+      <PiiEntityCard
+        entity={mapped}
+        documentId="doc-1"
+        artifactId="art-1"
+        feedbackEnabled={false}
+        existingStatus={null}
+      />,
+    );
+    expect(html).toContain("Rohtext-Offset");
+    expect(html).toContain("12–16"); // raw
+    expect(html).toContain("Lesetext-Offset");
+    expect(html).toContain("40–44"); // reading, distinct from raw
+  });
+
+  it("states explicitly when an entity is not mapped into the reading text", () => {
+    const unmapped: PiiEntity = { ...entity, projection_status: "unmapped" };
+    const html = render(
+      <PiiEntityCard
+        entity={unmapped}
+        documentId="doc-1"
+        artifactId="art-1"
+        feedbackEnabled={false}
+        existingStatus={null}
+      />,
+    );
+    expect(html).toContain("Lesetext-Offset");
+    expect(html).toContain("nicht im Lesetext zugeordnet");
+  });
+
   it("merges the binding decision into the same detected-entity card", () => {
     const html = render(
       <PiiEntityCard

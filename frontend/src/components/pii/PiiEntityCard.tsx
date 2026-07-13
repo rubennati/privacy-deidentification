@@ -45,6 +45,29 @@ function jumpToEntity(entityId: string): void {
   scrollAndFlash(`pii-mark-${entityId}`);
 }
 
+/** Whether this entity has no exact reading-text mapping (so its raw offset does not apply there). */
+function readingOffsetIsMissing(entity: PiiEntity): boolean {
+  return entity.projection_status !== "exact";
+}
+
+/**
+ * Reading-text offset shown next to the raw offset. Raw offsets are the detection basis but do not
+ * line up in the canonical reading text — so we show the reading offset only when it maps exactly,
+ * and otherwise an explicit reason (never a misleading raw number pretending to be a reading offset).
+ */
+function readingOffsetLabel(entity: PiiEntity): string {
+  if (
+    entity.projection_status === "exact" &&
+    entity.reading_start_offset != null &&
+    entity.reading_end_offset != null
+  ) {
+    return `${entity.reading_start_offset}–${entity.reading_end_offset}`;
+  }
+  if (entity.projection_status === "partial") return "teilweise zugeordnet";
+  if (entity.projection_status === "unmapped") return "nicht im Lesetext zugeordnet";
+  return "—";
+}
+
 /**
  * One detected-entity card. When the dev gate is on it also carries review feedback: a "Passt"
  * button in the header and, below, an issue picker with an explanation and optional comment.
@@ -150,7 +173,9 @@ export function PiiEntityCard({
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs text-muted">
         <dt>Seite</dt>
         <dd>{entity.page_number ?? "–"}</dd>
-        <dt>Offset</dt>
+        <dt title="Zeichen-Offset im technischen Rohtext (die verbindliche Detektions-Basis)">
+          Rohtext-Offset
+        </dt>
         <dd>
           <button
             type="button"
@@ -160,6 +185,12 @@ export function PiiEntityCard({
           >
             {entity.start_offset}–{entity.end_offset}
           </button>
+        </dd>
+        <dt title="Zeichen-Offset im kanonischen Lesetext; kann abweichen oder fehlen">
+          Lesetext-Offset
+        </dt>
+        <dd className={readingOffsetIsMissing(entity) ? "text-muted italic" : undefined}>
+          {readingOffsetLabel(entity)}
         </dd>
         <dt title={RECOGNIZER_HELP}>Recognizer</dt>
         <dd className="break-all" title={RECOGNIZER_HELP}>
