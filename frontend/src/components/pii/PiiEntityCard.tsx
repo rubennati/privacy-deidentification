@@ -89,8 +89,13 @@ export function PiiEntityCard({
   const [comment, setComment] = useState("");
   const [reviewSaving, setReviewSaving] = useState(false);
   const [reviewError, setReviewError] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const locked = saved !== null;
+  // Once feedback is saved ("Passt" or a problem) the card collapses to a one-line summary, so the
+  // reviewer keeps sight of the still-open entities. It re-expands on demand.
+  const decided = locked;
+  const decidedSummary = saved ? issueTypeLabel(saved.issue_type) : "";
 
   async function submitPositive() {
     if (locked || submitState === "saving") {
@@ -144,6 +149,34 @@ export function PiiEntityCard({
 
   const selectedExplanation = issueType === "" ? undefined : issueExplanation(issueType);
 
+  if (decided && !expanded) {
+    return (
+      <li
+        id={`pii-entity-card-${entity.id}`}
+        className="scroll-mt-16 rounded-lg border border-card-border bg-dropzone/60 px-3 py-2"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent-dark">
+              {entity.entity_type}
+            </span>
+            <span className="truncate text-xs text-muted">{entity.text}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-xs font-medium text-accent-dark">✓ {decidedSummary}</span>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="text-xs text-muted underline decoration-dotted underline-offset-2 hover:decoration-solid"
+            >
+              ausklappen
+            </button>
+          </div>
+        </div>
+      </li>
+    );
+  }
+
   return (
     <li
       id={`pii-entity-card-${entity.id}`}
@@ -157,6 +190,15 @@ export function PiiEntityCard({
           <span className="text-xs font-medium text-muted" title={CONFIDENCE_HELP}>
             {(entity.score * 100).toFixed(0)} %
           </span>
+          {decided && (
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              className="text-xs text-muted underline decoration-dotted underline-offset-2 hover:decoration-solid"
+            >
+              einklappen
+            </button>
+          )}
           {feedbackEnabled && !locked && (
             <button
               type="button"

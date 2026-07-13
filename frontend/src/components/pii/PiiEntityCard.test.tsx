@@ -153,7 +153,9 @@ describe("PiiEntityCard locked state", () => {
         existingStatus={{ verdict: "positive", issue_type: "correct" }}
       />,
     );
-    expect(html).toContain("Feedback gespeichert: Passt");
+    // A decided card collapses to a one-line summary with an expand toggle, hiding the form.
+    expect(html).toContain("✓ Passt");
+    expect(html).toContain("ausklappen");
     expect(html).not.toContain("Feedback speichern");
     expect(html).not.toContain("Problem auswählen");
   });
@@ -168,7 +170,8 @@ describe("PiiEntityCard locked state", () => {
         existingStatus={{ verdict: "issue", issue_type: "wrong_type" }}
       />,
     );
-    expect(html).toContain("Feedback gespeichert: Falscher Typ");
+    expect(html).toContain("✓ Falscher Typ");
+    expect(html).toContain("ausklappen");
     expect(html).not.toContain("Feedback speichern");
   });
 });
@@ -217,7 +220,9 @@ describe("PiiEntityList", () => {
         }}
       />,
     );
-    expect(html).toContain("Feedback gespeichert: Kein PII (False Positive)");
+    expect(html).toContain("✓ Kein PII (False Positive)");
+    // Collapsed: the value is still shown in the summary, and the details form is hidden.
+    expect(html).toContain("Wien");
     expect(html).not.toContain("Feedback speichern");
   });
 
