@@ -227,3 +227,46 @@ describe("workstation API error handling", () => {
     expect(apiError.correlationId).toBeNull();
   });
 });
+
+describe("incompatible job payloads fail closed (ADR-0041)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("rejects a 202 body without a job_id instead of polling a nonsense URL", async () => {
+    const broken = { ...jobStatus("pending"), job_id: undefined };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(broken), { status: 202 }));
+
+    const error = await runOcr("doc-1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(WorkstationApiError);
+    expect((error as WorkstationApiError).status).toBe(502);
+    // No poll request was ever issued for the unusable payload.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a job status value this build does not understand", async () => {
+    const futureStatus = { ...jobStatus("pending"), status: "paused" };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(futureStatus), { status: 202 }));
+
+    const error = await runOcr("doc-1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(WorkstationApiError);
+    expect((error as WorkstationApiError).status).toBe(502);
+  });
+
+  it("rejects a job-status poll response with an unknown status instead of waiting forever", async () => {
+    const futureStatus = { ...jobStatus("running"), status: "hibernating" };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(jobStatus("pending")), { status: 202 }))
+      .mockResolvedValue(new Response(JSON.stringify(futureStatus), { status: 200 }));
+
+    const error = await runOcr("doc-1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(WorkstationApiError);
+    expect((error as WorkstationApiError).status).toBe(502);
+  });
+});

@@ -12,7 +12,7 @@ from pathlib import Path
 from app.config import Settings
 from app.errors import ApiError
 from app.services.job_models import JobStatus
-from app.services.job_store import get_job_store
+from app.services.job_store import StaleJobClaimError, get_job_store
 
 _CURRENT_FILE = "current-artifacts"
 _LEGACY_JOB_BACKED_TYPES = frozenset({"text_result", "pii_result"})
@@ -121,16 +121,26 @@ def publish_artifact_files(
     *,
     authority_job_id: str | None = None,
     authority_job_result: tuple[str, str] | None = None,
+    authority_claim_attempt: int | None = None,
 ) -> None:
     """Atomically publish one coherent run under the document lifecycle lock.
 
     ``artifacts`` maps artifact type to ``(artifact_id, serialized_json)``. All files are durable
     before the authority pointer changes, so readers see either the previous run or the complete
     new run, never a subset.
+
+    ``authority_claim_attempt`` (ADR-0041) fences a worker publication to its claim: publication
+    is refused with :class:`StaleJobClaimError` unless the authority job is still ``running`` at
+    exactly that attempt, so a worker whose lease expired and whose job was recovered can no
+    longer overwrite the authority pointer with a result nobody will ever mark successful.
     """
     with document_lifecycle_lock(settings, document_id):
         if _tombstone_path(settings, document_id).exists():
             raise DocumentDeletedError
+        if authority_job_id is not None and authority_claim_attempt is not None:
+            _require_current_claim(
+                settings, document_id, authority_job_id, authority_claim_attempt
+            )
         directory = settings.document_data_dir / document_id / "artifacts"
         directory.mkdir(parents=True, exist_ok=True)
         written: list[Path] = []
@@ -150,6 +160,20 @@ def publish_artifact_files(
                 with suppress(OSError):
                     path.unlink()
             raise
+
+
+def _require_current_claim(
+    settings: Settings, document_id: str, job_id: str, claim_attempt: int
+) -> None:
+    """Refuse publication when the claiming attempt no longer owns its job row."""
+    job = get_job_store(settings).get_job(job_id)
+    if (
+        job is None
+        or job.document_id != document_id
+        or job.status is not JobStatus.RUNNING
+        or job.attempt_count != claim_attempt
+    ):
+        raise StaleJobClaimError()
 
 
 def mark_document_deleted(settings: Settings, document_id: str) -> None:

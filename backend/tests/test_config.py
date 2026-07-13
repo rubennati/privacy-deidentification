@@ -132,7 +132,10 @@ def test_ocr_execution_mode_defaults_to_worker_and_worker_settings_are_conservat
     assert settings.ocr_execution_mode == "worker"
     assert settings.ocr_worker_poll_interval_seconds == 2.0
     assert settings.ocr_worker_concurrency == 1
-    assert settings.ocr_worker_max_attempts == 1
+    # One automatic retry after an interruption, then explicit `interrupted` failure (ADR-0041).
+    assert settings.ocr_worker_max_attempts == 2
+    assert settings.job_lease_seconds == 3600.0
+    assert settings.ocr_worker_heartbeat_stale_seconds == 60.0
 
 
 def test_ocr_execution_mode_is_normalized_and_empty_stays_worker() -> None:

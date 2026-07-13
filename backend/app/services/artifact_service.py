@@ -104,6 +104,7 @@ def save_text_run(
     quality_report: QualityReportArtifact,
     *,
     authority_job_id: str | None = None,
+    authority_claim_attempt: int | None = None,
 ) -> None:
     """Publish the text result and its quality report as one authoritative OCR run."""
     if text.document_id != quality_report.document_id:
@@ -117,6 +118,7 @@ def save_text_run(
         },
         authority_job_id=authority_job_id,
         authority_job_result=(text.id, text.artifact_type),
+        authority_claim_attempt=authority_claim_attempt,
     )
 
 

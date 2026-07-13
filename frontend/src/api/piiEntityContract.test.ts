@@ -181,3 +181,31 @@ describe("resolveHighlightRange", () => {
     });
   });
 });
+
+describe("versioned contract validation (ADR-0041)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("classifies a contract version this build does not implement as incompatible", async () => {
+    const body = { ...makeContract([makeEntity()]), contract_version: "2.0" };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(body), { status: 200 }),
+    );
+
+    expect(await fetchPiiEntityContract("doc-1", "pii-1", "text-1")).toEqual({
+      status: "incompatible",
+    });
+  });
+
+  it("classifies a structurally unusable payload as an error, never as ok", async () => {
+    const body = { ...makeContract([makeEntity()]), entities: "not-a-list" };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(body), { status: 200 }),
+    );
+
+    expect(await fetchPiiEntityContract("doc-1", "pii-1", "text-1")).toEqual({
+      status: "error",
+    });
+  });
+});

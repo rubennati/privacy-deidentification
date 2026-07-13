@@ -79,10 +79,25 @@ class Settings(BaseSettings):
         default=1, ge=1, alias="OCR_WORKER_CONCURRENCY"
     )
     # A pending OCR job is claimed only while its attempt count is below this bound, so a job that
-    # keeps failing can never be re-run without limit. Phase 3 does not auto-retry (a failed job is
-    # terminal); this guards any future requeue and defaults to a single attempt.
+    # keeps failing can never be re-run without limit. With recovery (ADR-0041), an interrupted
+    # attempt is requeued while attempts remain, so the default of 2 gives exactly one automatic
+    # retry after a worker crash/restart; repeated interruption fails explicitly.
     ocr_worker_max_attempts: int = Field(
-        default=1, ge=1, le=10, alias="OCR_WORKER_MAX_ATTEMPTS"
+        default=2, ge=1, le=10, alias="OCR_WORKER_MAX_ATTEMPTS"
+    )
+    # Processing lease for a claimed/started job (ADR-0041). A ``running`` row whose lease expired
+    # is treated as abandoned by recovery: its process died or lost the claim. The lease must
+    # comfortably exceed the longest legitimate single-document processing time; terminal
+    # transitions are additionally fenced to the claiming attempt, so an over-long run that
+    # outlives its lease is refused rather than duplicated.
+    job_lease_seconds: float = Field(
+        default=3600.0, gt=0, le=24 * 3600, alias="JOB_LEASE_SECONDS"
+    )
+    # How stale the OCR worker's heartbeat may be before readiness reports worker processing as
+    # unavailable. The worker beats from a dedicated thread (independent of in-flight OCR work) at
+    # its poll interval, so anything beyond a few intervals means the worker process is gone.
+    ocr_worker_heartbeat_stale_seconds: float = Field(
+        default=60.0, gt=0, le=3600, alias="OCR_WORKER_HEARTBEAT_STALE_SECONDS"
     )
     # Root for the dev-only PII review-feedback archive (see feedback_service.py). Deliberately a
     # third, separate root from document_data_dir: feedback here is retained across a document's

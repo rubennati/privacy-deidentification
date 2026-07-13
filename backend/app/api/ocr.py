@@ -120,6 +120,10 @@ def _enqueue_ocr_job(settings: Settings, document_id: str) -> JSONResponse:
     )
     record = JobRecord.from_context(context)
     store: JobStore = get_job_store(settings)
+    # Recovery is lazy as well as worker-driven (ADR-0041): enqueueing new work first resolves any
+    # abandoned `running` row whose lease expired, so a dead worker's leftovers can never sit in
+    # front of fresh jobs as if they were still being processed.
+    store.recover_abandoned_jobs(max_attempts=settings.ocr_worker_max_attempts)
     store.create_job(record)
     status_response = to_job_status_response(record)
     return JSONResponse(

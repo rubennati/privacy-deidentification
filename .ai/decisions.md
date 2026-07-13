@@ -260,3 +260,16 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   Construction lineage is the authoritative identity boundary; geometry projection and the
   unique-token map remain explicitly demoted, per-anchor-flagged fallbacks. `reading_text` bytes
   unchanged; no detection, active-PII-input, or dependency change.
+- [ADR-0041](../docs/adr/0041-runtime-recovery-and-compatibility-integrity.md) — **Runtime
+  recovery and compatibility integrity v1.** Job rows carry processing leases (schema v2);
+  abandoned `running` claims are recovered deterministically (requeue while attempts remain, else
+  explicit `interrupted` failure) at worker startup/poll, enqueue, and every status read; terminal
+  transitions and worker artifact publication are fenced to the claiming attempt so retries never
+  conflict or duplicate. The job DB refuses unknown schema versions instead of stamping them;
+  readiness reports storage/job-store/worker-heartbeat components and gates on them; frontend
+  polling always settles (bounded retries, 404 cleanup, waiter resolution, explicit poll-failure
+  notices, stale-persisted pruning) and validates job/entity-contract payloads instead of casting;
+  a damaged or unknown newest review-log line fails reads and writes explicitly (only an
+  unacknowledged torn tail is ignored) rather than silently reactivating an older decision.
+  Delivers ADR-0023's Phase-4 stale-claim reclaim + bounded retry; no queue broker, cancel API,
+  PII worker split, or engine-level change.

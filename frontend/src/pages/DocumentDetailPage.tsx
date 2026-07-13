@@ -135,6 +135,7 @@ export default function DocumentDetailPage() {
   // call. This is what lets a reloaded page show "still running"/"finished while you were away"
   // instead of silently looking idle.
   const [trackedOcrJob, setTrackedOcrJob] = useState<JobStatus | null>(null);
+  const [trackedOcrJobPollFailure, setTrackedOcrJobPollFailure] = useState<string | null>(null);
   const [ocrResultLoadError, setOcrResultLoadError] = useState(false);
   const handledOcrJobIds = useRef(new Set<string>());
 
@@ -279,6 +280,9 @@ export default function DocumentDetailPage() {
         .list(documentId)
         .filter((job) => job.kind === "ocr_text");
       setTrackedOcrJob(latestOcrJob ?? null);
+      setTrackedOcrJobPollFailure(
+        latestOcrJob ? (jobActivityStore.getPollFailure(latestOcrJob.job_id) ?? null) : null,
+      );
     };
     syncFromStore();
     const unsubscribe = jobActivityStore.subscribe(syncFromStore);
@@ -709,7 +713,12 @@ export default function DocumentDetailPage() {
           </div>
           {/* Reload-recovery status: reflects a background-tracked OCR job (e.g. after a page
               reload) while nothing on this page is already showing its own live progress UI. */}
-          {showTrackedJobBanner && <JobStatusBanner job={trackedOcrJob} />}
+          {showTrackedJobBanner && (
+            <JobStatusBanner
+              job={trackedOcrJob}
+              pollFailureMessage={trackedOcrJobPollFailure}
+            />
+          )}
           {noLocalOcrRunInFlight && ocrResultLoadError && (
             <StatusNotice
               status="error"

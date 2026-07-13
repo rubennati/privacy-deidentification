@@ -204,12 +204,45 @@ export function resolveHighlightRange(entity: ReviewReadyAnchorBoundPiiEntity): 
 
 /** Outcome of fetching the entity contract: `not_found` (no PII result yet, a normal 404 product
  *  state, never shown as an error) is kept distinct from `error` (an unexpected network/server
- *  failure — the contract-fetch-failure notice) so the UI never renders both the same way. */
+ *  failure — the contract-fetch-failure notice) so the UI never renders both the same way.
+ *  `incompatible` covers both a backend 409 and a payload this build cannot understand (a
+ *  different `contract_version`) — the UI must not render highlights from unchecked assumptions. */
 export type PiiEntityContractFetchResult =
   | { status: "ok"; contract: PiiEntityContractV1 }
   | { status: "not_found" }
   | { status: "incompatible" }
   | { status: "error" };
+
+const SUPPORTED_CONTRACT_VERSION = "1.0";
+
+/** Validate the versioned contract payload before any highlight logic consumes it (ADR-0041).
+ *
+ * `null` marks a structurally unusable payload (`error`); `"incompatible"` marks a well-formed
+ * contract of a version this build does not implement. Only the load-bearing shape is checked —
+ * additive unknown fields stay tolerated.
+ */
+function validateContractPayload(
+  payload: unknown,
+): PiiEntityContractV1 | "incompatible" | null {
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+  const candidate = payload as Record<string, unknown>;
+  if (candidate.contract_version !== SUPPORTED_CONTRACT_VERSION) {
+    return "incompatible";
+  }
+  if (
+    typeof candidate.document_id !== "string" ||
+    typeof candidate.pii_artifact_id !== "string" ||
+    typeof candidate.text_artifact_id !== "string" ||
+    !Array.isArray(candidate.entities) ||
+    typeof candidate.binding_summary !== "object" ||
+    candidate.binding_summary === null
+  ) {
+    return null;
+  }
+  return payload as PiiEntityContractV1;
+}
 
 /** Fetch the review-ready entity contract for a document. Never throws. */
 export async function fetchPiiEntityContract(
@@ -230,7 +263,13 @@ export async function fetchPiiEntityContract(
     if (!response.ok) {
       return { status: "error" };
     }
-    const contract = (await response.json()) as PiiEntityContractV1;
+    const contract = validateContractPayload(await response.json());
+    if (contract === "incompatible") {
+      return { status: "incompatible" };
+    }
+    if (contract === null) {
+      return { status: "error" };
+    }
     return { status: "ok", contract };
   } catch {
     return { status: "error" };

@@ -149,6 +149,27 @@ explicitly v1 — polling + `localStorage`, no push transport yet — consistent
 above: a future SSE/WebSocket/event-bus transport would change how the store learns about updates,
 not the job contract or any component that reads from the store.
 
+**Runtime recovery & compatibility integrity**
+([ADR-0041](../adr/0041-runtime-recovery-and-compatibility-integrity.md)) makes the contract
+survive interruption and damage. **Recovery:** every `running` job carries a processing lease
+(job store schema **v2**); an abandoned claim (lease expired, or a pre-lease row) is resolved
+deterministically — requeued while `OCR_WORKER_MAX_ATTEMPTS` remain, otherwise failed explicitly
+with the static `interrupted` code — at worker startup, each poll cycle, job enqueue, and every
+job-status read, so a job can never stay authoritative as `running` merely because its worker
+disappeared. **No conflicting retries:** terminal transitions and worker artifact publication are
+fenced to the claiming attempt (`StaleJobClaimError`), so a worker that lost its lease can neither
+overwrite the recovered outcome nor republish authority. **Readiness:** `/health/ready` now reports
+`storage` / `job_store` / `ocr_worker` components (job-store compatibility + a worker heartbeat)
+and gates on them, so "ready" means requests, persistence, *and* processing work. **Compatibility:**
+the job DB refuses an unknown/newer `user_version` instead of stamping it; the append-only PII
+review log fails reads *and* writes on a damaged or unknown-`record_type` line (only an
+unacknowledged torn tail is ignored) rather than silently reactivating an older decision; and the
+frontend validates job-status and versioned entity-contract payloads (failing closed on an
+unknown shape/version) instead of trusting unchecked casts, while its poll loop always settles
+(bounded retries, 404 cleanup, waiter resolution, explicit failure notices). This delivers the
+Phase-4 stale-claim reclaim and bounded retry from ADR-0023; no queue broker, cancel API, or PII
+worker split is added.
+
 ## Design invariants the engine must keep
 
 1. **Canonical vs readable text stay separate.** PII/review always run on `best_text_result`;

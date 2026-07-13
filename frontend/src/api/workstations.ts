@@ -405,6 +405,60 @@ export class WorkstationApiError extends Error {
 const OCR_JOB_POLL_INTERVAL_MS = 2000;
 const OCR_JOB_TIMEOUT_MS = 30 * 60 * 1000;
 
+const INCOMPATIBLE_PAYLOAD_DETAIL =
+  "Die Serverantwort hat ein unbekanntes Format. Bitte laden Sie die Anwendung neu.";
+
+/** A payload this build cannot understand. Never retryable: the response arrived fine and will
+ * look exactly the same on the next attempt — polling code gives up immediately on it. */
+export class IncompatibleApiPayloadError extends WorkstationApiError {
+  readonly incompatiblePayload = true;
+
+  constructor() {
+    super(INCOMPATIBLE_PAYLOAD_DETAIL, 502);
+    this.name = "IncompatibleApiPayloadError";
+  }
+}
+
+const KNOWN_JOB_STATUSES: ReadonlySet<string> = new Set([
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "canceled",
+]);
+
+/**
+ * Validate a job-status payload before it drives client behavior (ADR-0041).
+ *
+ * The polling loop's semantics hang off these fields — an unknown `status` could neither be
+ * classified as terminal nor safely waited on, and a missing `job_id` would poll a nonsense URL —
+ * so an incompatible payload fails closed with an explicit error instead of being accepted
+ * through an unchecked cast. Additive unknown fields remain tolerated.
+ */
+function parseJobStatus(value: unknown): JobStatus {
+  if (typeof value !== "object" || value === null) {
+    throw new IncompatibleApiPayloadError();
+  }
+  const candidate = value as Record<string, unknown>;
+  const requiredStrings = ["job_id", "document_id", "kind", "status", "created_at", "updated_at"];
+  for (const field of requiredStrings) {
+    if (typeof candidate[field] !== "string" || candidate[field] === "") {
+      throw new IncompatibleApiPayloadError();
+    }
+  }
+  if (!KNOWN_JOB_STATUSES.has(candidate.status as string)) {
+    throw new IncompatibleApiPayloadError();
+  }
+  return value as JobStatus;
+}
+
+function parseJobStatusList(value: unknown): JobStatus[] {
+  if (!Array.isArray(value)) {
+    throw new IncompatibleApiPayloadError();
+  }
+  return value.map(parseJobStatus);
+}
+
 export function fetchAudit(documentId: string): Promise<AuditArtifact> {
   return requestArtifact<AuditArtifact>(documentId, "audit", "GET");
 }
@@ -421,7 +475,7 @@ export function fetchOcr(documentId: string, artifactId?: string): Promise<TextA
 export async function runOcr(documentId: string): Promise<TextArtifact> {
   const response = await requestStation(documentId, "ocr", "POST");
   if (response.status === 202) {
-    const queuedJob = (await response.json()) as JobStatus;
+    const queuedJob = parseJobStatus(await response.json());
     // Recorded immediately so any subscribed UI shows "accepted" before the first poll tick.
     jobActivityStore.record(queuedJob);
     const completedJob = await waitForOcrJob(queuedJob.job_id);
@@ -454,7 +508,7 @@ export async function fetchDocumentJobs(documentId: string): Promise<JobStatus[]
   if (!response.ok) {
     await throwApiError(response);
   }
-  return (await response.json()) as JobStatus[];
+  return parseJobStatusList(await response.json());
 }
 
 export function runPii(documentId: string, request?: PiiRunRequest): Promise<PiiArtifact> {
@@ -507,7 +561,7 @@ export async function fetchJobStatus(jobId: string): Promise<JobStatus> {
   if (!response.ok) {
     await throwApiError(response);
   }
-  return (await response.json()) as JobStatus;
+  return parseJobStatus(await response.json());
 }
 
 // Polling itself is owned by jobActivity's shared, de-duplicated poll loop (see
