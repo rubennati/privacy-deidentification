@@ -95,30 +95,43 @@ No local Python or Node.js installation is required for normal development comma
 ```bash
 cp .env.example .env        # optional; defaults are built in
 make ocr-models             # once, for image/scanned-page OCR
-make up                     # frontend + api + ocr-worker
+make up                     # start frontend + api + ocr-worker → http://127.0.0.1:8080
 ```
 
-Open:
+### Commands (few, each maps 1:1 to `docker compose`)
 
-```text
-http://localhost:8080
-```
+| Command | What it does |
+| --- | --- |
+| `make up` | Run the stack, production-local. **Does not build** — fast start on the existing images. |
+| `make dev` | Same, in **developer mode** (dev feedback UI + GLiNER NER + more memory). Also no build. |
+| `make update` | You changed code → rebuild only the **changed** layers and restart what changed. |
+| `make rebuild` | Force a full **no-cache** rebuild, restart, then drop the old layers. |
+| `make stop` | Stop the stack; containers kept, all data on disk. |
+| `make down` | Stop **and remove** the containers; uploads/artifacts/models/job state remain. |
+| `make prune` | Reclaim this project's build leftovers (dangling images + build cache; safe). |
 
-Stop the stack:
+`make help` lists everything. Start/stop never build, so the daily loop is fast; only `update` /
+`rebuild` build.
 
-```bash
-make down
-```
+### Developer vs production-local
 
-### Default runtime
+- **`make up`** — the handover/production-local mode: dev-only settings **off**, lean.
+- **`make dev`** — developer mode via `docker-compose.dev.yml`: `ENABLE_DEV_ENGINE_SETTINGS=true`
+  (review feedback + per-run engine settings), the stronger GLiNER NER, and more memory. GLiNER
+  needs its offline model — provision it once with `scripts/fetch-ner-models.sh`.
 
-`make up` starts the normal functional stack:
+### Runs fully local
 
-| Service | Role | Host exposure |
+| Service | Role | Egress |
 | --- | --- | --- |
-| `frontend` | nginx + React SPA; proxies `/api/*` | `WEB_PORT` (`8080` by default) |
-| `api` | FastAPI scheduler/status/artifact reader; runs PII synchronously | private Compose network |
-| `ocr-worker` | isolated OCR execution, one job at a time | private Compose network |
+| `frontend` | nginx + React SPA; proxies `/api/*` | ingress network (serves the SPA; touches no documents/PII) |
+| `api` | FastAPI scheduler/status/artifact reader; runs PII synchronously | **blocked** (internal network) |
+| `ocr-worker` | isolated OCR execution, one job at a time | **blocked** (internal network) |
+
+The `api` and `ocr-worker` — which do **all** document/OCR/PII/GLiNER processing — sit on an
+`internal: true` Compose network with **no route to the internet** (verified: their egress is
+blocked while the app stays reachable). The web port binds to `127.0.0.1` only; set `WEB_BIND=0.0.0.0`
+to expose it on the LAN (e.g. a demo).
 
 OCR worker mode is the default (`OCR_EXECUTION_MODE=worker`). `POST /api/documents/{id}/ocr`
 enqueues a SQLite-backed job and returns `202` with safe job metadata; the frontend polls
@@ -538,9 +551,13 @@ Common commands are available through the `Makefile`:
 make lint        # Ruff and ESLint
 make typecheck   # mypy and TypeScript
 make test        # runtime surface checks, backend tests, and frontend tests
-make build       # build Docker images
-make up          # start the stack
-make down        # stop the stack
+make up          # start the stack (production-local, no build)
+make dev         # start in developer mode (no build)
+make update      # apply code changes: rebuild changed layers, restart
+make rebuild     # force a full no-cache rebuild
+make stop        # stop the stack (containers kept)
+make down        # stop and remove the containers
+make prune       # reclaim build leftovers (safe)
 make logs        # tail Compose logs
 make ps          # show Compose service status
 make shell-api   # open a shell in the API image
@@ -550,9 +567,17 @@ make benchmark-private   # private local OCR/PII benchmark report (see above)
 make benchmark-test      # synthetic-data unit tests for the benchmark runner
 ```
 
-`make docker-df` is available as a read-only disk-usage check. Cleanup/prune commands are not wired
-into the Makefile; keep runtime data under `./volumes/` and remove Docker cache manually only when
-you deliberately want to affect your local Docker installation.
+`make docker-df` shows Docker disk usage; `make prune` reclaims **this project's** build leftovers
+(dangling images + build cache — safe, never touches `./volumes/` data or other projects). A deep
+cross-project clean is a deliberate `docker system prune -af` (removes every unused image, including
+other projects'; re-pullable) — never `--volumes` (that would delete your uploads/artifacts/models).
+
+### Known local build issue (Colima)
+
+On Colima's containerd storage, a full image build can intermittently fail while committing the large
+dependency layer (`failed to export layer … rename … no such file`). It is transient, so `make
+update` / `make rebuild` **retry the build up to 3×**. If it still fails, run it again or restart the
+Docker VM (`colima restart`). Day-to-day `make up` / `make dev` don't build, so they are unaffected.
 
 ## Repository structure
 
