@@ -144,6 +144,77 @@ def spans_overlap_enough(
     return abs(a_start - b_start) <= start_tolerance
 
 
+# Boundary-accuracy threshold. This does NOT decide TP/FP/FN — the lenient matcher above still does.
+# It scores how *tightly* a matched detection's span agrees with its ground-truth span, so a
+# boundary-tightening change (structural cell-clip / label-value trim) becomes measurable even
+# though the lenient matcher already counted the looser span as a match.
+NEAR_EXACT_MIN_IOU = 0.8
+
+
+def span_iou(a_start: int, a_end: int, b_start: int, b_end: int) -> float:
+    """Intersection-over-union of two character spans (0.0 when disjoint or degenerate)."""
+    intersection = max(0, min(a_end, b_end) - max(a_start, b_start))
+    union = max(a_end, b_end) - min(a_start, b_start)
+    return intersection / union if union > 0 else 0.0
+
+
+@dataclass(frozen=True)
+class BoundaryAccuracy:
+    """How tightly matched detections agree with their ground-truth spans — additive, never TP/FP/FN.
+
+    Computed only over matched pairs that carry page-local offsets. ``iou_sum``/counts are kept as
+    running sums so corpus-wide means stay exact when documents are added together (``__add__``).
+    """
+
+    matched_pairs: int = 0
+    iou_sum: float = 0.0
+    exact_count: int = 0  # start == gt.start and end == gt.end
+    near_exact_count: int = 0  # span_iou >= NEAR_EXACT_MIN_IOU
+
+    @property
+    def iou_mean(self) -> float:
+        return self.iou_sum / self.matched_pairs if self.matched_pairs else 0.0
+
+    @property
+    def exact_rate(self) -> float:
+        return self.exact_count / self.matched_pairs if self.matched_pairs else 0.0
+
+    @property
+    def near_exact_rate(self) -> float:
+        return self.near_exact_count / self.matched_pairs if self.matched_pairs else 0.0
+
+    def __add__(self, other: BoundaryAccuracy) -> BoundaryAccuracy:
+        return BoundaryAccuracy(
+            matched_pairs=self.matched_pairs + other.matched_pairs,
+            iou_sum=self.iou_sum + other.iou_sum,
+            exact_count=self.exact_count + other.exact_count,
+            near_exact_count=self.near_exact_count + other.near_exact_count,
+        )
+
+
+def _pair_boundary(
+    a_start: int, a_end: int, b_start: int, b_end: int
+) -> BoundaryAccuracy:
+    """Boundary accuracy contribution of one matched (detected, ground-truth) span pair."""
+    iou = span_iou(a_start, a_end, b_start, b_end)
+    return BoundaryAccuracy(
+        matched_pairs=1,
+        iou_sum=iou,
+        exact_count=1 if (a_start == b_start and a_end == b_end) else 0,
+        near_exact_count=1 if iou >= NEAR_EXACT_MIN_IOU else 0,
+    )
+
+
+def _spans_match(
+    a_start: int, a_end: int, b_start: int, b_end: int, boundary_policy: str
+) -> bool:
+    """Match predicate. ``lenient`` (default) uses the tolerant overlap; ``strict`` requires a
+    near-exact boundary (IoU >= threshold), turning an over-capture into a miss."""
+    if boundary_policy == "strict":
+        return span_iou(a_start, a_end, b_start, b_end) >= NEAR_EXACT_MIN_IOU
+    return spans_overlap_enough(a_start, a_end, b_start, b_end)
+
+
 def _safe_div(numerator: float, denominator: float) -> float:
     return numerator / denominator if denominator else 0.0
 
@@ -190,12 +261,14 @@ class DocumentPiiMatchResult:
     fp: int
     fn: int
     by_type: tuple[EntityTypeMetrics, ...]
+    boundary: BoundaryAccuracy = BoundaryAccuracy()
 
 
 def match_document_entities(
     detected: Sequence[DetectedEntity],
     groundtruth: Sequence[GroundTruthEntityAnchor],
     matching_mode: str,
+    boundary_policy: str = "lenient",
 ) -> DocumentPiiMatchResult:
     """Match one document's detected entities against its candidate ground truth.
 
@@ -203,18 +276,26 @@ def match_document_entities(
     page, compatible canonical type, and an overlapping page-local offset span.
     ``document_level``: no page/offset information is available (e.g. DOCX); entities are
     matched by canonical type counts only, per the PR spec's documented fallback.
+
+    ``boundary_policy`` (``lenient`` default | ``strict``) only affects ``page_aware`` matching:
+    ``strict`` requires a near-exact boundary (IoU >= threshold) for a match. Independent of the
+    policy, page-aware matches always carry an additive :class:`BoundaryAccuracy` scoring how
+    tightly they agree — so a boundary-tightening change is measurable without changing TP/FP/FN.
     """
     if matching_mode == "page_aware":
-        return _match_page_aware(detected, groundtruth)
+        return _match_page_aware(detected, groundtruth, boundary_policy)
     return _match_document_level(detected, groundtruth)
 
 
 def _match_page_aware(
-    detected: Sequence[DetectedEntity], groundtruth: Sequence[GroundTruthEntityAnchor]
+    detected: Sequence[DetectedEntity],
+    groundtruth: Sequence[GroundTruthEntityAnchor],
+    boundary_policy: str = "lenient",
 ) -> DocumentPiiMatchResult:
     used_detected: set[int] = set()
     type_tp: dict[str, int] = {}
     type_fn: dict[str, int] = {}
+    boundary = BoundaryAccuracy()
 
     for gt in groundtruth:
         gt_canonical = canonicalize(gt.entity_type)
@@ -226,8 +307,8 @@ def _match_page_aware(
             and entity.page_number == gt.page
             and entity.page_start_offset is not None
             and entity.page_end_offset is not None
-            and spans_overlap_enough(
-                entity.page_start_offset, entity.page_end_offset, gt.start, gt.end
+            and _spans_match(
+                entity.page_start_offset, entity.page_end_offset, gt.start, gt.end, boundary_policy
             )
         ]
         if candidate_indices:
@@ -237,6 +318,11 @@ def _match_page_aware(
             )
             used_detected.add(best)
             type_tp[gt_canonical] = type_tp.get(gt_canonical, 0) + 1
+            match = detected[best]
+            assert match.page_start_offset is not None and match.page_end_offset is not None
+            boundary = boundary + _pair_boundary(
+                match.page_start_offset, match.page_end_offset, gt.start, gt.end
+            )
         else:
             type_fn[gt_canonical] = type_fn.get(gt_canonical, 0) + 1
 
@@ -247,7 +333,7 @@ def _match_page_aware(
         canonical = canonicalize(entity.entity_type)
         type_fp[canonical] = type_fp.get(canonical, 0) + 1
 
-    return _build_result("page_aware", type_tp, type_fp, type_fn)
+    return _build_result("page_aware", type_tp, type_fp, type_fn, boundary)
 
 
 def _match_document_level(
@@ -282,6 +368,7 @@ def _build_result(
     type_tp: dict[str, int],
     type_fp: dict[str, int],
     type_fn: dict[str, int],
+    boundary: BoundaryAccuracy = BoundaryAccuracy(),
 ) -> DocumentPiiMatchResult:
     all_types = sorted(set(type_tp) | set(type_fp) | set(type_fn))
     by_type = tuple(
@@ -294,6 +381,7 @@ def _build_result(
         fp=sum(type_fp.values()),
         fn=sum(type_fn.values()),
         by_type=by_type,
+        boundary=boundary,
     )
 
 
@@ -330,6 +418,7 @@ class DocumentPiiMetrics:
     extra_entity_types: tuple[str, ...]
     unsupported_entity_types: tuple[str, ...]
     by_type: tuple[EntityTypeMetrics, ...]
+    boundary: BoundaryAccuracy = BoundaryAccuracy()
 
 
 @dataclass(frozen=True)
@@ -345,6 +434,7 @@ class GlobalPiiMetrics:
     by_type: tuple[EntityTypeMetrics, ...]
     by_type_group: dict[str, EntityTypeMetrics]
     unsupported_entity_types: tuple[str, ...]
+    boundary: BoundaryAccuracy = BoundaryAccuracy()
 
 
 def build_document_pii_metrics(
@@ -354,9 +444,10 @@ def build_document_pii_metrics(
     configured_entity_types: Sequence[str],
     groundtruth: Sequence[GroundTruthEntityAnchor],
     matching_mode: str,
+    boundary_policy: str = "lenient",
 ) -> DocumentPiiMetrics:
     """Compose matching + type mapping into one document's reportable PII metrics."""
-    result = match_document_entities(detected, groundtruth, matching_mode)
+    result = match_document_entities(detected, groundtruth, matching_mode, boundary_policy)
     precision, recall, f1 = precision_recall_f1(result.tp, result.fp, result.fn)
     configured_canonical = {canonicalize(t) for t in configured_entity_types}
     gt_canonical_types = {canonicalize(gt.entity_type) for gt in groundtruth}
@@ -381,6 +472,7 @@ def build_document_pii_metrics(
         extra_entity_types=extra,
         unsupported_entity_types=unsupported,
         by_type=result.by_type,
+        boundary=result.boundary,
     )
 
 
@@ -391,6 +483,7 @@ def build_global_pii_metrics(per_document: Sequence[DocumentPiiMetrics]) -> Glob
     total_fn = sum(doc.fn for doc in per_document)
     precision, recall, f1 = precision_recall_f1(total_tp, total_fp, total_fn)
     by_type = merge_type_metrics([doc.by_type for doc in per_document])
+    boundary = sum((doc.boundary for doc in per_document), BoundaryAccuracy())
 
     group_tp: dict[str, int] = {}
     group_fp: dict[str, int] = {}
@@ -421,6 +514,7 @@ def build_global_pii_metrics(per_document: Sequence[DocumentPiiMetrics]) -> Glob
         by_type=by_type,
         by_type_group=by_group,
         unsupported_entity_types=unsupported,
+        boundary=boundary,
     )
 
 
