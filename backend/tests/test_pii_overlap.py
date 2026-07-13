@@ -198,3 +198,40 @@ def test_summary_counts_are_internally_consistent() -> None:
         == summary.output_entity_count + summary.merged_count + summary.dropped_count
     )
     assert len(resolved) == summary.output_entity_count
+
+
+# --- Cross-type precedence (EMAIL_ADDRESS > contained URL) ----------------------------------------
+
+
+def test_email_suppresses_contained_url() -> None:
+    # A URL matched on the email's domain sits inside the email span -> the email wins.
+    email = _entity("EMAIL_ADDRESS", 0, 15, entity_id="a" * 32)
+    url = _entity("URL", 4, 15, entity_id="b" * 32)
+    resolved, summary = resolve_pii_overlaps([email, url])
+
+    assert _ids(resolved) == ["a" * 32]
+    assert summary.dropped_count == 1
+    assert summary.by_reason.get("dropped_cross_type_subordinate") == 1
+    assert summary.by_reason.get("cross_type_precedence") == 1
+    assert resolved[0].provenance is not None
+    assert "b" * 32 in resolved[0].provenance.superseded_candidate_ids
+
+
+def test_partially_overlapping_url_is_not_suppressed_only_flagged() -> None:
+    # A URL that is not fully contained is a genuine conflict -> both preserved, flagged for review.
+    email = _entity("EMAIL_ADDRESS", 0, 10, entity_id="a" * 32)
+    url = _entity("URL", 8, 20, entity_id="b" * 32)
+    resolved, summary = resolve_pii_overlaps([email, url])
+
+    assert set(_ids(resolved)) == {"a" * 32, "b" * 32}
+    assert summary.dropped_count == 0
+    assert "dropped_cross_type_subordinate" not in summary.by_reason
+    assert summary.by_reason.get("ambiguous_overlap_review_required") == 2
+
+
+def test_standalone_url_is_untouched() -> None:
+    url = _entity("URL", 0, 20, entity_id="a" * 32)
+    resolved, summary = resolve_pii_overlaps([url])
+    assert _ids(resolved) == ["a" * 32]
+    assert summary.dropped_count == 0
+    assert resolved[0].provenance is not None and resolved[0].provenance.overlap_decision is None

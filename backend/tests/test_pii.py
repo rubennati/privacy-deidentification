@@ -827,10 +827,10 @@ def test_cross_type_overlap_is_flagged_for_review_not_dropped(
     upload = _upload_document(client)
     document_id = str(upload["id"])
     _save_text(settings, document_id, text)
-    # Two structured (validation pass-through) types claim overlapping spans of different type.
+    # Two different-type spans overlap with no precedence relation -> flagged, never dropped.
     pii_fake.results[text] = [
         _entity("EMAIL_ADDRESS", 8, 22, 0.9),
-        _entity("URL", 12, 22, 0.6),
+        _entity("PHONE_NUMBER", 12, 22, 0.6),
     ]
 
     response = client.post(f"/api/documents/{document_id}/pii")
@@ -838,11 +838,30 @@ def test_cross_type_overlap_is_flagged_for_review_not_dropped(
     assert response.status_code == 201
     content = response.json()["content"]
     types = {entity["entity_type"] for entity in content["entities"]}
-    assert types == {"EMAIL_ADDRESS", "URL"}  # neither dropped
+    assert types == {"EMAIL_ADDRESS", "PHONE_NUMBER"}  # neither dropped
     assert content["overlap_resolution"]["review_required_count"] == 2
     assert all(
         entity["provenance"]["review_required"] is True for entity in content["entities"]
     )
+
+
+def test_email_suppresses_contained_url_end_to_end(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_entity_types = ("EMAIL_ADDRESS", "URL")
+    text = "kontakt max@example.at"
+    document_id = str(_upload_document(client)["id"])
+    _save_text(settings, document_id, text)
+    # The URL recognizer matches the email's domain (contained in the email) -> spurious -> dropped.
+    pii_fake.results[text] = [
+        _entity("EMAIL_ADDRESS", 8, 22, 0.9),
+        _entity("URL", 12, 22, 0.6),
+    ]
+
+    content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
+
+    assert [e["entity_type"] for e in content["entities"]] == ["EMAIL_ADDRESS"]
+    assert content["overlap_resolution"]["by_reason"].get("dropped_cross_type_subordinate") == 1
 
 
 def test_overlap_provenance_never_contains_raw_entity_text(
