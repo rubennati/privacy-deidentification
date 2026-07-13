@@ -12,6 +12,11 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Install dependencies first (cached layer), then the project itself (baked into the venv).
 COPY pyproject.toml uv.lock ./
+# Split the heavy dependency install into two smaller committed layers: the OCR (paddle) and PII
+# (CPU torch) trees in a single layer diff are too large for the containerd content store to commit
+# on some hosts. Sync base + OCR first, then add the PII deps (Presidio/spaCy/GLiNER/torch) as a
+# smaller incremental layer.
+RUN uv sync --frozen --no-install-project --no-dev --extra ocr
 RUN uv sync --frozen --no-install-project --no-dev --extra ocr --extra pii
 COPY README.md ./
 COPY app ./app

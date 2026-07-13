@@ -141,6 +141,16 @@ class Settings(BaseSettings):
     enable_dev_engine_settings: bool = Field(
         default=False, alias="ENABLE_DEV_ENGINE_SETTINGS"
     )
+    # NER backend for PERSON/ORGANIZATION. ``spacy`` keeps the small CNN NER; ``gliner`` sources
+    # those two types from a local GLiNER model (offline, mounted read-only like the OCR models).
+    # See ADR-0042. Other types (patterns, checksums, DATE_TIME) are unaffected.
+    pii_ner_backend: Literal["spacy", "gliner"] = Field(
+        default="spacy", alias="PII_NER_BACKEND"
+    )
+    gliner_model_dir: Path = Field(default=Path("/models/ner"), alias="GLINER_MODEL_DIR")
+    gliner_model_name: str = Field(
+        default="gliner_multi-v2.1", min_length=1, alias="GLINER_MODEL_NAME"
+    )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @field_validator("allowed_extensions", mode="before")

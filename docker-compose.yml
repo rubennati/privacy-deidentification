@@ -27,6 +27,12 @@ x-app-environment: &app-environment
   PII_PROFILE: ${PII_PROFILE:-review-heavy}
   PII_ENTITY_TYPES: ${PII_ENTITY_TYPES:-}
   PII_CANDIDATE_VALIDATION_ENABLED: ${PII_CANDIDATE_VALIDATION_ENABLED:-true}
+  # NER backend for PERSON/ORGANIZATION. `gliner` sources them from a local GLiNER model mounted
+  # read-only below (provision it first with scripts/fetch-ner-models.sh); `spacy` keeps the small
+  # CNN NER. Other types are unaffected. See ADR-0042.
+  PII_NER_BACKEND: ${PII_NER_BACKEND:-spacy}
+  GLINER_MODEL_DIR: ${GLINER_MODEL_DIR:-/models/ner}
+  GLINER_MODEL_NAME: ${GLINER_MODEL_NAME:-gliner_multi-v2.1}
   ENABLE_DEV_ENGINE_SETTINGS: ${ENABLE_DEV_ENGINE_SETTINGS:-false}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   TZ: ${TZ:-Europe/Vienna}
@@ -40,6 +46,7 @@ x-app-volumes: &app-volumes
   - ${DATA_ROOT:-./volumes}/job-state:${DATA_JOB_STATE_DIR:-/data/job-state}
   - ${DATA_ROOT:-./volumes}/pii-feedback-archive:${PII_FEEDBACK_ARCHIVE_DIR:-/data/pii-feedback-archive}
   - ${DATA_ROOT:-./volumes}/ocr-models:${OCR_MODEL_DIR:-/models/ocr}:ro
+  - ${DATA_ROOT:-./volumes}/ner-models:${GLINER_MODEL_DIR:-/models/ner}:ro
 
 services:
   api:
