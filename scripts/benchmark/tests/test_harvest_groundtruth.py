@@ -13,6 +13,7 @@ from harvest_groundtruth import (
     _to_page_local,
     build_groundtruth,
     harvest_document,
+    harvest_feedback_anchors,
 )
 
 
@@ -169,6 +170,68 @@ def test_build_groundtruth_filters_and_reports_docs_without_review(tmp_path: Pat
 
     filtered = build_groundtruth(store, filenames=["B.pdf"])
     assert filtered["documents"] == []
+
+
+# --- Dev-feedback fold-in: rescue "correct" verdicts as confirmed anchors ------------------------
+
+
+def _fb(entity_type: str, start: int, end: int, verdict: str, issue: str, at: str = "t1") -> dict:
+    return {
+        "recorded_at": at,
+        "entity": {"type": entity_type, "start": start, "end": end, "recognizer": "Rec"},
+        "feedback": {"verdict": verdict, "issue_type": issue},
+    }
+
+
+def test_feedback_correct_becomes_a_confirmed_anchor() -> None:
+    records = [
+        _fb("PERSON", 0, 10, "positive", "correct"),
+        _fb("ADDRESS", 12, 20, "issue", "span_too_long_right"),  # a problem, not a truth -> skip
+    ]
+    anchors, stats = harvest_feedback_anchors(records, _text([40]), covered=set())
+    assert [a["entity_type"] for a in anchors] == ["PERSON"]
+    assert anchors[0]["origin"] == "feedback"
+    assert (anchors[0]["page"], anchors[0]["start"], anchors[0]["end"]) == (1, 0, 10)
+    assert stats["feedback_confirmed"] == 1
+
+
+def test_feedback_latest_verdict_wins_and_binding_covers() -> None:
+    # Same entity: first correct, later revised to an issue -> not harvested (latest wins).
+    revised = [
+        _fb("PERSON", 0, 10, "positive", "correct", at="t1"),
+        _fb("PERSON", 0, 10, "issue", "wrong_type", at="t2"),
+    ]
+    anchors, _ = harvest_feedback_anchors(revised, _text([40]), covered=set())
+    assert anchors == []
+    # And an entity already taken by the binding channel is not double-added.
+    covered = {("PERSON", 0, 10)}
+    anchors2, stats2 = harvest_feedback_anchors(
+        [_fb("PERSON", 0, 10, "positive", "correct")], _text([40]), covered=covered
+    )
+    assert anchors2 == [] and stats2["feedback_duplicate"] == 1
+
+
+def test_build_groundtruth_harvests_a_feedback_only_document(tmp_path: Path) -> None:
+    store = tmp_path / "document-store"
+    doc_dir = store / ("a" * 32)
+    (doc_dir / "artifacts").mkdir(parents=True)
+    (doc_dir / "feedback").mkdir(parents=True)
+    (doc_dir / "document.json").write_text(json.dumps({"id": "a" * 32, "filename": "A.pdf"}))
+    # A text_result artifact (no review snapshot at all) + a dev-feedback log.
+    text = _text([40])
+    text["artifact_type"] = "text_result"
+    text["created_at"] = "2026-07-13T10:00:00Z"
+    (doc_dir / "artifacts" / f"{text['id']}.json").write_text(json.dumps(text))
+    (doc_dir / "feedback" / "pii_feedback.jsonl").write_text(
+        json.dumps(_fb("PERSON", 0, 14, "positive", "correct")) + "\n"
+    )
+
+    gold = build_groundtruth(store)
+    (doc,) = gold["documents"]
+    assert doc["filename"] == "A.pdf"
+    assert doc["review_snapshot_id"] is None
+    assert doc["harvest_stats"]["feedback_confirmed"] == 1
+    assert doc["totals"]["entity_count"] == 1
 
 
 def test_harvested_gold_is_text_free() -> None:
