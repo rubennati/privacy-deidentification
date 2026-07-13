@@ -129,6 +129,25 @@ No `masked_value`, `source`, `value_length`, or raw `text` field from either the
 the detected `pii_result` artifacts is ever loaded past the point where a count is taken — see
 `artifact_loader.py`'s and `document_matching.py`'s narrow dataclasses.
 
+## Building gold ground truth (from a proposal)
+
+The shipped ground truth is a *candidate* signal; a manually validated **gold** standard is needed
+to quantify precision/boundary gains (e.g. the structural-context stage, ADR-0043). To seed one:
+
+```
+python scripts/benchmark/build_groundtruth_proposal.py \
+    --document-data-dir volumes/document-store \
+    --out volumes/benchmark/gt-proposal.local.json \
+    --filenames "TEST_01_....pdf,TEST_02_....pdf"
+```
+
+`build_groundtruth_proposal.py` emits the current detections as a *proposal* in the exact ground-
+truth schema (`load_groundtruth` reads it directly), each entity flagged `review_status: "proposed"`.
+A human then confirms / rejects / corrects offsets / adds missed entities and freezes the result as
+the gold GT. The exporter is **offset-only and never reads or writes document text** — it reuses the
+text-free loader, so a reviewer judges each anchor in the Review UI, which renders the document. The
+proposal output belongs under the git-ignored `volumes/` tree, never the repo.
+
 ## Privacy guard
 
 `privacy_guard.py` is a last-resort, defense-in-depth check run immediately before anything is
