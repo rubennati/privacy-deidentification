@@ -22,6 +22,20 @@ worker execution model, `docker-compose.yml`, the `Makefile`, or `.env.example`:
   missing/legacy-field guards) green. This includes the job-activity layer (ADR-0030): reload
   recovery from `localStorage`, the document-jobs fallback, and the single-owner polling try-lock
   (no duplicate poll loops for one job id) all need their own tests, not just the happy-path flow.
+- **Recovery & compatibility invariants (ADR-0041).** A change touching job state, worker
+  execution, readiness, the job DB schema, the review decision log, or a versioned client contract
+  must keep these tested and must not weaken them: (a) an interrupted `running` claim always
+  recovers (requeue while attempts remain, else explicit `interrupted` failure) — never stays
+  authoritative as `running` forever; (b) terminal job transitions and worker artifact publication
+  stay **fenced to the claiming attempt** so retries never conflict/duplicate; (c) the job DB
+  **refuses** an unsupported/newer/foreign schema version rather than stamping or overwriting it,
+  and any bump migrates the known previous version explicitly; (d) `/health/ready` reflects whether
+  processing can actually proceed (storage + job-store compatibility + worker liveness in worker
+  mode); (e) frontend polling always settles with an explicit outcome (bounded retries, 404
+  cleanup, resolved waiters, surfaced failures) and validates job/contract payloads, failing closed
+  on an unknown `status`/`contract_version`; (f) a damaged or unknown-`record_type` newest
+  append-only record fails reads *and* writes explicitly and never silently reactivates an older
+  state (an unacknowledged torn-tail fragment is the only tolerated exception).
 - **Compose build/start smoke.** When `docker-compose.yml` or the `Makefile` changes, run
   `python scripts/check-runtime-surface.py` (via `make test`), `docker compose config`, and
   `docker compose config --services`; do a `make build` / `make up` smoke when feasible.

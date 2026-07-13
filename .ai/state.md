@@ -984,6 +984,41 @@ checkpoint loop against this file's current-sequence section for the next engine
 Replacement Plan consuming `PiiReviewResultEntry` is the next step this branch was scoped to
 unblock, explicitly not implemented here.
 
+**Latest checkpoint (Runtime recovery & compatibility integrity v1):** No engine level change;
+runtime/robustness step delivering ADR-0023's remaining Phase-4 stale-claim reclaim + bounded
+retry ([ADR-0041](../docs/adr/0041-runtime-recovery-and-compatibility-integrity.md), branch
+`runtime-recovery-and-compatibility-v1`). Root causes fixed: a claimed job could stay `running`
+forever after a worker crash; terminal transitions were unfenced; the job DB stamped its schema
+version unconditionally (silently downgrading a newer/foreign file); readiness ignored the job
+store and worker; frontend polling could hang, leak unresolved waiters, retry a vanished job
+forever, or resurrect stale `localStorage` activity; API/entity-contract payloads were trusted via
+unchecked casts; and a damaged newest review-log line silently reactivated the older decision.
+Fixes: (1) job store **schema v2** — every `running` row carries a `lease_expires_at`;
+`recover_abandoned_jobs` requeues worker rows with attempts remaining or fails everything else
+explicitly (`interrupted`), run at worker startup (which reclaims all worker-mode `running` rows of
+its kind — single-worker deployment ⇒ orphans), each poll cycle, job enqueue, and every job-status
+read (observation recovers first); `OCR_WORKER_MAX_ATTEMPTS` default 2 = one automatic retry.
+(2) Terminal transitions and worker artifact publication are **fenced to the claiming attempt**
+(`StaleJobClaimError`), so retries never conflict/duplicate and a stale worker can't overwrite
+authority; sync inline runs tolerate the fence like deletion. (3) The job DB reads `user_version`
+and **refuses** an unknown/newer/unversioned-with-data file (`JobStoreIncompatibleError`) instead
+of stamping it; the known v1 migrates in one serialized transaction preserving rows. (4)
+`/health/ready` reports `storage`/`job_store`/`ocr_worker` component states (job-store
+compatibility + a worker heartbeat written from a dedicated thread into a new `worker_status`
+table) and gates on them. (5) Frontend `pollJobUntilTerminal` retries transient failures (bounded),
+drops a 404'd job, records explicit poll failures, and settles every waiter on owner exit;
+`resumeActiveJobs` catches resume failures; stale/unknown-status persisted jobs are pruned at load;
+`JobStatusBanner` surfaces recovery-failure notices. (6) Job-status and PII entity-contract
+payloads are validated (unknown `status`/`contract_version` fail closed). (7) The review JSONL log
+fails reads and writes on a damaged/unknown-`record_type` line (`PiiReviewLogDamagedError`); only an
+unacknowledged torn tail is ignored. Proven by new `backend/tests/test_runtime_recovery.py`
+(interruption/restart, expired-lease recovery on observation, sync-inline failure-only recovery,
+claim fencing, enqueue recovery, readiness liveness/incompatibility, schema refusal/migration),
+review-log integrity tests in `test_pii_review.py`, and frontend recovery/contract tests. No engine
+level, detection, OCR/PII algorithm, artifact contract, or dependency change; no queue broker,
+cancel API, or PII worker split (remaining Phase-4 items). Full lint/typecheck/test/benchmark/
+runtime-surface/compose/build/`git diff --check` green.
+
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and
 config/artifact drift, and update state/docs; after every third PR, re-confirm or adjust the next
