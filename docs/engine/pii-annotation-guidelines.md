@@ -6,6 +6,52 @@
 >
 > Gilt für das Profil `review-heavy` (die Typen unten). Annotiert wird in der **Dev-Ansicht** der App.
 
+## Typen-Glossar (Code → deutsches Wort)
+
+Die App zeigt in der Dev-Ansicht den technischen **Code** (z. B. `CLAIM_NUMBER`). Hier das passende
+deutsche Wort dazu (identisch zu den App-Labels) plus ein Beispiel:
+
+| Code | Deutsch | Was / Beispiel |
+| --- | --- | --- |
+| `PERSON` | Person | Vor- + Nachname |
+| `ORGANIZATION` | Organisation | Firma/Behörde/Kanzlei |
+| `ADDRESS` | Adresse | Straße + PLZ + Ort |
+| `CONTACT_LINE` | Kontaktzeile | kombinierte Tel/Fax/E-Mail-Zeile |
+| `CUSTOMER_LINE` | Kundenzeile | Kundenname/-nummer als Zeile |
+| `EMAIL_ADDRESS` | E-Mail-Adresse | `max@x.at` |
+| `PHONE_NUMBER` | Telefonnummer | `+43 664 1234567` |
+| `IBAN_CODE` | IBAN | `AT61 1904 …` |
+| `BIC` | BIC | `BKAUATWW` |
+| `CREDIT_CARD` | Kreditkartennummer | |
+| `IP_ADDRESS` | IP-Adresse | `192.168.0.10` |
+| `URL` | Web-Adresse | `https://…` |
+| `UID_AT` | UID-Nummer | `ATU12345678` |
+| `FN_AT` | Firmenbuchnummer | `FN 123456 a` |
+| `SVNR_AT` | SV-Nummer | Sozialversicherungsnr. (10-stellig) |
+| `TAX_ID_AT` | Steuernummer | |
+| `LICENSE_PLATE_AT` | Kfz-Kennzeichen | |
+| `ID_CARD_NUMBER` | Ausweisnummer | |
+| `PASSPORT_NUMBER` | Reisepassnummer | |
+| `POLICY_NUMBER` | Polizzennummer | Versicherungspolizze, z. B. `P0L-2024-998877` |
+| `CLAIM_NUMBER` | Schadensnummer | z. B. `SCH-2025-00471` |
+| `CONTRACT_NUMBER` | Vertragsnummer | |
+| `INVOICE_NUMBER` | Rechnungsnummer | z. B. `RE-2025-000123` |
+| `OFFER_NUMBER` | Angebotsnummer | |
+| `CUSTOMER_NUMBER` | Kundennummer | |
+| `CASE_NUMBER` | Aktenzeichen | |
+| `FILE_REFERENCE` | Geschäftszahl | |
+| `REPORT_NUMBER` | Berichtsnummer | |
+| `ASSESSMENT_NUMBER` | Bescheidnummer | |
+| `TRANSACTION_ID` | Transaktionsnummer | |
+| `PROJECT_ID` | Projektnummer | |
+| `USER_ID` | Benutzerkennung | |
+| `DATE_TIME` | Datum | `13.07.2026` |
+| `BIRTH_DATE` | Geburtsdatum | **nur manuell** (kein Detektor) |
+| `BIRTH_PLACE` | Geburtsort | **nur manuell** |
+| `GIVEN_NAME` | Vorname | **nur manuell** (Standard: als `PERSON`) |
+| `FAMILY_NAME` | Nachname / Familienname | **nur manuell** (Standard: als `PERSON`) |
+| `LOCATION` | Ort | nicht im Profil (nur per Custom-Allowlist) |
+
 ## Die goldene Regel
 
 Markiere **genau den Wert, der pseudonymisiert werden müsste** — als *eine* logische Einheit,
