@@ -9,6 +9,35 @@ A change is ready when:
 - Routing/state files updated when needed.
 - No direct commits to `main`.
 
+## PII detection & display foundation gate
+
+PII *maturity* (grouping/overlap/review/manual-add, L11–L14) advanced ahead of PII *detection
+quality*. This gate makes detection + raw↔canonical display quality an explicit **foundation
+condition**: **no PII L15+ work and no redaction work proceed until the measured thresholds below are
+met on the private corpus.** It is the PII counterpart to OCR's contract-first discipline. Full
+baseline, scope decisions, and the prioritized action list live in
+[`docs/engine/pii-detection-quality-plan.md`](../docs/engine/pii-detection-quality-plan.md).
+
+- **Measured, not asserted.** Quality is measured with `make benchmark-private` (per-type P/R/F1,
+  privacy-guarded) against the corpus, not claimed. Frozen baseline: 2026-07-02 `review-heavy`,
+  global P=0.47 / R=0.67 / F1=0.55.
+- **Per-type target thresholds** (the "line"):
+  - **P3 identifiers** (`IBAN_CODE`, `SVNR_AT`, `PASSPORT_NUMBER`, `ID_CARD_NUMBER`, `TAX_ID_AT`,
+    `CREDIT_CARD`, `LICENSE_PLATE_AT`): **Recall ≥ 0.98**, Precision ≥ 0.90 — a miss is a leak.
+  - **P2 structured** (`EMAIL_ADDRESS`, `PHONE_NUMBER`, domain identifiers, `ADDRESS`,
+    `CONTACT_LINE`, `CUSTOMER_LINE`): Recall ≥ 0.95, Precision ≥ 0.85.
+  - **Names / organizations** (`PERSON`, `ORGANIZATION`, `GIVEN_NAME`, `FAMILY_NAME`):
+    Recall ≥ 0.95, Precision ≥ 0.80.
+  - **P1 / context** (`DATE_TIME`, `BIRTH_DATE`, `BIRTH_PLACE`): Recall ≥ 0.90; bare `LOCATION` is
+    **not** a standalone target type (removed — residence via `ADDRESS`, birthplace via a
+    context-gated `BIRTH_PLACE` recognizer).
+  - **Display:** raw↔canonical highlight parity ≥ 0.95 of anchor-bound entities; every remaining
+    non-mapped entity carries an explicit reason code, never a silent missing highlight.
+- **No corpus-specific tuning.** Recognizer/model/validation changes must be generic and covered by
+  synthetic tests; the corpus measures, it does not define the rules.
+- **No regression on a met type.** Once a type reaches its threshold, a later change must not drop it
+  below without an explicit, justified exception.
+
 ## Runtime / API / worker changes
 
 Additional gates when a change touches the API contract, the frontend↔API boundary, the OCR/PII
@@ -64,7 +93,7 @@ future evidence source plugged into that list — dictionary/lexicon, multi-OCR,
   (`details: dict[str, int]`); a test must assert no synthetic sensitive sample text appears in the
   evidence JSON.
 - **Private-corpus validation summary.** Run the change against the local private corpus
-  (`test-corpus/`, never committed; local script and output under `.local/`, never committed) and
+  (`volumes/test-corpus/`, never committed; local script and output under `.local/`, never committed) and
   report, per document, whether the new/changed evidence is useful, too noisy, missing a signal, or
   a false-positive risk — plus an explicit stable-document regression statement (existing
   `reading_text`/`structured_content`/lineage output compared against the prior baseline).
