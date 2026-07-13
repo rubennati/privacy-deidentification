@@ -1926,7 +1926,8 @@ PiiOverlapReason = Literal[
     "dropped_lower_confidence_duplicate",
     "merged_provenance",
     # Cross-type precedence: a higher-precedence type suppresses a fully-contained lower-precedence
-    # one (e.g. EMAIL_ADDRESS over a URL matched on the email's domain). Deterministic, table-driven.
+    # one (e.g. EMAIL_ADDRESS over a URL matched on the email's domain). Deterministic and
+    # table-driven.
     "cross_type_precedence",
     "dropped_cross_type_subordinate",
 ]

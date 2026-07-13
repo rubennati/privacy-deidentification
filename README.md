@@ -117,8 +117,10 @@ make up                     # start frontend + api + ocr-worker → http://127.0
 
 - **`make up`** — the handover/production-local mode: dev-only settings **off**, lean.
 - **`make dev`** — developer mode via `docker-compose.dev.yml`: `ENABLE_DEV_ENGINE_SETTINGS=true`
-  (review feedback + per-run engine settings), the stronger GLiNER NER, and more memory. GLiNER
-  needs its offline model — provision it once with `scripts/fetch-ner-models.sh`.
+  (review feedback + per-run engine settings), the stronger GLiNER NER, and more memory (4g API).
+  GLiNER needs its offline model **and** backbone — provision both once with `make ner-models`. It
+  runs fully offline (no runtime download); leave `API_MEMORY_LIMIT` unset in `.env` so `make dev`
+  gets its 4g default (the backbone peaks ~3 GiB while loading).
 
 ### Runs fully local
 

@@ -37,6 +37,12 @@ x-app-environment: &app-environment
   PII_NER_BACKEND: ${PII_NER_BACKEND:-spacy}
   GLINER_MODEL_DIR: ${GLINER_MODEL_DIR:-/models/ner}
   GLINER_MODEL_NAME: ${GLINER_MODEL_NAME:-gliner_multi-v2.1}
+  # Force HuggingFace/transformers fully offline. The GLiNER head and its mdeberta-v3-base backbone
+  # are provisioned locally (scripts/fetch-ner-models.sh) and mounted read-only above; the backend
+  # network is `internal: true` (no egress). These flags guarantee no model lookup is ever attempted
+  # at runtime — a missing model fails fast and locally instead of reaching out. See ADR-0042.
+  HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
+  TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-1}
   ENABLE_DEV_ENGINE_SETTINGS: ${ENABLE_DEV_ENGINE_SETTINGS:-false}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   TZ: ${TZ:-Europe/Vienna}
