@@ -47,9 +47,24 @@ never shift a canonical PII offset, and no layer becomes an island.
 ### 2. Canonical reading text
 
 - **Fields:** optional `reading_text_version = "1"`, `reading_text`, `reading_text_status`,
-  `reading_text_flags`, offset-only `reading_text_map_version`/`reading_text_map`, and the
-  post-render `reading_text_geometry_projection_map_version`/`reading_text_geometry_projection_map`
+  `reading_text_flags`, offset-only `reading_text_map_version`/`reading_text_map`, the
+  post-render `reading_text_geometry_projection_map_version`/`reading_text_geometry_projection_map`,
+  and the builder-emitted construction-time
+  `reading_text_row_lineage_map_version`/`reading_text_row_lineage_map`
   on `text_result` (absent on older artifacts).
+- **Construction-time lineage (authoritative):** the reading-text builder itself emits
+  canonical↔raw correspondence while rendering (`ReadingTextRowLineageMap`, map_version "2",
+  `lineage_source: row_construction`). Source identity is attached at collection time — per
+  fragment from the extraction process (pypdf visitor chunk offsets, byte-verified against the
+  stored raw page text; discarded entirely on mismatch) or persisted L10 line offsets — and
+  canonical offsets come from walking the same join arithmetic the text was assembled with, never
+  from searching the finished string. Repeated values/suffixes keep distinct identities with no
+  uniqueness requirement; statuses are byte-verified
+  (`exact`/`normalized`/`split`/`merged`/`inserted`); a symmetric overlap sweep drops colliding
+  raw-range claims; fused table headers and layout-block ordering decline explicitly. See
+  [ADR-0032](../adr/0032-reading-text-row-construction-lineage-v1.md),
+  [ADR-0036](../adr/0036-reading-text-row-construction-lineage-v2.md),
+  [ADR-0040](../adr/0040-construction-time-canonical-lineage-v3.md).
 - **Geometry-backed reading projection (post-render; NOT construction-time lineage):** after
   canonical text already exists, a separate module (`reading_text_geometry_projection.py`) searches
   the finished string for an exact, line-bounded occurrence of each raw geometry line and emits a
@@ -64,7 +79,9 @@ never shift a canonical PII offset, and no layer becomes an island.
   rather than guessed. A repeated *sub-token* inside two otherwise-unique lines (e.g. a shared
   `GmbH` suffix on two distinct company names) still keeps a distinct canonical range for each, since
   each whole line is itself unique. `reading_text_map` remains the labelled fallback for lines or
-  artifacts the projection declines. Genuine builder-emitted construction-time lineage remains open.
+  artifacts the projection declines. Both post-hoc mechanisms are consulted only for spans the
+  builder-emitted construction-time lineage above leaves unattributed, and anything they resolve is
+  degraded, per-anchor-flagged fallback identity.
 - **Purpose:** the cleaned, deterministic, block-aware main document text: sensible top-to-bottom
   order, intact party/address/account blocks, stable pipe-delimited line-item rows, major-block blank
   lines, and conservative prose joining without visual A4 spacing.
@@ -140,14 +157,17 @@ never shift a canonical PII offset, and no layer becomes an island.
   pseudonymization/reconstruction render from — owned by OCR/Text, not PII. The anchor graph is a
   *prerequisite* for the separation gate below, never a bypass of it.
 - **Phase B delivered:** `GET /api/documents/{document_id}/text-anchors` now derives Text Anchor
-  Graph v1 from `DocumentTextPackageV1`. It creates raw-token anchors, attaches canonical ranges
-  from the geometry-backed reading projection first and the post-hoc `reading_text_map` as fallback
-  (per-anchor `canonical_geometry_projection`/`canonical_map_lineage` flag; a graph `lineage_summary`
-  naming the mechanism) — **neither mechanism is builder-emitted construction-time lineage**, both
-  re-derive correspondence by searching the already-completed canonical text; genuine construction
-  identity remains open — attaches layout ranges only when safely byte-aligned in v1, and records
-  missing/partial/ambiguous/single-source states as metadata. It is not persisted, carries no copied
-  source text, and does not bind PII or switch the active PII input.
+  Graph v1 from `DocumentTextPackageV1`. It creates raw-token anchors and attaches canonical ranges
+  preferring builder-emitted construction-time lineage (`reading_text_row_lineage_map` — the
+  authoritative identity source; per-anchor `canonical_row_construction` flag), then the
+  geometry-backed reading projection, then the post-hoc `reading_text_map`
+  (per-anchor `canonical_geometry_projection`/`canonical_map_lineage` flags; a graph
+  `lineage_summary` naming the mechanism) — the two post-hoc mechanisms re-derive correspondence by
+  searching the already-completed canonical text and stay explicitly identified as degraded
+  fallback identity for spans construction declined. It attaches layout ranges only when safely
+  byte-aligned in v1, and records missing/partial/ambiguous/single-source states as metadata. It is
+  not persisted, carries no copied source text, and does not bind PII or switch the active PII
+  input.
 
 ### L9 structured layout blocks
 

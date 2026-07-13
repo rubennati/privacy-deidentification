@@ -1,10 +1,13 @@
 """Builder-emitted, construction-time row lineage (see reading_text.py's RowLineageSegment).
 
 All data is synthetic. This suite proves the row-lineage step is genuinely construction-time (a
-row's own raw range, attached before rendering, rides through unchanged) and honestly scoped: the
-plain-paragraph/body path attaches real lineage, while every reordering/reformatting path (multi-
-column reconstruction, tables, party columns) always declines rather than guessing, and repeated-
-margin filtering invalidates the whole document's lineage rather than risk mis-mapped offsets.
+row's own raw range, attached before rendering, rides through unchanged) and honestly scoped: rows
+attach real lineage across body, party-column, table, metadata, and post-table paths, while a path
+whose required identity is missing (cells without collection-time ranges, a boundary inside one
+fused cell) declines rather than guessing, and repeated-margin filtering invalidates the whole
+document's lineage rather than risk mis-mapped offsets. Cell-level construction lineage (in-row
+splits, multi-column cell runs, extraction-offset capture) is covered by
+test_reading_text_construction_lineage.py.
 """
 
 from __future__ import annotations
@@ -152,11 +155,11 @@ def test_paragraph_continuation_with_one_row_missing_a_range_declines() -> None:
     assert result.row_lineage == ()
 
 
-def test_multi_column_prose_never_attaches_row_lineage_even_with_known_ranges() -> None:
-    """Multi-column reconstruction redistributes cells into synthesized rows; even when every input
-
-    row carried a known range, this step declines rather than guess a range for content that no
-    longer occupies its original position.
+def test_multi_column_prose_declines_row_lineage_without_cell_ranges() -> None:
+    """Multi-column reconstruction redistributes *cells* into synthesized rows, so a whole row's
+    range is never enough: when the cells themselves carry no collection-time ranges, this step
+    declines rather than guess which part of a row's raw span landed in which column. (With
+    per-cell ranges the same path attributes — see test_reading_text_construction_lineage.py.)
     """
     rows = [
         _row(0.10, (0.07, "1. Allgemeines"), (0.54, "2. Datenschutz")),
@@ -260,7 +263,9 @@ def test_party_columns_reorder_while_preserving_source_identity() -> None:
         "Rosengasse 7"
     )
     by_raw = {raw[segment.page_start : segment.page_end]: segment for segment in result.row_lineage}
-    # The shared two-party heading row's cells split across both sides and correctly decline.
+    # The shared two-party heading row's cells split across both sides; without per-cell ranges
+    # (this fixture attaches row ranges only) they correctly decline. With per-cell ranges the same
+    # path attributes each heading its own cell — see test_reading_text_construction_lineage.py.
     assert "AUFTRAGNEHMER" not in by_raw
     assert "AUFTRAGGEBER" not in by_raw
     assert set(by_raw) == {
@@ -311,12 +316,20 @@ def test_metadata_row_gets_lineage_and_synthetic_heading_is_inserted() -> None:
     assert result.text[inserted.canonical_start : inserted.canonical_end] == "ANGEBOT"
 
 
-def test_metadata_fused_row_split_declines_explicitly() -> None:
-    """A single row fusing two "Label: value" fields splits into two output lines; neither can be
-    attributed to a specific sub-row raw boundary without guessing, so both explicitly decline."""
+def test_metadata_fused_single_cell_split_declines_explicitly() -> None:
+    """A *single fused cell* holding two "Label: value" fields splits into two output lines whose
+    boundary falls inside that one cell; no collection-time range exists for either side of the
+    cut, so both explicitly decline — even though the cell itself carries a range."""
     rows = [_row(0.10, (0.07, "Angebot Nr.: KV-2026-0417 Datum: 01.07.2026"))]
     raw = "\n".join(" ".join(cell.text for cell in row.cells) for row in rows)
     rows = _with_ranges(rows, raw)
+    rows = [
+        replace(
+            row,
+            cells=tuple(replace(cell, source_range=row.source_range) for cell in row.cells),
+        )
+        for row in rows
+    ]
 
     result = build_reading_text(raw, [_page(raw)], None, [], None, positioned_rows=rows)
 
@@ -325,10 +338,12 @@ def test_metadata_fused_row_split_declines_explicitly() -> None:
     assert result.row_lineage == ()
 
 
-def test_in_row_label_value_split_declines_explicitly() -> None:
-    """A single row fusing multiple label/value cell pairs splits into several output lines
-    (``_paired_cell_lines``); this in-row split explicitly declines lineage for all of them
-    rather than guess which characters belong to which resulting line."""
+def test_in_row_label_value_split_declines_without_cell_ranges() -> None:
+    """A row fusing multiple label/value cell pairs splits into several output lines
+    (``_paired_cell_lines``); when its cells carry no collection-time ranges the split declines
+    lineage for all of them rather than guess which characters belong to which resulting line.
+    (With per-cell ranges the same path attributes each line its own cells — see
+    test_reading_text_construction_lineage.py.)"""
     rows = [
         _row(
             0.10,
@@ -582,7 +597,7 @@ def test_package_and_anchor_graph_prefer_row_construction_over_geometry_projecti
         reading_text_status="heuristic",
         reading_text_geometry_projection_map_version="1",
         reading_text_geometry_projection_map=geometry_projection_map,
-        reading_text_row_lineage_map_version="1",
+        reading_text_row_lineage_map_version="2",
         reading_text_row_lineage_map=row_lineage_map,
     )
 

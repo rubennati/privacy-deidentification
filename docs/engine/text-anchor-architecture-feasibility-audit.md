@@ -246,7 +246,7 @@ Scored against ADR-0031's invariants and the `.ai/quality-gates.md` anchor gates
 | 8 | No DB before the model is proven | **Conforms** | everything derived or file-based |
 | 9 | Frontend renders only server ranges; no independent entity derivation; no string search | **Conforms with two footnotes** | (a) legacy `buildHighlightSegments` is dead in production paths but still exported and test-maintained — remove or quarantine; (b) a failed contract fetch yields an *empty* highlight model with no user-visible notice (§9) |
 | 10 | One stable anchor identity per unit, stable across re-runs | **Partial** | stable only per (bytes × builder version); acceptable now because nothing durable references anchor ids — must be resolved before Phase F (§10) |
-| 11 | Views are projections of shared units (construction-level) | **Not yet** | A first attempt at `anchor-first-text-package-v2` was found, by a contradiction audit, to be a *post-render* projection (it runs after `reading_text.py` already returns a finished string and re-derives correspondence via exact search over that string) rather than builder-emitted lineage — `reading_text.py` itself is unchanged. That mechanism was reclassified and hardened as **Geometry-backed Reading Projection v1** (`ReadingTextGeometryProjectionMap`, `lineage_source: geometry_projection`), a stronger *post-hoc* mechanism preferred over the older `reading_text_map`, with a fixed duplicate-value identity defect (see §8.3 update). Genuine construction-level lineage remains open |
+| 11 | Views are projections of shared units (construction-level) | **Not yet** | A first attempt at `anchor-first-text-package-v2` was found, by a contradiction audit, to be a *post-render* projection (it runs after `reading_text.py` already returns a finished string and re-derives correspondence via exact search over that string) rather than builder-emitted lineage — `reading_text.py` itself is unchanged. That mechanism was reclassified and hardened as **Geometry-backed Reading Projection v1** (`ReadingTextGeometryProjectionMap`, `lineage_source: geometry_projection`), a stronger *post-hoc* mechanism preferred over the older `reading_text_map`, with a fixed duplicate-value identity defect (see §8.3 update). Genuine construction-level lineage is now **delivered** across three steps — ADR-0032 (body-path rows), ADR-0036 (party/table/metadata rows, `inserted` headings), and [ADR-0040](../adr/0040-construction-time-canonical-lineage-v3.md) (the real `anchor-first-text-package-v2`: cell-level collection-time identity via byte-verified extraction offsets, in-row splits/multi-column/fallback coverage, byte-verified statuses, overlap sweep) — with the post-hoc mechanisms demoted to explicitly flagged fallbacks for declined spans and legacy artifacts (see §8.3's second update) |
 
 ### 8.3 The two-mechanism wart
 
@@ -278,6 +278,21 @@ the unique-value fallback should become unnecessary.
 > geometry projection declines (non-verbatim, no geometry, or genuinely ambiguous). Genuine
 > builder-emitted construction-time lineage — the actual retirement condition for `text_match` — is
 > still unimplemented.
+
+> **Update (Construction-time canonical lineage v3 — the real `anchor-first-text-package-v2`,
+> [ADR-0040](../adr/0040-construction-time-canonical-lineage-v3.md), 2026-07-12).** The retirement
+> condition above is now met for the spans construction covers: `reading_text.py` itself emits
+> canonical↔raw correspondence while rendering, from cell-level source identity captured at
+> collection time (pypdf extraction offsets byte-verified against the stored raw page text —
+> repeated values keep distinct identities with **no uniqueness requirement** — or persisted L10
+> line offsets), with byte-verified statuses (`exact`/`normalized`/`split`/`merged`/`inserted`),
+> attribution of in-row splits, party/multi-column cell runs, fused two-cell metadata rows, and
+> raw-order fallback lines, and a symmetric overlap sweep. The anchor graph prefers this per token
+> (`canonical_row_construction`); the geometry projection and `reading_text_map` remain explicitly
+> flagged fallbacks for spans construction declines (fused table headers, layout-block ordering,
+> margin-filtered documents) and for legacy artifacts, so a measured `text_match` retirement stays
+> a separate, data-driven step. Anchor *ids* remain offset-minted — §10's persistence constraint is
+> unchanged.
 
 ## 9. Test coverage scorecard
 

@@ -115,10 +115,18 @@ builder itself was unchanged, and the mechanism searched the already-completed c
 reclassified and hardened as **Geometry-backed Reading Projection v1**: a stronger post-hoc mechanism
 (full-line granularity, global-uniqueness discipline, declines genuinely ambiguous/duplicate values
 rather than guessing) the graph prefers over the older `reading_text_map` when it can resolve a line
-unambiguously. **Genuine construction-time lineage — the reading-text builder itself emitting
-canonical↔raw correspondence while rendering — remains unimplemented**; the anchor-*derived* →
-anchor-*first* gap is not yet closed, and a real `anchor-first-text-package-v2` is a separate, future
-step.
+unambiguously. **Genuine construction-time lineage is now delivered** (the real
+`anchor-first-text-package-v2`, [ADR-0040](../adr/0040-construction-time-canonical-lineage-v3.md),
+building on [ADR-0032](../adr/0032-reading-text-row-construction-lineage-v1.md)/
+[ADR-0036](../adr/0036-reading-text-row-construction-lineage-v2.md)): the reading-text builder
+itself emits canonical↔raw correspondence while rendering, from cell-level source identity captured
+at collection time — pypdf extraction offsets byte-verified against the stored raw text, or
+persisted L10 line offsets — with byte-verified statuses, a symmetric overlap sweep, and explicit
+declines (fused table headers, layout-block ordering). The anchor graph prefers this construction
+lineage per token; the geometry projection and unique-token map remain explicitly flagged, degraded
+fallbacks for the spans it declines and for legacy artifacts. Anchor *ids* are still offset-minted
+per (text-artifact bytes × graph-builder version) — the audit's persistence constraint on durable
+anchor-id storage is unchanged.
 
 ## Runtime job contract
 

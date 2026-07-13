@@ -17,6 +17,7 @@
 - [x] Re-scope and extend construction-time OCR lineage for unchanged post-table rows.
 - [x] Complete the prerequisite checkpoint and direct lineage for PII L13 / Review L9.
 - [x] PII L14 / Review L10 — manual add of missed entities.
+- [x] Construction-time canonical lineage v3 — the real `anchor-first-text-package-v2` (ADR-0040).
 
 ## Later
 

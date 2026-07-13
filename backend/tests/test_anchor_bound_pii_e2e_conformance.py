@@ -871,7 +871,7 @@ def _save_with_row_construction_lineage(
                 reading_text_version="1",
                 reading_text=reading.text,
                 reading_text_status=reading.status,
-                reading_text_row_lineage_map_version="1",
+                reading_text_row_lineage_map_version="2",
                 reading_text_row_lineage_map=row_lineage_map,
                 # Deliberately no reading_text_map, no geometry projection map: only builder-emitted
                 # row-construction lineage is available to the anchor graph in this fixture.
@@ -1052,7 +1052,7 @@ def _save_with_normalized_row_lineage(
                 reading_text_version="1",
                 reading_text=reading.text,
                 reading_text_status=reading.status,
-                reading_text_row_lineage_map_version="1",
+                reading_text_row_lineage_map_version="2",
                 reading_text_row_lineage_map=row_lineage_map,
             ),
         ),

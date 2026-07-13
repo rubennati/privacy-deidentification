@@ -1,12 +1,13 @@
 """Builder-emitted, construction-time row lineage (see ``reading_text.py``'s ``RowLineageSegment``).
 
 This module does no matching, searching, or resolution of its own for *attributed* segments — it
-only converts already-known ``RowLineageSegment`` values (attached to a ``ReadingRow`` at collection
-time, then carried through rendering by ``reading_text.py``) into the versioned
-``ReadingTextRowLineageMap`` schema shape, with row-local page offsets converted to document-level
-raw offsets and each segment's already-computed ``status`` (``exact``/``normalized``/``merged``)
-passed straight through as its ``mapping_status``. Unlike ``reading_text_geometry_projection.py``,
-there is no post-render search over unknown content here at all.
+only converts already-known ``RowLineageSegment`` values (attached to a ``ReadingRow``/
+``ReadingCell`` at collection time, then carried through rendering by ``reading_text.py``) into the
+versioned ``ReadingTextRowLineageMap`` schema shape, with row-local page offsets converted to
+document-level raw offsets and each segment's already-computed, byte-verified ``status``
+(``exact``/``normalized``/``merged``/``split``) passed straight through as its ``mapping_status``.
+Unlike ``reading_text_geometry_projection.py``, there is no post-render search over unknown content
+here at all.
 
 The one exception is synthetic section headings (``reading_text.SYNTHETIC_HEADINGS`` — the closed,
 enumerable set of literal strings ``reading_text.py`` itself inserts, e.g. ``"LEISTUNGEN"``): a
@@ -15,9 +16,10 @@ constants is recognized as an ``"inserted"`` segment with no source range. This 
 search over unknown content — it recognizes exactly the fixed vocabulary this codebase itself
 writes — so it stays within the "no guessing" discipline.
 
-Coverage remains partial: rendering paths this step cannot safely attribute (see
-``reading_text.py``) still leave canonical spans this map does not cover. Callers should keep
-falling back to the geometry projection / unique-token ``reading_text_map`` for those.
+Coverage can still be partial: rendering paths that decline attribution (fused table headers,
+layout-block ordering, spans dropped by the overlap sweep — see ``reading_text.py``) leave
+canonical gaps this map does not cover. Callers should keep falling back to the geometry
+projection / unique-token ``reading_text_map`` for those, and only for those.
 """
 
 from __future__ import annotations
@@ -35,8 +37,9 @@ from app.schemas import (
 from app.services.reading_text import SYNTHETIC_HEADINGS, RowLineageSegment
 
 _REASON_ROW_CONSTRUCTION = "row_construction"
+_REASON_IN_ROW_SPLIT = "in_row_split"
 _REASON_SYNTHETIC_HEADING = "synthetic_heading"
-_STATUS_CONFIDENCE = {"exact": 1.0, "normalized": 0.9, "merged": 0.85}
+_STATUS_CONFIDENCE = {"exact": 1.0, "normalized": 0.9, "split": 0.9, "merged": 0.85}
 
 
 def build_reading_text_row_lineage_map(
@@ -68,7 +71,7 @@ def build_reading_text_row_lineage_map(
         raw_start = base + row_segment.page_start
         raw_end = base + row_segment.page_end
         # Defensive: never let two segments claim overlapping raw ranges (the schema forbids it).
-        # This should be unreachable given the collection-time global-uniqueness discipline in
+        # This should be unreachable given the collection-time discipline and overlap sweep in
         # ``reading_text.py``, but a document this module has never seen must never crash artifact
         # creation over an edge case that discipline missed -- decline the later segment instead.
         if any(
@@ -77,6 +80,9 @@ def build_reading_text_row_lineage_map(
         ):
             continue
         claimed_raw_ranges.append((raw_start, raw_end))
+        reason_codes = [_REASON_ROW_CONSTRUCTION]
+        if row_segment.status == "split":
+            reason_codes.append(_REASON_IN_ROW_SPLIT)
         segments.append(
             CanonicalTextSegmentV1(
                 segment_id=_segment_id(
@@ -93,7 +99,7 @@ def build_reading_text_row_lineage_map(
                 segment_role="body",
                 mapping_status=row_segment.status,
                 confidence=_STATUS_CONFIDENCE[row_segment.status],
-                reason_codes=[_REASON_ROW_CONSTRUCTION],
+                reason_codes=reason_codes,
                 page_number=row_segment.page_number,
             )
         )
@@ -159,12 +165,21 @@ def _summary(
         if segment.source_range is not None
     )
     total = len(reading_text)
+    status_counts = {
+        status: sum(segment.mapping_status == status for segment in segments)
+        for status in ("exact", "normalized", "merged", "split", "inserted")
+    }
     return ReadingTextRowLineageSummary(
         lineage_source="row_construction",
         total_segments=len(segments),
         canonical_char_count=total,
         mapped_canonical_char_count=mapped_chars,
         coverage_ratio=(mapped_chars / total) if total else 0.0,
+        exact_segment_count=status_counts["exact"],
+        normalized_segment_count=status_counts["normalized"],
+        merged_segment_count=status_counts["merged"],
+        split_segment_count=status_counts["split"],
+        inserted_segment_count=status_counts["inserted"],
     )
 
 

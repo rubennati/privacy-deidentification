@@ -539,7 +539,9 @@ def _text_content(
             "1" if geometry_projection_map is not None else None
         ),
         reading_text_geometry_projection_map=geometry_projection_map,
-        reading_text_row_lineage_map_version="1" if row_lineage_map is not None else None,
+        reading_text_row_lineage_map_version=(
+            row_lineage_map.map_version if row_lineage_map is not None else None
+        ),
         reading_text_row_lineage_map=row_lineage_map,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
