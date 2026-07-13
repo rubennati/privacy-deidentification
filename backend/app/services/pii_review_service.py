@@ -125,6 +125,26 @@ class PiiManualAdditionInvalidError(ApiError):
         super().__init__(detail, 422)
 
 
+class PiiReviewLogDamagedError(ApiError):
+    """Raised when the append-only review decision log is damaged or incompatible.
+
+    The log is collapse-to-latest-per-target: silently skipping an unreadable line could resurrect
+    an *older* decision as if it were the newest — silently changing which data is authoritative.
+    Any unreadable or unrecognized line therefore fails the whole document's review state
+    explicitly (reads and writes), with one deliberate exception: an unparseable *final* fragment
+    without a trailing newline is a torn-append artifact whose write was never acknowledged to any
+    client, so ignoring it reports exactly the state the caller was told had been stored.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The review decision log for this document is damaged or contains entries this "
+            "application version does not understand. Refusing to serve a possibly outdated "
+            "review state.",
+            500,
+        )
+
+
 def get_pii_review_result(
     settings: Settings, document_id: str, artifact_id: str | None = None
 ) -> PiiReviewResult:
@@ -579,12 +599,8 @@ def _load_latest_decisions(
     and its decisions persist across PII re-runs regardless of ``artifact_id``; only a new *text*
     artifact affects their continued validity (see ``_count_stale_decisions``/``_target_exists``).
     """
-    path = _decisions_path(settings, document_id)
     latest: dict[tuple[str, str], PiiReviewDecisionRecord] = {}
-    if not path.is_file():
-        return latest
-    for line in path.read_text(encoding="utf-8").splitlines():
-        record = _parse_line(line)
+    for record in _read_review_records(_decisions_path(settings, document_id)):
         if not isinstance(record, PiiReviewDecisionRecord):
             continue
         if record.target_type != "manual_addition" and record.artifact_id != artifact_id:
@@ -603,12 +619,8 @@ def _load_latest_manual_additions(
     occurrences are. Whether its canonical offsets still apply to the *current* text is a separate,
     explicit signal (``_count_stale_decisions``), never a silent drop here.
     """
-    path = _decisions_path(settings, document_id)
     latest: dict[str, PiiManualAdditionRecord] = {}
-    if not path.is_file():
-        return latest
-    for line in path.read_text(encoding="utf-8").splitlines():
-        record = _parse_line(line)
+    for record in _read_review_records(_decisions_path(settings, document_id)):
         if not isinstance(record, PiiManualAdditionRecord):
             continue
         latest[record.addition_id] = record
@@ -638,8 +650,7 @@ def _collect_stale_decisions(
     path = _decisions_path(settings, document_id)
     if path.is_file():
         latest_by_target: dict[tuple[str, str], PiiReviewDecisionRecord] = {}
-        for line in path.read_text(encoding="utf-8").splitlines():
-            record = _parse_line(line)
+        for record in _read_review_records(path):
             if not isinstance(record, PiiReviewDecisionRecord):
                 continue
             latest_by_target[(record.target_type, record.target_id)] = record
@@ -678,24 +689,51 @@ def _collect_stale_decisions(
     return stale
 
 
-def _parse_line(line: str) -> PiiReviewDecisionRecord | PiiManualAdditionRecord | None:
-    """Parse one JSONL line, dispatching on ``record_type`` (legacy lines default to "decision")."""
-    stripped = line.strip()
-    if not stripped:
-        return None
-    try:
-        payload = json.loads(stripped)
-    except ValueError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    record_type = payload.get("record_type", "decision")
-    try:
-        if record_type == "manual_addition":
-            return PiiManualAdditionRecord.model_validate(payload)
-        return PiiReviewDecisionRecord.model_validate(payload)
-    except ValidationError:
-        return None
+def _read_review_records(
+    path: Path,
+) -> list[PiiReviewDecisionRecord | PiiManualAdditionRecord]:
+    """Read every record in the append-only log, failing explicitly on damage.
+
+    The log is collapsed to the latest record per target by its readers, so a silently skipped
+    unreadable line could resurrect an older decision as the apparent newest state. Policy
+    (ADR-0041): blank lines are harmless; an unparseable *final* fragment without a trailing
+    newline is a torn-append artifact whose write was never acknowledged to any client and is
+    ignored; every other unreadable line — invalid JSON, a non-object payload, an unknown
+    ``record_type`` (a record written by a newer application version), or a schema-invalid
+    record — raises :class:`PiiReviewLogDamagedError` for reads *and* writes rather than serving
+    or extending a possibly outdated review state. Legacy lines without ``record_type`` remain
+    valid decision records.
+    """
+    if not path.is_file():
+        return []
+    raw = path.read_text(encoding="utf-8")
+    lines = raw.split("\n")
+    has_trailing_newline = raw.endswith("\n")
+    records: list[PiiReviewDecisionRecord | PiiManualAdditionRecord] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        is_torn_tail = index == len(lines) - 1 and not has_trailing_newline
+        try:
+            payload = json.loads(stripped)
+        except ValueError:
+            if is_torn_tail:
+                continue
+            raise PiiReviewLogDamagedError() from None
+        if not isinstance(payload, dict):
+            raise PiiReviewLogDamagedError()
+        record_type = payload.get("record_type", "decision")
+        if record_type not in ("decision", "manual_addition"):
+            raise PiiReviewLogDamagedError()
+        try:
+            if record_type == "manual_addition":
+                records.append(PiiManualAdditionRecord.model_validate(payload))
+            else:
+                records.append(PiiReviewDecisionRecord.model_validate(payload))
+        except ValidationError as exc:
+            raise PiiReviewLogDamagedError() from exc
+    return records
 
 
 def _append_review_line(

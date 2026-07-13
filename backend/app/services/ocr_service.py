@@ -93,8 +93,14 @@ def create_text_artifact(
     pdf_renderer: PdfRenderer,
     *,
     authority_job_id: str | None = None,
+    authority_claim_attempt: int | None = None,
 ) -> TextArtifact:
-    """Verify station inputs, route extraction, and persist an immutable result."""
+    """Verify station inputs, route extraction, and persist an immutable result.
+
+    ``authority_claim_attempt`` fences a worker run's publication to its job claim (ADR-0041):
+    when the claim was lost to recovery, publication raises ``StaleJobClaimError`` instead of
+    overwriting the authority pointer with a result whose job success can never be recorded.
+    """
     original, original_path = get_verified_original(settings, document_id)
     audit = get_latest_audit_artifact(settings, document_id)
     if audit is None:
@@ -116,7 +122,11 @@ def create_text_artifact(
     )
     quality_report = build_quality_report(original, audit, artifact, created_at)
     save_text_run(
-        settings, artifact, quality_report, authority_job_id=authority_job_id
+        settings,
+        artifact,
+        quality_report,
+        authority_job_id=authority_job_id,
+        authority_claim_attempt=authority_claim_attempt,
     )
     return artifact
 

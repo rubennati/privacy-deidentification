@@ -27,9 +27,16 @@ def provide_job_store(settings: Settings = Depends(get_settings)) -> JobStore:
 )
 def get_job_status(
     job_id: str,
+    settings: Settings = Depends(get_settings),
     store: JobStore = Depends(provide_job_store),
 ) -> JobStatusResponse:
-    """Return safe status metadata for one job."""
+    """Return safe status metadata for one job.
+
+    Observation recovers first (ADR-0041): an abandoned ``running`` row whose lease expired is
+    requeued or explicitly failed before it is reported, so a poller can never watch a job stay
+    ``running`` forever merely because its worker disappeared.
+    """
+    store.recover_abandoned_jobs(max_attempts=settings.ocr_worker_max_attempts)
     record = store.get_job(job_id)
     if record is None:
         raise JobNotFoundError()
@@ -47,9 +54,10 @@ def get_document_jobs(
     settings: Settings = Depends(get_settings),
     store: JobStore = Depends(provide_job_store),
 ) -> list[JobStatusResponse]:
-    """Return newest safe job metadata rows for one document."""
+    """Return newest safe job metadata rows for one document (recovering abandoned rows first)."""
     if get_document_record(settings, document_id) is None:
         raise DocumentNotFoundError()
+    store.recover_abandoned_jobs(max_attempts=settings.ocr_worker_max_attempts)
     records = store.list_jobs_for_document(document_id, limit=limit)
     return [to_job_status_response(record) for record in records]
 

@@ -474,3 +474,109 @@ def test_decision_note_is_persisted_but_not_leaked_into_group_response(
     assert entry["note"] == "reviewer note"
     assert entry["source"] == "user"
     assert entry["text_artifact_id"] == "a" * 32
+
+
+# --- append-only log integrity (ADR-0041) ----------------------------------------------------
+# The log is collapsed to the latest record per target, so a silently skipped unreadable line
+# would resurrect an older decision as the apparent newest state. Damage therefore fails reads
+# and writes explicitly; only an unacknowledged torn tail fragment is ignored.
+
+
+def _decisions_file(document_data_dir: Path, document_id: str) -> Path:
+    return document_data_dir / document_id / "review" / "pii_review_decisions.jsonl"
+
+
+def _reviewed_document(client: TestClient, settings: Settings) -> tuple[str, str]:
+    """One document with a PII result and one recorded `keep` decision; returns (doc, group)."""
+    document_id = _upload_document(client)
+    _save_pii(settings, document_id, [_make_entity("LOCATION", "Wien", 0)])
+    group_id = client.get(f"/api/documents/{document_id}/pii/review").json()["groups"][0][
+        "entity_group_id"
+    ]
+    response = client.post(
+        f"/api/documents/{document_id}/pii/review/decisions",
+        json=_decision_payload("entity_group", group_id, "keep"),
+    )
+    assert response.status_code == 201
+    return document_id, group_id
+
+
+def test_damaged_newest_log_line_never_silently_reactivates_the_older_decision(
+    client: TestClient, settings: Settings, document_data_dir: Path
+) -> None:
+    """The audited failure mode: the newest decision line is corrupted (crash, disk damage). The
+    review state must fail explicitly instead of silently serving the older `keep` decision as if
+    it were current."""
+    document_id, group_id = _reviewed_document(client, settings)
+    second = client.post(
+        f"/api/documents/{document_id}/pii/review/decisions",
+        json=_decision_payload("entity_group", group_id, "false_positive"),
+    )
+    assert second.status_code == 201
+    decisions_file = _decisions_file(document_data_dir, document_id)
+    lines = decisions_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    # Corrupt the newest, complete (newline-terminated) line in place.
+    lines[1] = lines[1][: len(lines[1]) // 2] + "###corrupted###"
+    decisions_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    read_response = client.get(f"/api/documents/{document_id}/pii/review")
+    assert read_response.status_code == 500
+    assert "damaged" in read_response.json()["detail"]
+    # The older decision is nowhere in the failure response — nothing is silently served.
+    assert "keep" not in read_response.text
+
+    # Writing against a damaged log is refused as well: appending would compound the ambiguity.
+    write_response = client.post(
+        f"/api/documents/{document_id}/pii/review/decisions",
+        json=_decision_payload("entity_group", group_id, "pseudonymize"),
+    )
+    assert write_response.status_code == 500
+
+
+def test_damaged_middle_log_line_fails_reads_explicitly(
+    client: TestClient, settings: Settings, document_data_dir: Path
+) -> None:
+    document_id, _group_id = _reviewed_document(client, settings)
+    decisions_file = _decisions_file(document_data_dir, document_id)
+    content = decisions_file.read_text(encoding="utf-8")
+    decisions_file.write_text("not json at all\n" + content, encoding="utf-8")
+
+    response = client.get(f"/api/documents/{document_id}/pii/review")
+
+    assert response.status_code == 500
+    assert "damaged" in response.json()["detail"]
+
+
+def test_torn_tail_fragment_is_ignored_and_acknowledged_state_is_served(
+    client: TestClient, settings: Settings, document_data_dir: Path
+) -> None:
+    """A partial final line without a trailing newline is a torn append whose request was never
+    acknowledged — the served state is exactly what clients were told had been stored."""
+    document_id, group_id = _reviewed_document(client, settings)
+    decisions_file = _decisions_file(document_data_dir, document_id)
+    with decisions_file.open("a", encoding="utf-8") as handle:
+        handle.write('{"target_type": "entity_group", "target_id": "trunc')  # no newline
+
+    response = client.get(f"/api/documents/{document_id}/pii/review")
+
+    assert response.status_code == 200
+    group = next(
+        item for item in response.json()["groups"] if item["entity_group_id"] == group_id
+    )
+    assert group["review_decision"] == "keep"
+    assert group["review_status"] == "kept"
+
+
+def test_unknown_record_type_from_a_newer_version_fails_explicitly(
+    client: TestClient, settings: Settings, document_data_dir: Path
+) -> None:
+    document_id, _group_id = _reviewed_document(client, settings)
+    decisions_file = _decisions_file(document_data_dir, document_id)
+    with decisions_file.open("a", encoding="utf-8") as handle:
+        handle.write('{"record_type": "replacement_plan_v9", "payload": "future"}\n')
+
+    response = client.get(f"/api/documents/{document_id}/pii/review")
+
+    assert response.status_code == 500
+    assert "damaged" in response.json()["detail"]
