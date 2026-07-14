@@ -21,11 +21,7 @@ import {
 } from "../api/workstations";
 import { jobActivityStore, resumeActiveJobs } from "../lib/jobActivity";
 import { JobStatusBanner } from "../components/JobStatusBanner";
-import {
-  buildFeedbackStatusMap,
-  fetchPiiFeedbackSummary,
-  type PiiFeedbackStatus,
-} from "../api/piiFeedback";
+import { usePiiFeedbackStatuses } from "../hooks/usePiiFeedback";
 import {
   fetchPiiReview,
   reviewDecisionLabel,
@@ -89,7 +85,6 @@ export default function DocumentDetailPage() {
   const [audit, setAudit] = useState<AuditArtifact | null>(null);
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
-  const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   // User-view in-place decision: which highlight was clicked and where its mark sits on screen.
   // The decidable target itself is re-resolved from the current review result on every render, so
@@ -193,19 +188,8 @@ export default function DocumentDetailPage() {
   const devGateEnabled = appConfig?.devEngineSettingsEnabled ?? false;
   const piiArtifactId = pii?.id ?? null;
   const piiTextArtifactId = pii?.input_text_artifact_id ?? null;
-  useEffect(() => {
-    if (!documentId || !piiArtifactId || !devGateEnabled) {
-      setFeedbackStatuses({});
-      return;
-    }
-    let active = true;
-    void fetchPiiFeedbackSummary(documentId, piiArtifactId).then((summary) => {
-      if (active) setFeedbackStatuses(buildFeedbackStatusMap(summary));
-    });
-    return () => {
-      active = false;
-    };
-  }, [documentId, piiArtifactId, devGateEnabled]);
+  // Dev-only per-entity feedback status for the current PII result (query hook: gated + cached).
+  const feedbackStatuses = usePiiFeedbackStatuses(documentId, piiArtifactId, devGateEnabled);
 
   // The review overlay + entity contract now come from a query hook: same shapes, same lineage gate
   // (contract stays `idle` unless the PII result's input text matches the current OCR text), but
