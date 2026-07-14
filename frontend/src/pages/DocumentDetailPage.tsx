@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { fetchAppConfig, type AppConfig } from "../api/config";
 import { DocumentsApiError, fetchDocument, type DocumentSummary } from "../api/documents";
+import { useAppConfig } from "../hooks/useAppConfig";
 import {
   fetchAudit,
   fetchDocumentJobs,
@@ -87,7 +87,8 @@ export default function DocumentDetailPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [document, setDocument] = useState<DocumentSummary | null>(null);
-  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  // Server config comes from the shared query cache (app-wide), not per-mount fetch state.
+  const appConfig = useAppConfig().data ?? null;
   const [audit, setAudit] = useState<AuditArtifact | null>(null);
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
@@ -168,13 +169,9 @@ export default function DocumentDetailPage() {
 
     void (async () => {
       try {
-        const [loadedDocument, loadedConfig] = await Promise.all([
-          fetchDocument(documentId),
-          fetchAppConfig(),
-        ]);
+        const loadedDocument = await fetchDocument(documentId);
         if (!active) return;
         setDocument(loadedDocument);
-        setAppConfig(loadedConfig);
 
         const [auditResult, textResult, piiResult] = await Promise.all([
           loadOptional(() => fetchAudit(documentId), "audit"),
