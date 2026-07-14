@@ -1,26 +1,15 @@
-# Developer-mode overlay for docker-compose.yml. Applied by `make dev`; NOT loaded by `make up`
-# (the production-local / handover mode). It only flips developer conveniences on top of the base:
+# Developer-mode overlay for docker-compose.yml. Applied by `make dev`; NOT loaded by `make up`.
+# The base already defaults to the stronger GLiNER NER and a 4g API limit, so this overlay only adds
+# the developer conveniences on top:
 #
 #   - ENABLE_DEV_ENGINE_SETTINGS=true  → the dev-only review feedback + per-run engine-setting UI.
-#   - PII_NER_BACKEND=gliner           → the stronger local NER (needs the offline model + backbone;
-#                                        provision both with `make ner-models`) and more memory.
-#
-# GLiNER's mdeberta-v3-base backbone peaks ~3 GiB while loading, so the API needs 4g here (the base
-# `make up` stays at 1g with the lighter spaCy NER). Leave API_MEMORY_LIMIT unset in .env so this
-# default applies; pinning it there overrides this and can starve GLiNER.
 #
 # No image change, no network/port change, no external calls — everything stays local.
 services:
   api:
     environment:
       ENABLE_DEV_ENGINE_SETTINGS: "true"
-      PII_NER_BACKEND: "gliner"
-    deploy:
-      resources:
-        limits:
-          memory: ${API_MEMORY_LIMIT:-4g}
 
   ocr-worker:
     environment:
       ENABLE_DEV_ENGINE_SETTINGS: "true"
-      PII_NER_BACKEND: "gliner"

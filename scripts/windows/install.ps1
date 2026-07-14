@@ -155,6 +155,17 @@ if (-not (Ensure-DockerRunning)) {
     return
 }
 
+# Provision the local OCR + GLiNER models before first start, so the default GLiNER PII backend and
+# scanned-page OCR work fully offline. One-time download; the runtime never fetches models.
+. (Join-Path $AppPath "scripts\windows\provision-models.ps1")
+try {
+    Invoke-ModelProvisioning -AppPath $AppPath
+}
+catch {
+    Write-Host $_.Exception.Message
+    return
+}
+
 Push-Location $AppPath
 try {
     & docker compose up -d --build
