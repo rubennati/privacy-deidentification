@@ -33,9 +33,11 @@ only the original bytes under `./volumes/uploads`, and keeps metadata and proces
 separately under `./volumes/document-store`. All host storage lives under a single `DATA_ROOT`
 (default `./volumes`).
 
-> **Step 5:** This version provides upload/document management, structural Audit v1, the
-> synchronous OCR/Text and detection-only PII workstations, plus a manual document review UI.
-> Anonymization and redaction remain separate later steps.
+> **Scope:** This version provides upload/document management, structural Audit v1, worker-based
+> OCR/Text, detection-only PII with an anchor-bound review entity contract, and a manual review
+> workflow — grouped per-entity decisions (pseudonymize / keep / false positive) plus manual add of
+> missed entities, recorded in an immutable review result. Pseudonymization, redaction, and export
+> remain separate later steps.
 
 ## Approach: tool-first / adapter-bound
 
@@ -53,8 +55,8 @@ central engine should do on a **0–19 maturity scale**, the artifacts and metri
 settings, the tool strategy, the target architecture (including the database and optional-local-AI
 questions), and the roadmap. See [ADR-0011](docs/adr/0011-engine-capability-model.md) and
 [ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md). Current standing (summary): OCR/Text
-**L14**, PII **L11** (L10 partial), Review **L2 production / L6 done / L7-L9 partial**,
-Benchmark **L8**, Redaction **L0**.
+**L15**, PII **L14** (L10 partial), Review **L2 production / L10 done**, Benchmark **L10**,
+Redaction **L0**.
 
 ## Architecture
 
@@ -120,7 +122,9 @@ make up                     # start frontend + api + ocr-worker → http://127.0
   (review feedback + per-run engine settings), the stronger GLiNER NER, and more memory (4g API).
   GLiNER needs its offline model **and** backbone — provision both once with `make ner-models`. It
   runs fully offline (no runtime download); leave `API_MEMORY_LIMIT` unset in `.env` so `make dev`
-  gets its 4g default (the backbone peaks ~3 GiB while loading).
+  gets its 4g default (the backbone peaks ~3 GiB while loading). **This is the recommended mode for
+  demos**: GLiNER markedly improves person/organization detection over the lean spaCy default. It
+  needs ~4 GB RAM for the `api` container and the one-time `make ner-models` provisioning.
 
 ### Runs fully local
 
