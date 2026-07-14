@@ -33,10 +33,7 @@ import {
   type PiiReviewDecisionValue,
   type PiiReviewResult,
 } from "../api/piiReview";
-import {
-  fetchPiiEntityContract,
-  type PiiEntityContractV1,
-} from "../api/piiEntityContract";
+import { usePiiReviewAndContract, usePiiReviewInvalidation } from "../hooks/usePiiReview";
 import { AddPiiManualEntity } from "../components/pii/AddPiiManualEntity";
 import {
   PiiDecisionPopover,
@@ -93,11 +90,6 @@ export default function DocumentDetailPage() {
   const [text, setText] = useState<TextArtifact | null>(null);
   const [pii, setPii] = useState<PiiArtifact | null>(null);
   const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
-  const [reviewResult, setReviewResult] = useState<PiiReviewResult | null>(null);
-  const [piiEntityContractState, setPiiEntityContractState] = useState<
-    | { status: "idle" | "loading" | "not_found" | "incompatible" | "error" }
-    | { status: "ok"; contract: PiiEntityContractV1 }
-  >({ status: "idle" });
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   // User-view in-place decision: which highlight was clicked and where its mark sits on screen.
   // The decidable target itself is re-resolved from the current review result on every render, so
@@ -156,11 +148,9 @@ export default function DocumentDetailPage() {
     setAudit(null);
     setText(null);
     setPii(null);
-    setReviewResult(null);
     setDecisionAnchor(null);
     setToast(null);
     navPosition.current = -1;
-    setPiiEntityContractState({ status: "idle" });
     setLoading(true);
     setReviewTextMode("reading");
     setSelectedTextRange(null);
@@ -217,51 +207,24 @@ export default function DocumentDetailPage() {
     };
   }, [documentId, piiArtifactId, devGateEnabled]);
 
-  // The review-entity overlay (groups + decisions) is not dev-gated; restore it whenever the
-  // current PII artifact changes so highlight suppression stays correct after a re-run.
+  // The review overlay + entity contract now come from a query hook: same shapes, same lineage gate
+  // (contract stays `idle` unless the PII result's input text matches the current OCR text), but
+  // declarative and race-free instead of a hand-coordinated effect.
+  const { reviewResult, piiEntityContractState } = usePiiReviewAndContract(
+    documentId,
+    piiArtifactId,
+    text?.id ?? null,
+    piiTextArtifactId,
+  );
+  const applyReviewUpdate = usePiiReviewInvalidation();
+
+  // Clear any selected occurrence whenever the current PII result changes.
   useEffect(() => {
     setSelectedOccurrenceId(null);
-    if (!documentId || !piiArtifactId) {
-      setReviewResult(null);
-      setPiiEntityContractState({ status: "idle" });
-      return;
-    }
-    if (!text || piiTextArtifactId !== text.id) {
-      setPiiEntityContractState({ status: "idle" });
-      return;
-    }
-    let active = true;
-    setPiiEntityContractState({ status: "loading" });
-    void Promise.all([
-      fetchPiiReview(documentId),
-      fetchPiiEntityContract(documentId, piiArtifactId, text.id),
-    ])
-      .then(([review, contractResult]) => {
-        if (!active) return;
-        setReviewResult(review);
-        setPiiEntityContractState(contractResult);
-      })
-      .catch(() => {
-        if (active) setPiiEntityContractState({ status: "error" });
-      });
-    return () => {
-      active = false;
-    };
-  }, [documentId, piiArtifactId, piiTextArtifactId, text]);
+  }, [piiArtifactId]);
 
   const refreshPiiReviewAndContract = async (review: PiiReviewResult) => {
-    setReviewResult(review);
-    if (!documentId || !piiArtifactId) {
-      setPiiEntityContractState({ status: "idle" });
-      return;
-    }
-    if (!text || pii?.input_text_artifact_id !== text.id) {
-      setPiiEntityContractState({ status: "idle" });
-      return;
-    }
-    setPiiEntityContractState({ status: "loading" });
-    const contractResult = await fetchPiiEntityContract(documentId, piiArtifactId, text.id);
-    setPiiEntityContractState(contractResult);
+    await applyReviewUpdate(documentId, piiArtifactId, text?.id ?? null, review);
   };
 
   // Reload recovery: rehydrate any tracked OCR job for this document and resume polling it (a
