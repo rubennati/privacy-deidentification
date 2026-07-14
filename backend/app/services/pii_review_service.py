@@ -16,9 +16,11 @@ pseudonymization ("keep" it as-is, or mark it a "false_positive").
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -29,6 +31,10 @@ from app.schemas import (
     PiiEntity,
     PiiEntityGroup,
     PiiEntityGroupReview,
+    PiiManualAddition,
+    PiiManualAdditionAck,
+    PiiManualAdditionRecord,
+    PiiManualAdditionRequest,
     PiiReviewDecisionAck,
     PiiReviewDecisionRecord,
     PiiReviewDecisionRequest,
@@ -36,11 +42,23 @@ from app.schemas import (
     PiiReviewDecisionValue,
     PiiReviewOccurrence,
     PiiReviewResult,
+    PiiReviewResultArtifact,
+    PiiReviewResultEntry,
     PiiReviewStatus,
+    PiiStaleReviewDecision,
 )
-from app.services.artifact_service import get_latest_pii_artifact
+from app.services.artifact_service import (
+    get_latest_pii_artifact,
+    get_latest_pii_review_result_artifact,
+    get_latest_text_artifact,
+    get_pii_artifact,
+    get_text_artifact,
+    save_pii_review_result_artifact,
+)
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.pii_grouping import group_pii_entities
+from app.services.pii_manual_addition import resolve_canonical_span_to_raw
+from app.services.pii_review_result import build_detected_entries, build_manual_addition_entries
 
 _REVIEW_DIRECTORY = "review"
 _DECISIONS_FILENAME = "pii_review_decisions.jsonl"
@@ -86,24 +104,105 @@ class PiiReviewTargetNotFoundError(ApiError):
         )
 
 
-def get_pii_review_result(settings: Settings, document_id: str) -> PiiReviewResult:
-    """Return the reviewable groups/occurrences for a document's latest PII result."""
+class PiiReviewResultArtifactNotFoundError(ApiError):
+    """Raised when no review-result snapshot has been persisted for a document yet."""
+
+    def __init__(self) -> None:
+        super().__init__("No review result snapshot found for this document yet.", 404)
+
+
+class PiiReviewTextArtifactNotFoundError(ApiError):
+    """Raised when a document has no usable text result for manual-addition offsets."""
+
+    def __init__(self) -> None:
+        super().__init__("Text result not found.", 404)
+
+
+class PiiManualAdditionInvalidError(ApiError):
+    """Raised when a manual addition's entity type or offsets are invalid for the current run."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail, 422)
+
+
+class PiiReviewLogDamagedError(ApiError):
+    """Raised when the append-only review decision log is damaged or incompatible.
+
+    The log is collapse-to-latest-per-target: silently skipping an unreadable line could resurrect
+    an *older* decision as if it were the newest — silently changing which data is authoritative.
+    Any unreadable or unrecognized line therefore fails the whole document's review state
+    explicitly (reads and writes), with one deliberate exception: an unparseable *final* fragment
+    without a trailing newline is a torn-append artifact whose write was never acknowledged to any
+    client, so ignoring it reports exactly the state the caller was told had been stored.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The review decision log for this document is damaged or contains entries this "
+            "application version does not understand. Refusing to serve a possibly outdated "
+            "review state.",
+            500,
+        )
+
+
+def get_pii_review_result(
+    settings: Settings, document_id: str, artifact_id: str | None = None
+) -> PiiReviewResult:
+    """Return review state for one exact PII result, or the latest when explicitly omitted."""
     if get_document_record(settings, document_id) is None:
         raise DocumentNotFoundError
-    artifact = get_latest_pii_artifact(settings, document_id)
+    latest_artifact = get_latest_pii_artifact(settings, document_id)
+    artifact = (
+        get_pii_artifact(settings, document_id, artifact_id)
+        if artifact_id is not None
+        else latest_artifact
+    )
     if artifact is None:
         raise PiiReviewArtifactNotFoundError
 
     entities = artifact.content.entities
     groups = group_pii_entities(entities)
     decisions = _load_latest_decisions(settings, document_id, artifact.id)
-    return _build_review_result(document_id, artifact.id, entities, groups, decisions)
+    manual_additions = _load_latest_manual_additions(settings, document_id)
+    current_text_artifact_id = _current_text_artifact_id(settings, document_id)
+    stale_decisions = _collect_stale_decisions(
+        settings, document_id, artifact.id, manual_additions, decisions, current_text_artifact_id
+    )
+    return _build_review_result(
+        document_id,
+        artifact.id,
+        artifact.input_text_artifact_id,
+        entities,
+        groups,
+        decisions,
+        manual_additions,
+        stale_decisions,
+        settings=settings,
+        latest_pii_artifact_id=(latest_artifact.id if latest_artifact is not None else None),
+        latest_text_artifact_id=current_text_artifact_id,
+    )
+
+
+def get_pii_review_result_artifact(
+    settings: Settings, document_id: str
+) -> PiiReviewResultArtifact:
+    """Return the newest persisted review-result snapshot (Review L8, ADR-0034).
+
+    Distinct from :func:`get_pii_review_result`: this is the durable, immutable-per-run artifact
+    written after each recorded decision, not a value recomputed on every call.
+    """
+    if get_document_record(settings, document_id) is None:
+        raise DocumentNotFoundError
+    artifact = get_latest_pii_review_result_artifact(settings, document_id)
+    if artifact is None:
+        raise PiiReviewResultArtifactNotFoundError
+    return artifact
 
 
 def set_pii_review_decision(
     settings: Settings, document_id: str, request: PiiReviewDecisionRequest
 ) -> PiiReviewDecisionAck:
-    """Persist one group- or occurrence-level review decision and return its resolved status."""
+    """Persist one group-, occurrence-, or manual-addition-level review decision."""
     if get_document_record(settings, document_id) is None:
         raise DocumentNotFoundError
     artifact = get_latest_pii_artifact(settings, document_id)
@@ -112,7 +211,16 @@ def set_pii_review_decision(
 
     entities = artifact.content.entities
     groups = group_pii_entities(entities)
-    if not _target_exists(request.target_type, request.target_id, entities, groups):
+    manual_additions = _load_latest_manual_additions(settings, document_id)
+    current_text_artifact_id = _current_text_artifact_id(settings, document_id)
+    if not _target_exists(
+        request.target_type,
+        request.target_id,
+        entities,
+        groups,
+        manual_additions,
+        current_text_artifact_id,
+    ):
         raise PiiReviewTargetNotFoundError
 
     record = PiiReviewDecisionRecord(
@@ -120,13 +228,22 @@ def set_pii_review_decision(
         recorded_at=_now_utc_iso(),
         document_id=document_id,
         artifact_id=artifact.id,
+        text_artifact_id=artifact.input_text_artifact_id,
         target_type=request.target_type,
         target_id=request.target_id,
         decision=request.decision,
         note=request.note,
         source="user",
     )
-    _append_decision_line(settings, document_id, record)
+    _append_review_line(settings, document_id, record)
+    _persist_review_result_snapshot(
+        settings,
+        document_id,
+        artifact.id,
+        artifact.input_text_artifact_id,
+        entities,
+        groups,
+    )
     return PiiReviewDecisionAck(
         recorded=True,
         target_type=record.target_type,
@@ -137,24 +254,194 @@ def set_pii_review_decision(
     )
 
 
+def add_pii_manual_entity(
+    settings: Settings, document_id: str, request: PiiManualAdditionRequest
+) -> PiiManualAdditionAck:
+    """Record a reviewer-added span the engine missed (PII L14 / Review L10, ADR-0035).
+
+    Canonical-text offsets only (into the latest ``reading_text``) -- the reviewer selects in the
+    canonical reading-text view, the human-facing default (L10.5). A best-effort raw span is
+    resolved via the Text Anchor Graph (``pii_manual_addition.py``); an unresolved raw span is an
+    explicit, honest state, never a guess. This never touches ``pii_result`` or the anchor-bound
+    entity contract; the addition is layered onto the same review-decision log/artifact instead.
+    """
+    if get_document_record(settings, document_id) is None:
+        raise DocumentNotFoundError
+    pii_artifact = get_latest_pii_artifact(settings, document_id)
+    if pii_artifact is None:
+        raise PiiReviewArtifactNotFoundError
+    text_artifact = get_latest_text_artifact(settings, document_id)
+    if text_artifact is None or not text_artifact.content.reading_text:
+        raise PiiReviewTextArtifactNotFoundError
+
+    if request.entity_type not in pii_artifact.content.configured_entity_types:
+        raise PiiManualAdditionInvalidError(
+            "Entity type is not configured for the current PII run."
+        )
+    if request.canonical_end > len(text_artifact.content.reading_text):
+        raise PiiManualAdditionInvalidError(
+            "Canonical offsets exceed the current reading text."
+        )
+
+    raw_range, raw_projection_status = resolve_canonical_span_to_raw(
+        text_artifact, request.canonical_start, request.canonical_end
+    )
+    raw_start, raw_end = raw_range if raw_range is not None else (None, None)
+
+    record = PiiManualAdditionRecord(
+        app_version=__version__,
+        recorded_at=_now_utc_iso(),
+        document_id=document_id,
+        addition_id=uuid4().hex,
+        pii_artifact_id=pii_artifact.id,
+        text_artifact_id=text_artifact.id,
+        entity_type=request.entity_type,
+        canonical_start=request.canonical_start,
+        canonical_end=request.canonical_end,
+        raw_start=raw_start,
+        raw_end=raw_end,
+        raw_projection_status=raw_projection_status,
+        note=request.note,
+    )
+    _append_review_line(settings, document_id, record)
+    entities = pii_artifact.content.entities
+    _persist_review_result_snapshot(
+        settings,
+        document_id,
+        pii_artifact.id,
+        pii_artifact.input_text_artifact_id,
+        entities,
+        group_pii_entities(entities),
+    )
+    return PiiManualAdditionAck(
+        recorded=True,
+        addition_id=record.addition_id,
+        entity_type=record.entity_type,
+        canonical_start=record.canonical_start,
+        canonical_end=record.canonical_end,
+        raw_projection_status=record.raw_projection_status,
+        created_at=record.recorded_at,
+    )
+
+
+def _persist_review_result_snapshot(
+    settings: Settings,
+    document_id: str,
+    artifact_id: str,
+    text_artifact_id: str,
+    entities: list[PiiEntity],
+    groups: list[PiiEntityGroup],
+) -> None:
+    """Save an immutable snapshot of the fully-resolved review state (Review L8, ADR-0034).
+
+    Reads back the just-written decision/addition (via the same loaders, unchanged) so the snapshot
+    reflects exactly what a subsequent ``GET …/pii/review`` would compute -- this function never
+    resolves decisions itself, only persists the same resolution as a durable artifact.
+    """
+    decisions = _load_latest_decisions(settings, document_id, artifact_id)
+    manual_additions = _load_latest_manual_additions(settings, document_id)
+    current_text_artifact_id = _current_text_artifact_id(settings, document_id)
+    stale_decisions = _collect_stale_decisions(
+        settings, document_id, artifact_id, manual_additions, decisions, current_text_artifact_id
+    )
+    content = _build_review_result(
+        document_id,
+        artifact_id,
+        text_artifact_id,
+        entities,
+        groups,
+        decisions,
+        manual_additions,
+        stale_decisions,
+        settings=settings,
+        # Both callers of this function (`set_pii_review_decision`/`add_pii_manual_entity`) always
+        # fetch `get_latest_pii_artifact` themselves before reaching here, so `artifact_id` here is
+        # already the latest one -- no extra fetch needed to know this snapshot's view is current.
+        latest_pii_artifact_id=artifact_id,
+        latest_text_artifact_id=current_text_artifact_id,
+    )
+    snapshot = PiiReviewResultArtifact(
+        id=uuid4().hex,
+        document_id=document_id,
+        input_pii_artifact_id=artifact_id,
+        input_text_artifact_id=text_artifact_id,
+        created_at=_now_utc_iso(),
+        content=content,
+    )
+    save_pii_review_result_artifact(settings, snapshot)
+
+
 def _target_exists(
     target_type: PiiReviewDecisionScope,
     target_id: str,
     entities: list[PiiEntity],
     groups: list[PiiEntityGroup],
+    manual_additions: dict[str, PiiManualAdditionRecord],
+    current_text_artifact_id: str | None,
 ) -> bool:
     if target_type == "occurrence":
         return any(entity.id == target_id for entity in entities)
+    if target_type == "manual_addition":
+        addition = manual_additions.get(target_id)
+        return (
+            addition is not None
+            and current_text_artifact_id is not None
+            and addition.text_artifact_id == current_text_artifact_id
+        )
     return any(group.entity_group_id == target_id for group in groups)
+
+
+def _current_text_artifact_id(settings: Settings, document_id: str) -> str | None:
+    text_artifact = get_latest_text_artifact(settings, document_id)
+    return text_artifact.id if text_artifact is not None else None
 
 
 def _build_review_result(
     document_id: str,
     artifact_id: str,
+    text_artifact_id: str,
     entities: list[PiiEntity],
     groups: list[PiiEntityGroup],
     decisions: dict[tuple[str, str], PiiReviewDecisionRecord],
+    manual_additions: dict[str, PiiManualAdditionRecord],
+    stale_decisions: list[PiiStaleReviewDecision],
+    *,
+    settings: Settings,
+    latest_pii_artifact_id: str | None,
+    latest_text_artifact_id: str | None,
 ) -> PiiReviewResult:
+    manual_addition_decisions = {
+        target_id: record
+        for (target_type, target_id), record in decisions.items()
+        if target_type == "manual_addition"
+    }
+    review_manual_additions = [
+        PiiManualAddition(
+            addition_id=addition.addition_id,
+            entity_type=addition.entity_type,
+            canonical_start=addition.canonical_start,
+            canonical_end=addition.canonical_end,
+            text_artifact_id=addition.text_artifact_id,
+            raw_start=addition.raw_start,
+            raw_end=addition.raw_end,
+            raw_projection_status=addition.raw_projection_status,
+            note=addition.note,
+            created_at=addition.recorded_at,
+            review_status=_status_for(decision_record.decision if decision_record else None),
+            review_decision=decision_record.decision if decision_record else None,
+            artifact_currency=(
+                "current"
+                if latest_text_artifact_id is not None
+                and addition.text_artifact_id == latest_text_artifact_id
+                else "stale"
+            ),
+        )
+        for addition in sorted(
+            manual_additions.values(), key=lambda item: (item.canonical_start, item.addition_id)
+        )
+        for decision_record in [manual_addition_decisions.get(addition.addition_id)]
+    ]
+
     group_id_by_occurrence = {
         occurrence_id: group.entity_group_id
         for group in groups
@@ -171,28 +458,44 @@ def _build_review_result(
         if target_type == "occurrence"
     }
 
+    # Entity-group ids are deterministic per (type, normalized value), so a stale decision from a
+    # superseded run can be correlated to the group this run detects again — surfaced explicitly,
+    # never applied (the effective status below still resolves only from current-run decisions).
+    stale_group_decisions = {
+        item.target_id: item
+        for item in stale_decisions
+        if item.target_type == "entity_group"
+    }
     review_groups = [
         PiiEntityGroupReview(
             **group.model_dump(),
             review_status=_status_for(decision_record.decision if decision_record else None),
             review_decision=decision_record.decision if decision_record else None,
             updated_at=decision_record.recorded_at if decision_record else None,
+            stale_decision=(stale_item.decision if stale_item is not None else None),
+            stale_decision_recorded_at=(
+                stale_item.recorded_at if stale_item is not None else None
+            ),
         )
         for group in groups
         for decision_record in [group_decisions.get(group.entity_group_id)]
+        for stale_item in [stale_group_decisions.get(group.entity_group_id)]
     ]
 
     review_occurrences = []
     for entity in entities:
         group_id = group_id_by_occurrence[entity.id]
         occurrence_decision = occurrence_decisions.get(entity.id)
+        effective_record: PiiReviewDecisionRecord | None
         if occurrence_decision is not None:
             decision: PiiReviewDecisionValue | None = occurrence_decision.decision
             scope: PiiReviewDecisionScope | None = "occurrence"
+            effective_record = occurrence_decision
         else:
             group_decision = group_decisions.get(group_id)
             decision = group_decision.decision if group_decision else None
             scope = "entity_group" if group_decision else None
+            effective_record = group_decision
         review_occurrences.append(
             PiiReviewOccurrence(
                 occurrence_id=entity.id,
@@ -209,49 +512,234 @@ def _build_review_result(
                 review_status=_status_for(decision),
                 review_decision=decision,
                 decision_scope=scope,
+                updated_at=(effective_record.recorded_at if effective_record is not None else None),
             )
         )
+
+    entries = _build_review_entries(
+        settings,
+        document_id,
+        artifact_id,
+        text_artifact_id,
+        entities,
+        review_occurrences,
+        review_manual_additions,
+        latest_pii_artifact_id=latest_pii_artifact_id,
+        latest_text_artifact_id=latest_text_artifact_id,
+    )
 
     return PiiReviewResult(
         document_id=document_id,
         artifact_id=artifact_id,
+        input_text_artifact_id=text_artifact_id,
         groups=review_groups,
         occurrences=review_occurrences,
+        manual_additions=review_manual_additions,
+        entries=entries,
+        stale_decision_count=len(stale_decisions),
+        has_stale_decisions=len(stale_decisions) > 0,
+        stale_decisions=stale_decisions,
     )
+
+
+def _build_review_entries(
+    settings: Settings,
+    document_id: str,
+    artifact_id: str,
+    text_artifact_id: str,
+    entities: list[PiiEntity],
+    occurrences: list[PiiReviewOccurrence],
+    manual_additions: list[PiiManualAddition],
+    *,
+    latest_pii_artifact_id: str | None,
+    latest_text_artifact_id: str | None,
+) -> list[PiiReviewResultEntry]:
+    """Assemble the unified Review Result v1 entries (Review Result v1).
+
+    Rebinds detected occurrences against the anchor graph of the *exact* text artifact this PII
+    run consumed (never "today's" text for a stale run) and reuses each manual addition's own
+    stored reverse-projection outcome -- see ``pii_review_result.py`` for the identity rules.
+    """
+    text_artifact = get_text_artifact(settings, document_id, text_artifact_id)
+    detected_entries = build_detected_entries(
+        document_id=document_id,
+        pii_artifact_id=artifact_id,
+        text_artifact_id=text_artifact_id,
+        text_artifact=text_artifact,
+        entities=entities,
+        occurrences=occurrences,
+        is_current=(artifact_id == latest_pii_artifact_id),
+    )
+
+    unique_manual_text_ids = {addition.text_artifact_id for addition in manual_additions}
+    manual_text_artifacts = {
+        text_id: (
+            text_artifact
+            if text_id == text_artifact_id
+            else get_text_artifact(settings, document_id, text_id)
+        )
+        for text_id in unique_manual_text_ids
+    }
+    manual_entries = build_manual_addition_entries(
+        manual_additions=manual_additions,
+        current_text_artifact_id=latest_text_artifact_id,
+        text_artifacts_by_id=manual_text_artifacts,
+    )
+    return detected_entries + manual_entries
 
 
 def _load_latest_decisions(
     settings: Settings, document_id: str, artifact_id: str
 ) -> dict[tuple[str, str], PiiReviewDecisionRecord]:
-    """Collapse the append-only decision log to the latest line per (target_type, target_id).
+    """Collapse the append-only log to the latest decision line per (target_type, target_id).
 
-    Only lines recorded against the exact current PII artifact are considered, so decisions never
-    silently reapply across a re-run that produced a new artifact id.
+    Entity-group/occurrence decisions are only considered when recorded against the exact current
+    PII artifact, so they never silently reapply across a re-run that produced a new artifact id.
+    Manual-addition decisions have no ``pii_result`` origin to scope against -- a manual addition
+    and its decisions persist across PII re-runs regardless of ``artifact_id``; only a new *text*
+    artifact affects their continued validity (see ``_count_stale_decisions``/``_target_exists``).
     """
-    path = _decisions_path(settings, document_id)
     latest: dict[tuple[str, str], PiiReviewDecisionRecord] = {}
-    if not path.is_file():
-        return latest
-    for line in path.read_text(encoding="utf-8").splitlines():
-        record = _parse_record(line)
-        if record is None or record.artifact_id != artifact_id:
+    for record in _read_review_records(_decisions_path(settings, document_id)):
+        if not isinstance(record, PiiReviewDecisionRecord):
+            continue
+        if record.target_type != "manual_addition" and record.artifact_id != artifact_id:
             continue
         latest[(record.target_type, record.target_id)] = record
     return latest
 
 
-def _parse_record(line: str) -> PiiReviewDecisionRecord | None:
-    stripped = line.strip()
-    if not stripped:
-        return None
-    try:
-        return PiiReviewDecisionRecord.model_validate_json(stripped)
-    except ValidationError:
-        return None
+def _load_latest_manual_additions(
+    settings: Settings, document_id: str
+) -> dict[str, PiiManualAdditionRecord]:
+    """Collapse the append-only log to the latest manual-addition line per ``addition_id``.
+
+    Loads every manual addition ever recorded for this document -- a manual addition is an
+    independent, persistent review item, not scoped to a specific ``pii_result`` the way detected
+    occurrences are. Whether its canonical offsets still apply to the *current* text is a separate,
+    explicit signal (``_count_stale_decisions``), never a silent drop here.
+    """
+    latest: dict[str, PiiManualAdditionRecord] = {}
+    for record in _read_review_records(_decisions_path(settings, document_id)):
+        if not isinstance(record, PiiManualAdditionRecord):
+            continue
+        latest[record.addition_id] = record
+    return latest
 
 
-def _append_decision_line(
-    settings: Settings, document_id: str, record: PiiReviewDecisionRecord
+def _collect_stale_decisions(
+    settings: Settings,
+    document_id: str,
+    current_artifact_id: str,
+    manual_additions: dict[str, PiiManualAdditionRecord],
+    current_decisions: dict[tuple[str, str], PiiReviewDecisionRecord],
+    current_text_artifact_id: str | None,
+) -> list[PiiStaleReviewDecision]:
+    """Itemize review items that exist but no longer apply because their basis was re-run since.
+
+    For entity-group/occurrence decisions: mirrors ``_load_latest_decisions``'s latest-line-per-
+    target collapse, but across *every* PII artifact id ever recorded for this document, then keeps
+    those latest-per-target records that target a different id than ``current_artifact_id``.
+    For manual additions: every addition whose ``text_artifact_id`` differs from
+    ``current_text_artifact_id`` (a manual addition has no ``pii_result`` origin, so a PII re-run
+    alone never makes it stale -- only a new *text* artifact can), carrying its own latest decision
+    when one exists. Neither path changes which decision/addition applies; both only make visible,
+    per item, what ``stale_decision_count`` previously only aggregated.
+    """
+    stale: list[PiiStaleReviewDecision] = []
+    path = _decisions_path(settings, document_id)
+    if path.is_file():
+        latest_by_target: dict[tuple[str, str], PiiReviewDecisionRecord] = {}
+        for record in _read_review_records(path):
+            if not isinstance(record, PiiReviewDecisionRecord):
+                continue
+            latest_by_target[(record.target_type, record.target_id)] = record
+        stale.extend(
+            PiiStaleReviewDecision(
+                target_type=record.target_type,
+                target_id=record.target_id,
+                decision=record.decision,
+                recorded_at=record.recorded_at,
+                artifact_id=record.artifact_id,
+            )
+            for (target_type, _target_id), record in sorted(latest_by_target.items())
+            if target_type != "manual_addition" and record.artifact_id != current_artifact_id
+        )
+    stale.extend(
+        PiiStaleReviewDecision(
+            target_type="manual_addition",
+            target_id=addition.addition_id,
+            decision=(
+                decision_record.decision
+                if (
+                    decision_record := current_decisions.get(
+                        ("manual_addition", addition.addition_id)
+                    )
+                )
+                is not None
+                else None
+            ),
+            entity_type=addition.entity_type,
+            recorded_at=addition.recorded_at,
+            text_artifact_id=addition.text_artifact_id,
+        )
+        for addition in sorted(manual_additions.values(), key=lambda item: item.addition_id)
+        if addition.text_artifact_id != current_text_artifact_id
+    )
+    return stale
+
+
+def _read_review_records(
+    path: Path,
+) -> list[PiiReviewDecisionRecord | PiiManualAdditionRecord]:
+    """Read every record in the append-only log, failing explicitly on damage.
+
+    The log is collapsed to the latest record per target by its readers, so a silently skipped
+    unreadable line could resurrect an older decision as the apparent newest state. Policy
+    (ADR-0041): blank lines are harmless; an unparseable *final* fragment without a trailing
+    newline is a torn-append artifact whose write was never acknowledged to any client and is
+    ignored; every other unreadable line — invalid JSON, a non-object payload, an unknown
+    ``record_type`` (a record written by a newer application version), or a schema-invalid
+    record — raises :class:`PiiReviewLogDamagedError` for reads *and* writes rather than serving
+    or extending a possibly outdated review state. Legacy lines without ``record_type`` remain
+    valid decision records.
+    """
+    if not path.is_file():
+        return []
+    raw = path.read_text(encoding="utf-8")
+    lines = raw.split("\n")
+    has_trailing_newline = raw.endswith("\n")
+    records: list[PiiReviewDecisionRecord | PiiManualAdditionRecord] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        is_torn_tail = index == len(lines) - 1 and not has_trailing_newline
+        try:
+            payload = json.loads(stripped)
+        except ValueError:
+            if is_torn_tail:
+                continue
+            raise PiiReviewLogDamagedError() from None
+        if not isinstance(payload, dict):
+            raise PiiReviewLogDamagedError()
+        record_type = payload.get("record_type", "decision")
+        if record_type not in ("decision", "manual_addition"):
+            raise PiiReviewLogDamagedError()
+        try:
+            if record_type == "manual_addition":
+                records.append(PiiManualAdditionRecord.model_validate(payload))
+            else:
+                records.append(PiiReviewDecisionRecord.model_validate(payload))
+        except ValidationError as exc:
+            raise PiiReviewLogDamagedError() from exc
+    return records
+
+
+def _append_review_line(
+    settings: Settings,
+    document_id: str,
+    record: PiiReviewDecisionRecord | PiiManualAdditionRecord,
 ) -> None:
     path = _decisions_path(settings, document_id)
     path.parent.mkdir(parents=True, exist_ok=True)

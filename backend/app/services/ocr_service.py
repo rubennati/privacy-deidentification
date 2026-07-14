@@ -29,8 +29,7 @@ from app.schemas import (
 from app.services.artifact_service import (
     get_latest_audit_artifact,
     get_latest_text_artifact,
-    save_quality_report_artifact,
-    save_text_artifact,
+    save_text_run,
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.docx_extraction import extract_docx_text
@@ -51,7 +50,11 @@ from app.services.reading_text import (
     build_reading_text,
     collect_pdf_reading_rows,
 )
+from app.services.reading_text_geometry_projection import (
+    build_reading_text_geometry_projection_map,
+)
 from app.services.reading_text_projection import build_reading_text_map
+from app.services.reading_text_row_lineage import build_reading_text_row_lineage_map
 from app.services.structured_content import build_structured_content
 from app.services.text_geometry import (
     build_ocr_page_geometry,
@@ -88,8 +91,16 @@ def create_text_artifact(
     document_id: str,
     ocr_adapter: OcrAdapter,
     pdf_renderer: PdfRenderer,
+    *,
+    authority_job_id: str | None = None,
+    authority_claim_attempt: int | None = None,
 ) -> TextArtifact:
-    """Verify station inputs, route extraction, and persist an immutable result."""
+    """Verify station inputs, route extraction, and persist an immutable result.
+
+    ``authority_claim_attempt`` fences a worker run's publication to its job claim (ADR-0041):
+    when the claim was lost to recovery, publication raises ``StaleJobClaimError`` instead of
+    overwriting the authority pointer with a result whose job success can never be recorded.
+    """
     original, original_path = get_verified_original(settings, document_id)
     audit = get_latest_audit_artifact(settings, document_id)
     if audit is None:
@@ -110,8 +121,13 @@ def create_text_artifact(
         content=content,
     )
     quality_report = build_quality_report(original, audit, artifact, created_at)
-    save_text_artifact(settings, artifact)
-    save_quality_report_artifact(settings, quality_report)
+    save_text_run(
+        settings,
+        artifact,
+        quality_report,
+        authority_job_id=authority_job_id,
+        authority_claim_attempt=authority_claim_attempt,
+    )
     return artifact
 
 
@@ -231,7 +247,7 @@ def _extract_pdf(
                 page_geometry = build_pdf_page_geometry(
                     page, page_number, text, canonical_base
                 )
-                reading_rows.extend(collect_pdf_reading_rows(page, page_number))
+                reading_rows.extend(collect_pdf_reading_rows(page, page_number, text))
                 ocr_result = None
             pages.append(
                 TextPageResult(
@@ -472,6 +488,27 @@ def _text_content(
     reading_map = (
         build_reading_text_map(text, reading.text, pages) if reading is not None else []
     )
+    geometry_projection_map = (
+        build_reading_text_geometry_projection_map(
+            document_id=document_id,
+            reading_text=reading.text,
+            raw_text=text,
+            pages=pages,
+            text_geometry=text_geometry,
+        )
+        if reading is not None
+        else None
+    )
+    row_lineage_map = (
+        build_reading_text_row_lineage_map(
+            document_id=document_id,
+            reading_text=reading.text,
+            pages=pages,
+            row_lineage=reading.row_lineage,
+        )
+        if reading is not None
+        else None
+    )
     quality_evidence = build_quality_evidence(
         source=source,
         text=text,
@@ -498,6 +535,14 @@ def _text_content(
         reading_text_flags=list(reading.flags) if reading is not None else [],
         reading_text_map_version="1" if reading is not None else None,
         reading_text_map=reading_map,
+        reading_text_geometry_projection_map_version=(
+            "1" if geometry_projection_map is not None else None
+        ),
+        reading_text_geometry_projection_map=geometry_projection_map,
+        reading_text_row_lineage_map_version=(
+            row_lineage_map.map_version if row_lineage_map is not None else None
+        ),
+        reading_text_row_lineage_map=row_lineage_map,
         layout_text_result=layout_text_result,
         pii_input_text=pii_input_text,
         layout_blocks_version="1" if blocks else None,

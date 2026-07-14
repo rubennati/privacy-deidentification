@@ -62,6 +62,18 @@ class _AnalyzerEngine(Protocol):
     ) -> list[_RecognizerResult]: ...
 
 
+class NerDetector(Protocol):
+    """A pluggable NER backend that owns a subset of entity types (e.g. GLiNER for PERSON/ORG)."""
+
+    def detect(
+        self, text: str, entity_types: tuple[str, ...], score_threshold: float
+    ) -> list[DetectedEntity]: ...
+
+    def handled_types(self) -> frozenset[str]: ...
+
+    def tool_versions(self) -> dict[str, str]: ...
+
+
 class PiiUnavailableError(ApiError):
     """Raised when Presidio, spaCy, the model, or the language is unavailable."""
 
@@ -72,9 +84,12 @@ class PiiUnavailableError(ApiError):
 class PresidioAnalyzerAdapter:
     """Lazy, single-language Presidio analyzer with no runtime model downloads."""
 
-    def __init__(self, language: str, spacy_model: str) -> None:
+    def __init__(
+        self, language: str, spacy_model: str, ner_detector: NerDetector | None = None
+    ) -> None:
         self._language = language
         self._spacy_model = spacy_model
+        self._ner_detector = ner_detector
         self._engine: _AnalyzerEngine | None = None
         self._lock = Lock()
 
@@ -87,23 +102,35 @@ class PresidioAnalyzerAdapter:
     ) -> list[DetectedEntity]:
         if language != self._language:
             raise PiiUnavailableError
-        results = self._get_engine().analyze(
-            text=text,
-            language=language,
-            entities=list(entity_types),
-            score_threshold=score_threshold,
-            return_decision_process=False,
-        )
-        return [
-            DetectedEntity(
-                entity_type=result.entity_type,
-                start=result.start,
-                end=result.end,
-                score=result.score,
-                recognizer=str(result.recognition_metadata.get("recognizer_name", "unknown")),
+        detector = self._ner_detector
+        handled = detector.handled_types() if detector is not None else frozenset()
+        # Presidio handles pattern/checksum types and any spaCy NER types the detector does not own
+        # (e.g. DATE_TIME). Only load the Presidio/spaCy engine when it still owns something.
+        presidio_types = tuple(entity for entity in entity_types if entity not in handled)
+        results: list[DetectedEntity] = []
+        if presidio_types:
+            results.extend(
+                DetectedEntity(
+                    entity_type=result.entity_type,
+                    start=result.start,
+                    end=result.end,
+                    score=result.score,
+                    recognizer=str(
+                        result.recognition_metadata.get("recognizer_name", "unknown")
+                    ),
+                )
+                for result in self._get_engine().analyze(
+                    text=text,
+                    language=language,
+                    entities=list(presidio_types),
+                    score_threshold=score_threshold,
+                    return_decision_process=False,
+                )
             )
-            for result in results
-        ]
+        if detector is not None:
+            gliner_types = tuple(entity for entity in entity_types if entity in handled)
+            results.extend(detector.detect(text, gliner_types, score_threshold))
+        return results
 
     def tool_versions(self) -> dict[str, str]:
         versions = {"spacy_model": self._spacy_model}
@@ -115,6 +142,8 @@ class PresidioAnalyzerAdapter:
                 versions[output_name] = version(package)
             except PackageNotFoundError:
                 continue
+        if self._ner_detector is not None:
+            versions.update(self._ner_detector.tool_versions())
         return versions
 
     def _get_engine(self) -> _AnalyzerEngine:
@@ -181,6 +210,22 @@ class PresidioAnalyzerAdapter:
 
 
 @lru_cache
-def get_pii_analyzer(language: str, spacy_model: str) -> PiiAnalyzer:
-    """Provide one lazy adapter per configured language/model pair."""
-    return PresidioAnalyzerAdapter(language, spacy_model)
+def get_pii_analyzer(
+    language: str,
+    spacy_model: str,
+    ner_backend: str = "spacy",
+    gliner_model_dir: str = "",
+    gliner_model_name: str = "",
+) -> PiiAnalyzer:
+    """Provide one lazy adapter per configured language/model/NER-backend combination.
+
+    With ``ner_backend == "gliner"`` PERSON/ORGANIZATION are sourced from a local GLiNER detector
+    instead of the small spaCy CNN NER; all other types (patterns, checksums, DATE_TIME) stay on the
+    Presidio + spaCy path. The import is local to avoid a module-load cycle with the detector.
+    """
+    detector: NerDetector | None = None
+    if ner_backend == "gliner":
+        from app.services.pii_ner_gliner import get_gliner_detector
+
+        detector = get_gliner_detector(gliner_model_dir, gliner_model_name)
+    return PresidioAnalyzerAdapter(language, spacy_model, detector)

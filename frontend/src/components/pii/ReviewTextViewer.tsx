@@ -1,5 +1,5 @@
-import type { PiiEntity } from "../../api/workstations";
-import type { PiiReviewStatus } from "../../api/piiReview";
+import type { PiiManualAddition } from "../../api/piiReview";
+import { buildManualAdditionHighlights, type AnchorBoundPiiHighlightModel } from "../../lib/piiHighlights";
 import { PiiTextViewer } from "./PiiTextViewer";
 
 export type ReviewTextMode = "reading" | "raw" | "layout";
@@ -8,16 +8,21 @@ interface ReviewTextViewerProps {
   rawText: string;
   readingText?: string | null;
   layoutText?: string | null;
-  entities: readonly PiiEntity[];
+  highlightModel: AnchorBoundPiiHighlightModel;
   mode: ReviewTextMode;
   onModeChange: (mode: ReviewTextMode) => void;
   devMode?: boolean;
   /** Forwarded to the highlighted text view: when false, hover metadata is suppressed. */
   showEntityMeta?: boolean;
-  /** Resolved review status per occurrence id, respected in both raw and reading mode. */
-  reviewStatusByOccurrenceId?: Record<string, PiiReviewStatus>;
-  /** Called when a highlighted span is clicked, so the caller can reveal its entity group. */
-  onSelectEntity?: (entityId: string) => void;
+  /** Called when a highlighted span is clicked (with the mark element, e.g. to anchor a popover),
+   *  so the caller can reveal its entity group or open an in-place decision. */
+  onSelectEntity?: (entityId: string, element: HTMLElement) => void;
+  /** Reviewer-added spans (PII L14 / Review L10, ADR-0035), merged into the highlight display only
+   *  — never touching the backend anchor-bound entity contract. */
+  manualAdditions?: readonly PiiManualAddition[];
+  /** Called with character offsets on a text selection; only wired into the canonical reading-text
+   *  view (ADR-0035: canonical-text offsets only). */
+  onTextSelected?: (offsets: { start: number; end: number }) => void;
 }
 
 const MODE_BUTTON_BASE = "rounded-md px-3 py-1.5 text-xs font-medium transition-colors";
@@ -26,13 +31,14 @@ export function ReviewTextViewer({
   rawText,
   readingText,
   layoutText,
-  entities,
+  highlightModel,
   mode,
   onModeChange,
   devMode = false,
   showEntityMeta = true,
-  reviewStatusByOccurrenceId,
   onSelectEntity,
+  manualAdditions = [],
+  onTextSelected,
 }: ReviewTextViewerProps) {
   const hasReadingText = readingText != null;
   const hasLayoutText = layoutText != null;
@@ -42,37 +48,29 @@ export function ReviewTextViewer({
       : mode === "reading" && hasReadingText
         ? "reading"
         : "raw";
-  const projectedEntities =
-    readingText == null
-      ? []
-      : entities.flatMap((entity) => {
-          const start = entity.reading_start_offset;
-          const end = entity.reading_end_offset;
-          if (
-            entity.projection_status !== "exact" ||
-            start == null ||
-            end == null ||
-            start < 0 ||
-            end <= start ||
-            end > Array.from(readingText).length
-          ) {
-            return [];
-          }
-          return [
-            {
-              ...entity,
-              text: Array.from(readingText).slice(start, end).join(""),
-              start_offset: start,
-              end_offset: end,
-            },
-          ];
-        });
-  const hasRawOnlyEntities = entities.some((entity) => entity.projection_status !== "exact");
+  const manualAdditionHighlights = buildManualAdditionHighlights(manualAdditions);
+  const rawHighlights = [...highlightModel.byView.technical_raw_text, ...manualAdditionHighlights.raw];
+  const readingHighlights = [
+    ...highlightModel.byView.canonical_reading_text,
+    ...manualAdditionHighlights.canonical,
+  ];
+  const layoutHighlights = highlightModel.byView.layout_text;
+  const hasMissingCanonicalMapping =
+    highlightModel.summary.missing_canonical_count > 0 ||
+    highlightModel.summary.partial_canonical_count > 0 ||
+    highlightModel.summary.ambiguous_canonical_count > 0;
+  const hasMissingAnchorBinding = highlightModel.summary.missing_binding_count > 0;
+  const hasPartialOrAmbiguousBinding =
+    highlightModel.summary.partial_binding_count > 0 ||
+    highlightModel.summary.ambiguous_binding_count > 0;
+  const hasEvidenceOnlyFallback = highlightModel.summary.evidence_only_count > 0;
+  const hasMissingLayoutRanges = highlightModel.summary.missing_layout_count > 0;
 
   return (
     <section className="min-w-0" aria-labelledby="text-viewer-heading">
-      {/* Toolbar: title + display-mode toggle, kept compact directly above the paper page. */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* Toolbar: title + display-mode toggle. Sticky so the mode switch stays reachable while the
+          full-height paper below scrolls with the page (no nested scroll container). */}
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 bg-card py-2">
         <h2 id="text-viewer-heading" className="font-semibold text-ink">
           Extrahierter Text
         </h2>
@@ -93,7 +91,7 @@ export function ReviewTextViewer({
                   : "text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
               }`}
             >
-              Kanonischer Lesetext
+              {devMode ? "Kanonischer Lesetext" : "Lesetext"}
             </button>
             <button
               type="button"
@@ -105,7 +103,7 @@ export function ReviewTextViewer({
                   : "text-muted hover:text-ink"
               }`}
             >
-              Technischer Rohtext
+              {devMode ? "Technischer Rohtext" : "Technische Ansicht"}
             </button>
             {devMode && (
               <button
@@ -126,32 +124,73 @@ export function ReviewTextViewer({
         )}
       </div>
 
-      {activeMode !== "raw" && (
+      {/* Diagnostic hints about anchor binding, contract ranges, and view semantics are developer
+          material: in user view a single plain-language sentence covers the one case that changes
+          what the reader sees (a highlight only visible in the technical view). */}
+      {devMode && activeMode !== "raw" && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent-dark">
           {activeMode === "reading"
-            ? devMode
-              ? "Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen verwenden sicher projizierte Lesetext-Offsets."
-              : "Der Lesetext ist die lesefreundliche Hauptansicht."
-            : "Der Layout-Text dient der Orientierung. PII-Markierungen verwenden derzeit den technischen Rohtext."}
+            ? "Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen kommen aus dem anchor-gebundenen Entity-Vertrag."
+            : layoutHighlights.length > 0
+              ? "Der Layout-Text dient der Orientierung. Markierungen erscheinen nur, wenn der Entity-Vertrag Layout-Ranges liefert."
+              : "Der Layout-Text dient der Orientierung. Für diese Entities liefert der Vertrag keine Layout-Ranges."}
         </p>
       )}
-      {activeMode === "reading" && hasRawOnlyEntities && (
+      {!devMode && activeMode === "reading" && hasMissingCanonicalMapping && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
-          Einige PII-Markierungen sind nur im technischen Rohtext sichtbar.
+          Einige erkannte Stellen können in dieser Ansicht nicht markiert werden und sind nur in
+          der technischen Ansicht sichtbar.
+        </p>
+      )}
+      {devMode && activeMode === "reading" && hasMissingCanonicalMapping && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Kanonische Ranges fehlen, sind teilweise oder mehrdeutig. Fehlende Lesetext-Markierungen
+          werden hier nicht geraten.
+        </p>
+      )}
+      {devMode && activeMode === "layout" && hasMissingLayoutRanges && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Layout-Ranges fehlen oder sind nicht verfügbar. Der Vertrag liefert nur markierbare
+          Layout-Ranges, wenn die Anchor-Zuordnung sicher ist.
+        </p>
+      )}
+      {devMode && hasMissingAnchorBinding && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Anchor-Bindung fehlt für einige PII-Entities. Diese Entities bleiben als Raw-Range
+          sichtbar und werden nicht in andere Views geraten.
+        </p>
+      )}
+      {devMode && hasPartialOrAmbiguousBinding && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Anchor-Bindung ist teilweise oder mehrdeutig. Der Backend-Vertrag markiert diese
+          Zuordnung explizit.
+        </p>
+      )}
+      {devMode && hasEvidenceOnlyFallback && (
+        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
+          Evidence-only Fallback ist aktiv, wenn keine verlässliche Anchor-Identität vorliegt.
         </p>
       )}
 
-      {/* Workspace: a subtle desk-like surface. The scroll lives here (unchanged from before) so
-          jump-to-entity keeps scrolling the highlighted mark into view. */}
-      <div className="mt-3 max-h-[70vh] overflow-auto rounded-xl bg-dropzone p-4 sm:p-6">
-        {/* Paper: a centered A4-width sheet so the review reads like a document page, not a raw
-            debug panel. It never spans the full workspace width. */}
-        <div className="mx-auto max-w-[210mm] rounded-sm border border-card-border bg-card px-6 py-8 shadow-[0_1px_2px_rgba(17,24,39,0.06),0_12px_32px_rgba(17,24,39,0.08)] sm:px-10 sm:py-12">
+      {/* Paper: a centered A4-width sheet that grows with its content and scrolls with the page —
+          deliberately no fixed-height inner scroll container (that read like an embedded iframe:
+          its own scrollbar, a cut-off sheet). Jump-to-entity scrolls the page itself. */}
+      <div className="mt-3">
+        <div className="mx-auto max-w-[210mm] rounded-md border border-card-border bg-card px-6 py-8 shadow-[0_1px_3px_rgba(17,24,39,0.08),0_16px_40px_rgba(17,24,39,0.10)] sm:px-10 sm:py-12">
           {activeMode === "layout" ? (
             layoutText ? (
-              <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-ink">
-                {layoutText}
-              </pre>
+              layoutHighlights.length > 0 ? (
+                <PiiTextViewer
+                  text={layoutText}
+                  highlights={layoutHighlights}
+                  showEntityMeta={showEntityMeta}
+                  onSelectEntity={onSelectEntity}
+                />
+              ) : (
+                <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-ink">
+                  {layoutText}
+                </pre>
+              )
             ) : (
               <p className="text-sm text-muted">Der Layout-Text ist leer.</p>
             )
@@ -159,10 +198,10 @@ export function ReviewTextViewer({
             readingText ? (
               <PiiTextViewer
                 text={readingText}
-                entities={projectedEntities}
+                highlights={readingHighlights}
                 showEntityMeta={showEntityMeta}
-                reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
                 onSelectEntity={onSelectEntity}
+                onTextSelected={onTextSelected}
               />
             ) : (
               <p className="text-sm text-muted">Der kanonische Lesetext ist leer.</p>
@@ -170,9 +209,8 @@ export function ReviewTextViewer({
           ) : rawText ? (
             <PiiTextViewer
               text={rawText}
-              entities={entities}
+              highlights={rawHighlights}
               showEntityMeta={showEntityMeta}
-              reviewStatusByOccurrenceId={reviewStatusByOccurrenceId}
               onSelectEntity={onSelectEntity}
             />
           ) : (

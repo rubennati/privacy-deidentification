@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+from tests.artifact_helpers import save_pii_artifact
 
 from app.config import Settings, get_settings
 from app.main import app
@@ -21,7 +22,6 @@ from app.schemas import (
     PiiEntity,
     PiiValidationSummary,
 )
-from app.services.artifact_service import save_pii_artifact
 
 _DOC_TEXT_MARKER = "TOPSECRETDOCUMENTTEXT"
 

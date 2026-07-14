@@ -77,3 +77,199 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   contract rather than OCR internals. PII is not migrated yet; existing OCR endpoints remain
   backward-compatible. Cross-cutting stabilization milestone, not a numbered level; the 0–19 scale
   (ADR-0016) is unchanged.
+- [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md) — **PII intake via the
+  Document Text Package + PII L12 overlap resolution.** PII consumes `DocumentTextPackageV1`
+  through the `pii_input` intake adapter (`PiiInputDocumentV1`) instead of `TextContent` internals:
+  raw stays the primary/only active detection input, canonical is contextual, structured content is
+  a hint layer, quality/noise evidence is trust context, a structurally invalid package is rejected
+  (`422`) while empty raw text stays the benign empty-result path, and a degraded package with raw
+  text still processes. Deterministic `pii_overlap` resolution merges exact/same-type/nested
+  duplicates (recording superseded ids) and flags cross-type overlaps for review without dropping
+  them. Additive optional `pii_result` fields (`PiiEntity.provenance`, `PiiContent.input_contract`,
+  `PiiContent.overlap_resolution`) carry the outcome; no raw text enters that metadata. Existing PII
+  API/frontend behavior and the active-input separation gate are unchanged.
+- [ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md) — **PII review-ready entity
+  contract v1.** A pure, derived, additive view over the latest `pii_result`
+  (`pii_entity_contract.py`, `GET …/pii/entity-contract`) packages each L12-resolved entity
+  review-ready: a stable `entity_id` (hash of document id + type + raw span; volatile occurrence id
+  kept as `source_entity_id`), the authoritative raw span, an optional canonical reading span, an
+  explicit `mapping_status` (`exact`/`projected`/`partial`/`missing`/`ambiguous`/`not_applicable`),
+  overlap provenance, the resolved review state (reusing the decision overlay), and a text-free
+  display model. Missing/partial/ambiguous canonical mapping never drops an entity (it is flagged);
+  `not_applicable` is not flagged. Cross-cutting stabilization milestone, not a level bump and not
+  the formal binding `review_result`; it mutates nothing, adds no detection, keeps raw text the
+  primary/only active input, and existing `GET …/pii`/`…/pii/review` responses are unchanged. Only
+  additive frontend TS types + a fetch helper were added. Extended by ADR-0031 Phase C with
+  anchor-derived identity and explicit evidence-only fallback where anchors are unavailable.
+- [ADR-0030](../docs/adr/0030-runtime-job-ux-notifications-v1.md) — **Runtime Job UX / in-app
+  notifications v1.** The product-facing presentation layer on top of ADR-0023's job model/status
+  API: one additive `JobStatusResponse.is_terminal` field on the backend, plus a frontend
+  `jobActivityStore` (`frontend/src/lib/jobActivity.ts`) that records job status, persists active
+  jobs to `localStorage` for reload recovery, and polls through a single-owner try-lock so a live
+  `runOcr()` call and a recovery resume never double-poll the same job. A small `JobStatusBanner`
+  shows accepted/running/succeeded/failed for a recovered job; a succeeded recovery refreshes the
+  OCR artifact, a failed one shows the sanitized `error_message`. Polling + `localStorage` is
+  explicitly v1 — no Redis/RQ/Celery, no WebSocket/SSE/push; a future transport can replace *how*
+  the store learns about updates without changing the job contract. No OCR/PII/runtime/artifact
+  contract change.
+- [ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md) — **Text identity,
+  anchor lineage, and de-identification state architecture (Proposed for the full architecture;
+  Phase C implemented).** Treats Technical Raw / Canonical Reading / Layout / Structured text as
+  *views* of the same document information, married by a stable **text anchor** identity (an anchor
+  graph, `text_anchor_map`, owned by **OCR/Text** — the concrete realization of the long-reserved
+  `text_lineage_map`, not PII). Phase B delivers Text Anchor Graph v1 as a derived, non-persisted
+  OCR/Text endpoint (`GET …/text-anchors`) built from `DocumentTextPackageV1`; anchor metadata is
+  ranges/ids/classes/statuses/codes only and duplicates no private text. Phase C adds
+  `pii_anchor_binding.py` and upgrades `GET …/pii/entity-contract` so PII detections become
+  anchor-bound domain entities where anchors exist, with explicit evidence-only fallback for
+  missing/ambiguous/no-graph binding and text-free source observations/binding summaries. Review
+  decisions, future pseudonymization (render, never paint-over), and reconstruction
+  (placeholder→group→entity→anchor→original, never fuzzy match) all reference identity. Persistence
+  is **hybrid (Option E)**: immutable OCR/anchor artifacts stay JSON; mutable PII-review/replacement/
+  reconstruction/audit state moves to SQLite when Review persistence needs it — designed
+  SQLite-ready now, **no DB built**. Staged Phases A–I; underpins **PII L17** (stable entity model
+  with lineage). Introduces no migration/OCR extraction/pseudonymization/reconstruction/runtime
+  change. (Requested as "0030"; renumbered to 0031 because 0030 was taken.)
+- [ADR-0032](../docs/adr/0032-reading-text-row-construction-lineage-v1.md) — **Reading-text row
+  construction lineage v1 (Phase 1, partial).** The first genuinely builder-emitted (not post-render)
+  raw↔canonical lineage: `ReadingRow` gains an optional page-local `source_range`, attached once at
+  collection time (exact from persisted L10 geometry; via a global-uniqueness row-text match against
+  the page's own raw lines for the primary pypdf-visitor path) and threaded only through the
+  plain-paragraph/body rendering path (`_join_continuations_with_flags`), merging via union only when
+  every contributing row has a range and raw order stays non-decreasing. Canonical offsets are
+  computed by walking the same block/line join arithmetic the text was assembled with
+  (`_join_blocks_with_lineage`), never by searching the finished string. New
+  `ReadingTextRowLineageMap` (`lineage_source: row_construction`) is preferred over
+  `geometry_projection` over `fallback_text_match` in `DocumentTextPackageLineageSummary` and the
+  Text Anchor Graph's per-token projection. Deliberately partial: party columns, tables,
+  multi-column reconstruction, metadata, and post-table rendering always decline (no row-construction
+  lineage), and any document with repeated-page-margin filtering loses all row lineage rather than
+  risk stale offsets — those spans keep falling back to the pre-existing mechanisms, unchanged. No
+  detection, active-PII-input, routing, schema-breaking, pseudonymization, redaction, export, or
+  dependency change; `reading_text` bytes are unchanged (proven byte-identical across the full
+  existing regression suite).
+- [ADR-0033](../docs/adr/0033-pii-binding-quality-suite.md) — **PII binding quality suite (Phase
+  2).** `PiiAnchorBindingSummary` gains additive `anchor_bound_ratio`/`exact_bound_ratio` coverage
+  metrics (both Python summary builders + the frontend TS type). A new synthetic regression corpus
+  (`backend/tests/test_pii_binding_quality_suite.py`) covers the audit's remaining named hard cases:
+  adjacent same-line date+phone tokenizer fusion (a **real, previously-untested edge case** found
+  while scoping this — the phone pattern's character class accepts spaces, so a date directly
+  adjacent to a phone number fuses into one anchor; intentionally left unfixed per the phase's "do
+  not tune recognizers" guardrail, only regression-locked as an honest `partial` degrade, never a
+  false `exact` or a lost/merged entity), a punctuation/character-swallowing recognizer span, table-
+  column canonical-range cross-contamination, a DOCX/no-geometry document, plus a documented
+  coverage-ratio floor gate. A builder-version identity-drift test proves the audit's stated safety
+  property directly: an anchor-derived `entity_id` is free to drift with the graph builder, while
+  the underlying occurrence id durable review decisions actually key on never does — plus a guard
+  test that neither durable JSONL-writing module references an anchor id at all today. The frontend
+  `fetchPiiEntityContract` now returns a discriminated `ok`/`not_found`/`error` result instead of
+  `T | null`, so `DocumentDetailPage.tsx` can show a distinct "PII highlights could not be loaded"
+  notice instead of silently rendering an unhighlighted document indistinguishably from "no PII
+  yet." No recognizer, detection, tokenizer, active-PII-input, or binding-algorithm change.
+- [ADR-0034](../docs/adr/0034-review-l8-review-result-artifact.md) — **Review L8 `review_result`
+  artifact (Phase 3, the last of the feasibility audit's three recommended branches).** New
+  immutable `PiiReviewResultArtifact` (same envelope/persistence pattern as
+  `PiiArtifact`/`TextArtifact`, sharing the per-document `artifacts/` directory), keyed
+  occurrence-id-primary (never on anchor-derived identity, per the audit's guardrail and ADR-0033's
+  drift finding). `set_pii_review_decision` still appends its JSONL record unchanged, then persists
+  a fresh immutable snapshot after every decision; new `GET …/pii/review-result` returns the latest
+  one. `PiiReviewResult` gains additive `stale_decision_count`/`has_stale_decisions`: decisions
+  recorded against a since-superseded `pii_result` were already never silently reapplied — this
+  makes that fact explicit (surfaced in `GET …/pii/review` and a `DocumentDetailPage.tsx` notice)
+  instead of looking identical to "nothing was ever reviewed." The JSONL log remains the
+  append-only write-time source of truth (migration path documented, not executed); no SQLite
+  introduced. No detection, `pii_result` schema, active-PII-input, pseudonymization, redaction, or
+  export change; existing `GET …/pii/review`/`POST …/pii/review/decisions` behavior is unchanged
+  except for the two additive fields.
+- [ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md) — **PII L14 / Review L10
+  manual add.** Scoped the design (docs-only), then implemented it (`pii-l14-manual-add-v1`) for
+  letting a reviewer add a span the engine missed — both PII L14 and Review L10 are now **done**.
+  Audited why a naive implementation would break existing invariants:
+  `pii_result` stays immutable/detector-only; `AnchorBoundPiiEntityV1.source_observations` structurally
+  requires a detector observation; `PiiReviewResultArtifact` is occurrence-id-primary and
+  `PiiReviewOccurrence.occurrence_id` *is* `PiiEntity.id`; no actor field exists anywhere yet.
+  Decision: a new `manual_addition` record variant in the *same* `pii_review_decisions.jsonl` log and
+  an additive `PiiReviewResult.manual_additions` list — never forced into `pii_result` or the
+  anchor-bound entity contract. Canonical-text (`reading_text`) offsets are captured at add time, with
+  a best-effort raw-span reverse projection reusing the existing `reading_text_map`/anchor projection
+  machinery (exact/partial/unmapped, never guessed); staleness keys off `text_artifact_id` (no
+  originating `pii_result` entity exists to key on); entity type is constrained to the current
+  `pii_result`'s own `PiiContent.configured_entity_types`; and once created, an addition's own accept/keep/reject
+  reuses the existing decision endpoint under a new `target_type: "manual_addition"` rather than a new
+  edit/delete action. Frontend needs three net-new primitives: text-selection capture, an entity-type
+  picker, and a visually distinct rendering for human-added spans — none existed before this PR.
+  Delivered: the reverse-projection filter (`pii_manual_addition.py`), the endpoint, target-type-aware
+  staleness/existence checks, and the three frontend primitives (`textSelection.ts`,
+  `buildManualAdditionHighlights`, `AddPiiManualEntity.tsx`), verified with a full backend/frontend
+  test suite plus a live end-to-end browser session confirming `pii_result`/the entity contract stay
+  byte-identical.
+- [ADR-0036](../docs/adr/0036-reading-text-row-construction-lineage-v2.md) — **Reading-text row
+  construction lineage v2 (Phase 2).** Re-scopes and delivers ADR-0032's own "Next" section:
+  builder-emitted lineage extends from the plain-paragraph/body path alone to party/two-column
+  reordering (whole-row reorder preserved; a row split across both sides still declines), keyword-
+  header and generic geometric tables (row-granularity per rendered table line via a shared
+  `_extend_aligned_table_rows`; a fused header still declines), and metadata/offer-field rows (a
+  fused multi-field row still declines). `RowLineageSegment` gains a `status:
+  "exact"|"normalized"|"merged"` computed purely from already-known lengths, never text content;
+  `ReadingTextRowLineageMap`'s validator now accepts `exact`/`normalized`/`merged`/`inserted`
+  (previously only `exact`). Synthetic headings (`"ANGEBOT"`/`"LEISTUNGEN"`/`"SUMMEN"` — a closed,
+  code-owned vocabulary, not a text search) are now recognized as explicit `"inserted"` segments
+  instead of silent gaps. Fixed a latent bug in `document_text_anchors.py`'s row-lineage adapter
+  that hardcoded `mapping_status="exact"` regardless of a segment's real status. Multi-column prose
+  reconstruction and in-row label/value splitting remain deliberately fallback-only (a single source
+  row's cells can land in different synthesized columns, or a sub-row split point is genuinely
+  unknowable) and are now documented as such. An unexpected consequence: a fully attributed,
+  exact-length row now resolves a repeated-interior-token multi-word entity via simple arithmetic
+  projection, without needing the boundary-bridging fallback added for the post-hoc mechanisms at
+  all. No detection, active-PII-input, routing, schema-breaking, pseudonymization, redaction,
+  export, or dependency change; `reading_text` bytes remain byte-identical (907 tests passing).
+- [ADR-0037](../docs/adr/0037-pii-result-integrity-v1.md) — **PII Result Integrity v1.** PII now
+  rejects missing/untrusted raw input, overlap resolution preserves partial same-type coverage,
+  completed OCR jobs resolve their recorded text artifact, entity contracts require and validate
+  exact PII+Text artifact identity, and discriminated frontend state clears private data on identity
+  transitions and fails closed unless one coherent contract loaded successfully. No engine level
+  advance, dependency, detection-input switch, or future anchor-first package work.
+- [ADR-0038](../docs/adr/0038-artifact-and-document-lifecycle-integrity.md) — **Artifact and
+  document lifecycle integrity v1.** New runs publish through a per-document cross-process lock and
+  atomic current-authority map; OCR commits text + quality as one run; invalid pointed current state
+  fails explicitly instead of falling back; and deletion persists a job-state tombstone under the
+  same lock so delayed workers can never republish document-owned data. Job-backed authority is
+  consumable only after the exact producing job is durably succeeded; missing authority fails
+  closed rather than scanning legacy artifacts. ID-only OCR/PII authority and public exact OCR
+  history require one matching durable succeeded job; ambiguous/unproven entries fail closed.
+  Jobless Audit/Review snapshots retain atomic publication as their commit boundary. No engine-level
+  advance or dependency change.
+- [ADR-0039](../docs/adr/0039-review-result-v1-unified-entity-contract.md) — **Review Result v1 —
+  unified stable entity entries.** New `PiiReviewResultEntry` unifies detected occurrences and
+  manual additions behind one shape on the existing `PiiReviewResult`/`PiiReviewResultArtifact`
+  (Review L8), carrying entry-level `identity_status` (resolved/unresolved/incompatible),
+  `artifact_currency` (current/stale), a freshly-recomputed (never persisted) anchor-identity
+  reference, and mapping quality that a decision never upgrades. No SQLite, new endpoint,
+  detection, anchor-graph, pseudonymization, redaction, or export change; closes the feasibility
+  audit's third recommended branch.
+- [ADR-0040](../docs/adr/0040-construction-time-canonical-lineage-v3.md) — **Construction-time
+  canonical lineage v3 (anchor-first text package v2).** `ReadingCell` gains collection-time
+  source identity: pypdf pages capture per-fragment raw offsets from the extraction process itself
+  (cursor accumulation over the extraction visitor's own chunks, byte-verified against the stored
+  raw text, discarded entirely on mismatch — no uniqueness requirement, so repeated values keep
+  distinct identities), OCR/geometry pages keep per-line offsets. In-row label/value splits, fused
+  two-cell metadata rows, party cells split across columns, multi-column cell runs, and raw-order
+  fallback lines now attribute construction lineage; statuses are byte-verified
+  (`exact`/`normalized`/`merged`/new `split`), a symmetric document-level sweep drops colliding
+  raw-range claims, and `ReadingTextRowLineageMap` bumps to map_version "2" (legacy "1" readable).
+  Construction lineage is the authoritative identity boundary; geometry projection and the
+  unique-token map remain explicitly demoted, per-anchor-flagged fallbacks. `reading_text` bytes
+  unchanged; no detection, active-PII-input, or dependency change.
+- [ADR-0041](../docs/adr/0041-runtime-recovery-and-compatibility-integrity.md) — **Runtime
+  recovery and compatibility integrity v1.** Job rows carry processing leases (schema v2);
+  abandoned `running` claims are recovered deterministically (requeue while attempts remain, else
+  explicit `interrupted` failure) at worker startup/poll, enqueue, and every status read; terminal
+  transitions and worker artifact publication are fenced to the claiming attempt so retries never
+  conflict or duplicate. The job DB refuses unknown schema versions instead of stamping them;
+  readiness reports storage/job-store/worker-heartbeat components and gates on them; frontend
+  polling always settles (bounded retries, 404 cleanup, waiter resolution, explicit poll-failure
+  notices, stale-persisted pruning) and validates job/entity-contract payloads instead of casting;
+  a damaged or unknown newest review-log line fails reads and writes explicitly (only an
+  unacknowledged torn tail is ignored) rather than silently reactivating an older decision.
+  Delivers ADR-0023's Phase-4 stale-claim reclaim + bounded retry; no queue broker, cancel API,
+  PII worker split, or engine-level change.

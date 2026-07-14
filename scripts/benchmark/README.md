@@ -16,12 +16,14 @@ extracted PII to the repository.
    entity — **no unmasked values**).
 
 It matches local documents to benchmark/ground-truth entries by filename, computes OCR/text
-routing metrics and PII precision/recall/F1 against the candidate ground truth, and writes a
+routing metrics and PII precision/recall/F1 against the candidate ground truth, compares the
+newest available immutable result for every configured PII profile side by side, and writes a
 markdown + JSON report that contains **only counts, statuses, types, and offsets** — never
 extracted text, never a masked or unmasked PII value.
 
 It **never** triggers audit/OCR/PII processing, calls the API, or modifies/deletes a document.
-Missing artifacts are reported as `missing`, not generated.
+Missing artifacts — including profile-specific PII results — are reported as `missing`, not
+generated. Run the desired profiles through the product before benchmarking them.
 
 ## Where private inputs and outputs live
 
@@ -35,7 +37,8 @@ volumes/benchmark/
     └── <timestamp>/
         ├── benchmark_report.md
         ├── benchmark_report.json
-        └── benchmark_summary.csv
+        ├── benchmark_summary.csv
+        └── benchmark_profiles.csv
 ```
 
 Everything under `volumes/` (including `volumes/benchmark/`) is covered by the repo's
@@ -125,6 +128,98 @@ Matching rules:
 No `masked_value`, `source`, `value_length`, or raw `text` field from either the ground truth or
 the detected `pii_result` artifacts is ever loaded past the point where a count is taken — see
 `artifact_loader.py`'s and `document_matching.py`'s narrow dataclasses.
+
+## Building gold ground truth (from a proposal)
+
+The shipped ground truth is a *candidate* signal; a manually validated **gold** standard is needed
+to quantify precision/boundary gains (e.g. the structural-context stage, ADR-0043). To seed one:
+
+```
+python scripts/benchmark/build_groundtruth_proposal.py \
+    --document-data-dir volumes/document-store \
+    --out volumes/benchmark/gt-proposal.local.json \
+    --filenames "TEST_01_....pdf,TEST_02_....pdf"
+```
+
+`build_groundtruth_proposal.py` emits the current detections as a *proposal* in the exact ground-
+truth schema (`load_groundtruth` reads it directly), each entity flagged `review_status: "proposed"`.
+A human then confirms / rejects / corrects offsets / adds missed entities and freezes the result as
+the gold GT. The exporter is **offset-only and never reads or writes document text** — it reuses the
+text-free loader, so a reviewer judges each anchor in the Review UI, which renders the document. The
+proposal output belongs under the git-ignored `volumes/` tree, never the repo.
+
+### Harvesting gold GT from Review-UI decisions
+
+Rather than hand-editing the proposal, the preferred path is to **review the documents in the app**
+(binding decision `keep` / `false_positive` / `pseudonymize` per entity, plus manual additions for
+missed ones) and then harvest those decisions:
+
+```
+python scripts/benchmark/harvest_groundtruth.py \
+    --document-data-dir volumes/document-store \
+    --out volumes/benchmark/gold-gt.local.json
+```
+
+`harvest_groundtruth.py` reads the latest immutable `pii_review_result` snapshot per document (saved
+after every decision) and emits gold GT: confirmed detections (`accepted`/`kept`) plus accepted
+manual additions, **minus `rejected` false positives**. It is offset-only and reads no document text
+— the snapshot is text-free, and the referenced text artifact is read only for per-page char counts,
+used to map the snapshot's global raw offsets onto page-local benchmark coordinates. Documents with
+no review snapshot are listed under `skipped_without_review` (review them first). A detection *kept*
+at its detected boundary bakes that boundary into the GT; for boundary-exact GT, reject an
+over-capture and re-add the correct span rather than merely keeping it.
+
+The full loop: review in the app → `harvest_groundtruth.py` → point `--groundtruth` at the harvested
+file → `make benchmark-private` reports per-type P/R/F1 **and** boundary accuracy (IoU/exact/
+near-exact) against real gold GT, so a structural-context A/B (flag off vs on) can finally show FP↓
+with no true-positive loss.
+
+### Two review channels (don't confuse them)
+
+The Review UI records reviewer input in **two separate channels**, with different purposes:
+
+| Channel | UI control | Purpose | On disk | Consumed by |
+| --- | --- | --- | --- | --- |
+| **Binding decision** | *Bindende Entscheidung* (`keep`/`false_positive`/`pseudonymize`) + *Manuell hinzufügen* | the **truth** (what is PII, exactly where) → **gold GT** | `review/pii_review_decisions.jsonl` → `pii_review_result` snapshot | `harvest_groundtruth.py` |
+| **Dev feedback** | *Review-Feedback (dev)* ("Problem auswählen" + comment) | the **error diagnosis** (which errors occur, how often) | `feedback/pii_feedback.jsonl` | `analyze_feedback.py` |
+
+Both are text-free (offsets, types, codes). A reviewer often uses mostly one channel — that is fine,
+they answer different questions. Use the binding decision to *build the gold standard*, and the dev
+feedback to *see what to fix*.
+
+### Analysing the dev feedback
+
+```
+python scripts/benchmark/analyze_feedback.py --document-data-dir volumes/document-store
+```
+
+`analyze_feedback.py` turns the dev-feedback channel into a text-free **error-taxonomy + consistency
+report**: verdict counts, issue types sorted by frequency (`span_too_long_right`, `overlap_conflict`,
+…), affected entity types, and a **recognizer issue-rate** ranking (the fix candidates — a recognizer
+with a high issue share is a systematic detector problem). It is tolerant of reviewer mistakes: the
+log is append-only, so it reads the **latest verdict per entity** (a revision wins) and reports how
+many entities were revised, so a slip can be re-checked rather than trusted blindly. It never emits
+the free-text comment — only whether one exists.
+
+## Persistence model: private corpus vs. shared committed dataset
+
+A recurring question: how do these annotations become a **persistent repository asset** everyone
+benefits from, rather than sitting in local `volumes/`?
+
+- **Real customer documents + their ground truth stay private** (`volumes/`, git-ignored). Even
+  though the harvested GT is text-free (offsets/types), it is tied to real documents and their
+  filenames, is useless to anyone who does not have those documents, and carries residual risk — so
+  it is **local validation only**.
+- **The shareable, committed dataset is built on synthetic documents** — realistic fixtures with
+  *fake* PII (like the `TEST_0x` docs), whose full content and gold GT contain no real personal data
+  and can safely live in the repo. Anyone who clones/pulls gets the corpus **and** its gold GT, runs
+  the same benchmark, and is protected against regressions. That is the "everyone profits" asset.
+
+This is **not** machine learning that auto-updates weights. It is a **human-in-the-loop quality
+benchmark**: annotations → measured gaps + the error taxonomy above → deliberate code fixes
+(recognizer tuning, cross-type precedence, the structural-context flag) → those *fixes* land in the
+repo. The shared synthetic gold GT is the yardstick that makes the improvement measurable and keeps
+it from regressing.
 
 ## Privacy guard
 

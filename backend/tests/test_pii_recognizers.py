@@ -332,3 +332,54 @@ def test_contact_line_next_line_capture_excludes_the_label() -> None:
     for _, match in matches:
         assert match.group(0).startswith("Frau")
         assert "\n" not in match.group(0)
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "text"),
+    [
+        # Value on the line after the label, with an optional qualifier before the colon.
+        ("SVNR_AT", "SV-Nummer (AT):\n2233 170390"),
+        ("SVNR_AT", "Sozialversicherungsnummer:\n1234 010180"),
+        ("LICENSE_PLATE_AT", "Kfz-Kennzeichen:\nW-AW 7823"),
+        ("PASSPORT_NUMBER", "Reisepassnummer:\nDK 7394821"),
+        ("PASSPORT_NUMBER", "Reisepass:\nP1234567"),
+        ("ID_CARD_NUMBER", "Personalausweis AT:\nN AT-1234567"),
+        # Same line, with an intervening card-network word between label and number.
+        ("CREDIT_CARD", "Kreditkarte: Mastercard 5412 7534 1122 3344"),
+        ("CREDIT_CARD", "Kreditkarte:\n4111 1111 1111 1111"),
+    ],
+)
+def test_labelled_id_values_match_across_a_line_break(entity_type: str, text: str) -> None:
+    # German forms routinely place the value on the line after its label; the label-gated ID
+    # recognizers must still capture it. Synthetic examples only.
+    assert _matching_patterns(entity_type, text), text
+
+
+def test_labelled_id_capture_excludes_the_label() -> None:
+    text = "SV-Nummer (AT):\n2233 170390"
+    matches = [
+        match
+        for pattern in _SPECS_BY_TYPE["SVNR_AT"].patterns
+        for match in [re.search(pattern.regex, text)]
+        if match
+    ]
+    assert any(match.group(0) == "2233 170390" for match in matches)
+    for match in matches:
+        assert "SV-Nummer" not in match.group(0)
+        assert "\n" not in match.group(0)
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "text"),
+    [
+        # Next-line value under an UNRELATED label must not be captured.
+        ("SVNR_AT", "Betrag:\n2233 170390"),
+        ("CREDIT_CARD", "Summe:\n5412 7534 1122 3344"),
+        ("LICENSE_PLATE_AT", "Datum:\nW-AW 7823"),
+        # Intervening non-whitespace text between the label and the next-line value blocks the
+        # bridge (the value is no longer adjacent to the label's colon).
+        ("CREDIT_CARD", "Kreditkarte: keine Angabe\n5412 7534 1122 3344"),
+    ],
+)
+def test_next_line_value_without_its_label_does_not_match(entity_type: str, text: str) -> None:
+    assert _matching_patterns(entity_type, text) == []

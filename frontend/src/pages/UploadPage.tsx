@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import { fetchUploadConfig } from "../api/config";
 import { uploadDocument, UploadError } from "../api/uploads";
@@ -14,6 +14,7 @@ import {
 } from "../lib/fileValidation";
 
 export default function UploadPage() {
+  const navigate = useNavigate();
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [message, setMessage] = useState("");
   const [correlationId, setCorrelationId] = useState<string | null>(null);
@@ -52,7 +53,14 @@ export default function UploadPage() {
       try {
         const accepted = await uploadDocument(file);
         setStatus("success");
-        setMessage(`„${accepted.filename}“ — Dokument wurde entgegengenommen.`);
+        setMessage(`„${accepted.filename}“ — Analyse wird gestartet …`);
+        // Straight to the document with the analysis auto-started: the upload page promises
+        // "Inhalte werden extrahiert und analysiert", so nobody should have to find and press a
+        // second button for that. Router state (not a query param) so a copied link or a reload
+        // of the detail page never re-triggers a run.
+        navigate(`/documents/${encodeURIComponent(accepted.id)}`, {
+          state: { autoAnalyze: true },
+        });
       } catch (error) {
         setStatus("error");
         if (error instanceof UploadError) {
@@ -63,35 +71,29 @@ export default function UploadPage() {
         }
       }
     },
-    [constraints],
+    [constraints, navigate],
   );
 
   return (
-    <main className="flex min-h-screen justify-center bg-[linear-gradient(to_bottom,#F5F6F1,#EEF2EA)] p-4 py-12 sm:py-16">
-      <div className="h-fit w-full max-w-2xl rounded-2xl border border-card-border bg-card p-8 shadow-[0_2px_12px_rgba(31,79,67,0.05)] sm:p-10">
-        <header className="mb-6">
-          <h1 className="text-xl font-semibold text-ink">Dokumente sicher vorbereiten</h1>
-          <p className="mt-2 text-sm text-muted">
-            Laden Sie Dateien hoch, um sensible Inhalte für Review, De-Identification und sichere
-            Weiterverarbeitung vorzubereiten.
-          </p>
-        </header>
+    <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6 sm:py-12">
+      <header>
+        <h1 className="text-2xl font-semibold text-ink">Dokumente sicher vorbereiten</h1>
+        <p className="mt-2 text-sm text-muted">
+          Laden Sie Dateien hoch, um sensible Inhalte für Review, De-Identification und sichere
+          Weiterverarbeitung vorzubereiten.
+        </p>
+      </header>
 
+      <div className="mt-6 rounded-2xl border border-card-border bg-card p-6 shadow-[0_2px_12px_rgba(31,79,67,0.05)] sm:p-8">
         <UploadDropzone
           onFile={(file) => void handleFile(file)}
           disabled={status === "uploading"}
           accept={buildAcceptAttribute(constraints.allowedExtensions)}
         />
         <StatusNotice status={status} message={message} correlationId={correlationId} />
-        {status === "success" && (
-          <p className="mt-3 text-center text-sm">
-            <Link to="/documents" className="font-medium text-accent-dark hover:underline">
-              Zu den Dokumenten →
-            </Link>
-          </p>
-        )}
-        <HowItWorks />
       </div>
-    </main>
+
+      <HowItWorks />
+    </div>
   );
 }

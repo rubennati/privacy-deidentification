@@ -9,6 +9,35 @@ A change is ready when:
 - Routing/state files updated when needed.
 - No direct commits to `main`.
 
+## PII detection & display foundation gate
+
+PII *maturity* (grouping/overlap/review/manual-add, L11–L14) advanced ahead of PII *detection
+quality*. This gate makes detection + raw↔canonical display quality an explicit **foundation
+condition**: **no PII L15+ work and no redaction work proceed until the measured thresholds below are
+met on the private corpus.** It is the PII counterpart to OCR's contract-first discipline. Full
+baseline, scope decisions, and the prioritized action list live in
+[`docs/engine/pii-detection-quality-plan.md`](../docs/engine/pii-detection-quality-plan.md).
+
+- **Measured, not asserted.** Quality is measured with `make benchmark-private` (per-type P/R/F1,
+  privacy-guarded) against the corpus, not claimed. Frozen baseline: 2026-07-02 `review-heavy`,
+  global P=0.47 / R=0.67 / F1=0.55.
+- **Per-type target thresholds** (the "line"):
+  - **P3 identifiers** (`IBAN_CODE`, `SVNR_AT`, `PASSPORT_NUMBER`, `ID_CARD_NUMBER`, `TAX_ID_AT`,
+    `CREDIT_CARD`, `LICENSE_PLATE_AT`): **Recall ≥ 0.98**, Precision ≥ 0.90 — a miss is a leak.
+  - **P2 structured** (`EMAIL_ADDRESS`, `PHONE_NUMBER`, domain identifiers, `ADDRESS`,
+    `CONTACT_LINE`, `CUSTOMER_LINE`): Recall ≥ 0.95, Precision ≥ 0.85.
+  - **Names / organizations** (`PERSON`, `ORGANIZATION`, `GIVEN_NAME`, `FAMILY_NAME`):
+    Recall ≥ 0.95, Precision ≥ 0.80.
+  - **P1 / context** (`DATE_TIME`, `BIRTH_DATE`, `BIRTH_PLACE`): Recall ≥ 0.90; bare `LOCATION` is
+    **not** a standalone target type (removed — residence via `ADDRESS`, birthplace via a
+    context-gated `BIRTH_PLACE` recognizer).
+  - **Display:** raw↔canonical highlight parity ≥ 0.95 of anchor-bound entities; every remaining
+    non-mapped entity carries an explicit reason code, never a silent missing highlight.
+- **No corpus-specific tuning.** Recognizer/model/validation changes must be generic and covered by
+  synthetic tests; the corpus measures, it does not define the rules.
+- **No regression on a met type.** Once a type reaches its threshold, a later change must not drop it
+  below without an explicit, justified exception.
+
 ## Runtime / API / worker changes
 
 Additional gates when a change touches the API contract, the frontend↔API boundary, the OCR/PII
@@ -19,7 +48,23 @@ worker execution model, `docker-compose.yml`, the `Makefile`, or `.env.example`:
   consumes it, a matching frontend contract test.
 - **Job-flow coverage.** Changes to async job handling must keep frontend tests for the
   pending, running, succeeded, and failed job flows (plus the synchronous fallback and
-  missing/legacy-field guards) green.
+  missing/legacy-field guards) green. This includes the job-activity layer (ADR-0030): reload
+  recovery from `localStorage`, the document-jobs fallback, and the single-owner polling try-lock
+  (no duplicate poll loops for one job id) all need their own tests, not just the happy-path flow.
+- **Recovery & compatibility invariants (ADR-0041).** A change touching job state, worker
+  execution, readiness, the job DB schema, the review decision log, or a versioned client contract
+  must keep these tested and must not weaken them: (a) an interrupted `running` claim always
+  recovers (requeue while attempts remain, else explicit `interrupted` failure) — never stays
+  authoritative as `running` forever; (b) terminal job transitions and worker artifact publication
+  stay **fenced to the claiming attempt** so retries never conflict/duplicate; (c) the job DB
+  **refuses** an unsupported/newer/foreign schema version rather than stamping or overwriting it,
+  and any bump migrates the known previous version explicitly; (d) `/health/ready` reflects whether
+  processing can actually proceed (storage + job-store compatibility + worker liveness in worker
+  mode); (e) frontend polling always settles with an explicit outcome (bounded retries, 404
+  cleanup, resolved waiters, surfaced failures) and validates job/contract payloads, failing closed
+  on an unknown `status`/`contract_version`; (f) a damaged or unknown-`record_type` newest
+  append-only record fails reads *and* writes explicitly and never silently reactivates an older
+  state (an unacknowledged torn-tail fragment is the only tolerated exception).
 - **Compose build/start smoke.** When `docker-compose.yml` or the `Makefile` changes, run
   `python scripts/check-runtime-surface.py` (via `make test`), `docker compose config`, and
   `docker compose config --services`; do a `make build` / `make up` smoke when feasible.
@@ -48,7 +93,7 @@ future evidence source plugged into that list — dictionary/lexicon, multi-OCR,
   (`details: dict[str, int]`); a test must assert no synthetic sensitive sample text appears in the
   evidence JSON.
 - **Private-corpus validation summary.** Run the change against the local private corpus
-  (`test-corpus/`, never committed; local script and output under `.local/`, never committed) and
+  (`volumes/test-corpus/`, never committed; local script and output under `.local/`, never committed) and
   report, per document, whether the new/changed evidence is useful, too noisy, missing a signal, or
   a false-positive risk — plus an explicit stable-document regression statement (existing
   `reading_text`/`structured_content`/lineage output compared against the prior baseline).
@@ -86,3 +131,134 @@ job contract:
 - **No raw text across the boundary beyond existing text layers.** A packaging/contract change adds
   no new raw document or entity text to metrics-only layers; the existing text-artifact privacy
   rules still apply.
+
+## Text identity / anchor lineage changes
+
+Gates for the implemented **Text Anchor Graph v1** and any future PR that extends or binds to it
+([ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md)):
+
+- **Anchors are owned by OCR/Text, derived from the Document Text Package** — a consumer (PII, Review,
+  pseudonymization, reconstruction) binds to anchors, it does not create them.
+- **Anchor metadata remains text-free** — tests must assert synthetic sensitive strings appear only
+  in existing text source fields, never in anchor ids, ranges, token classes/shapes, summaries,
+  warnings, validation, logs, or docs.
+- **Missing/ambiguous mapping is an explicit, tested state** — never a silently dropped highlight and
+  never a guessed match; string equality alone never merges two occurrences into one identity.
+- **Anchor/binding diagnostics are structural only** — coverage summaries, reason counts, warning
+  codes, source names, offsets, and ids are allowed; copied document text, entity values, snippets,
+  filenames, or private corpus content are not. The frontend renders only server-provided
+  raw/canonical/layout ranges and must not recover missing ranges with string search.
+- **Anchors are per-line identity units** — a raw anchor range must never span a line break; a token
+  pattern that swallowed a `\n` would fuse a line-ending value with the next line's leading token
+  into one bogus anchor, breaking canonical mapping and degrading PII binding to `partial`. A
+  regression test asserts no anchor raw range contains a newline.
+- **Bound-anchor view ranges must reach the contract (end-to-end conformance)** — if a PII detection
+  binds to anchors and those anchors carry canonical (or layout) ranges, the entity contract must
+  expose the matching canonical (or layout) display/highlight range for that same entity identity;
+  raw and canonical must not diverge for a value present in both views. A view range may be absent
+  only for an explicit structural reason (`repeated_token_ambiguity`, `reading_text_mapping_missing`,
+  `canonical_range_missing`, partial/ambiguous binding), never silently. Covered by
+  `backend/tests/test_anchor_bound_pii_e2e_conformance.py`.
+- **Technical raw text stays the offset authority and is never mutated**, and the active-PII-input
+  `text_lineage_map` separation gate is not bypassed by anchor work.
+- **Construction-time lineage is builder-emitted and the authoritative canonical↔raw identity
+  source.** `reading_text.py`'s `ReadingRow`/`ReadingCell` carry optional `source_range`s attached
+  once at collection time (before any rendering) — for pypdf pages from the extraction process
+  itself (cursor accumulation over the extraction visitor's own chunks, **byte-verified** against
+  the stored raw page text, discarded entirely on any mismatch; no text search, no uniqueness
+  requirement, so repeated values keep distinct identities), for OCR/geometry pages from persisted
+  L10 line offsets. Rendering threads that identity through body paragraphs, party columns,
+  tables, metadata, in-row label/value splits, multi-column cell runs, post-table rendering, and
+  the raw-order fallback; canonical offsets are computed by walking the same block/line join
+  arithmetic the text was built with, never by searching the finished string
+  (`ReadingTextRowLineageMap` v2, `lineage_source: row_construction`). Segment statuses are
+  **byte-verified**: `exact` means byte-identical to the claimed raw span; `normalized` (whole
+  row), `split` (subset of a row's cells), `merged` (multi-row union), and `inserted` (synthetic
+  headings from the closed code-owned vocabulary) stay honest, and a document-level overlap sweep
+  drops colliding raw-range claims symmetrically (conflicted merge envelopes first, then both
+  sides of any precise-vs-precise conflict) rather than letting an envelope lie. Fused table
+  headers and layout-block ordering still decline — an explicit scope boundary served by the
+  fallbacks below. See [ADR-0032](../docs/adr/0032-reading-text-row-construction-lineage-v1.md),
+  [ADR-0036](../docs/adr/0036-reading-text-row-construction-lineage-v2.md), and
+  [ADR-0040](../docs/adr/0040-construction-time-canonical-lineage-v3.md).
+- **The geometry-backed reading projection is a preferred *post-hoc* mechanism, not construction-time
+  lineage — never describe it as builder-emitted.** `reading_text_geometry_projection.py` runs
+  *after* Canonical Reading Text already exists and re-derives canonical↔raw correspondence by
+  searching the finished string for an exact, line-bounded occurrence of each raw geometry line
+  (`ReadingTextGeometryProjectionMap`). The anchor graph and package prefer row construction lineage
+  first, then this projection, then the older unique-token `reading_text_map`, only when each
+  resolves a line unambiguously, and report which mechanism was used (`row_construction` /
+  `geometry_projection` / `fallback_text_match` / `unavailable`; per-anchor
+  `canonical_row_construction` / `canonical_geometry_projection` / `canonical_map_lineage`) — only
+  `row_construction` is builder-emitted; the other two are not authoritative construction identity.
+- **Cursor/processing order is never identity proof; a non-unique line must decline, not guess.** A
+  source line may be projected as `exact` only when its exact text occurs exactly once among the
+  collected verbatim source lines **and** exactly once, line-bounded, in the canonical text. A line
+  whose exact text repeats (same value twice, on one page or across pages) must become an explicit
+  `ambiguous` segment (no source range, no `confidence=1.0`, reason-coded
+  `duplicate_source_value`/`multiple_canonical_candidates`/`identity_ambiguous`/
+  `relative_order_not_identity_proof` — never the duplicated value itself) regardless of which order
+  the candidate lines were processed in; a regression test must assert the same input produces the
+  same (declined) outcome under reversed processing order. A repeated *sub-token* inside two
+  otherwise-unique, distinct multi-token values must still keep its canonical range (tested both
+  ways). This mechanism changes no reading-text output bytes and no PII detection.
+- **Post-hoc mechanisms are fallback-only and must stay unconfusable with construction identity.**
+  The anchor graph and package prefer `row_construction` per token; anything resolved through
+  `geometry_projection`/`fallback_text_match` is degraded fallback identity, per-anchor flagged
+  (`canonical_row_construction` / `canonical_geometry_projection` / `canonical_map_lineage`), and a
+  change must never blend the mechanisms or upgrade a fallback-resolved range into construction
+  precision (only byte-verified `exact` construction segments may feed sub-token arithmetic
+  projection). Legacy artifacts without a row-lineage map keep working through the explicit
+  fallbacks, and a regression test must keep construction and fallback flags distinguishable on
+  one document.
+- **Pseudonymization renders from decisions; reconstruction maps placeholders** — no blind string
+  replacement, no fuzzy matching of private values; the reconstruction map (the only store of
+  originals) is access-gated, audited, and deletable with the document.
+- **No DB before the model is proven** — persistence follows the phased hybrid (Option E) path; the
+  reconstruction map and review/replacement state must be expressible as SQLite tables without fusing
+  immutable text artifacts into the DB.
+
+Golden-Path sequencing gates (do not skip a stage — see ADR-0031 §13):
+
+- **No PII highlight implementation without a shared identity source** — a highlight is rendered from
+  the server's anchor-bound entity set, never re-derived per view from that view's offsets alone.
+- **No frontend independent entity derivation** — the UI renders anchor-bound entities and mapping
+  states; it never invents its own per-view PII entity set.
+- **No pseudonymization before entity↔anchor binding exists** — a render consumes accepted entities
+  bound to anchors, not raw string spans.
+- **No reconstruction before a replacement plan/map exists** — placeholders resolve through the
+  replacement group → entity → anchor → original chain, never by matching private text.
+- **No SQLite migration without clear artifact-vs-table ownership** — each state moved to a table has
+  a named owner (per ADR-0031 §6/§9) and immutable text artifacts stay JSON.
+
+## Consumer / contract-intake changes
+
+Additional gates when an engine consumes the OCR Output Contract v1 Document Text Package (today PII
+via `pii_input.py`; later Review, pseudonymization, analysis, export, local AI) — see
+[ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md):
+
+- **Consume the contract, not OCR internals.** A consumer must go through the intake adapter /
+  package (source roles + `contract_status`), not reach into `TextContent` fields or the OCR/PDF
+  tool. Concentrate any unavoidable bridge (e.g. per-page segmentation) in one adapter.
+- **Degrade, never crash, on missing optional layers.** Tests must cover a `degraded` package with
+  raw text (still processed), a structurally `invalid` package (controlled error), and an
+  empty-raw-text package (existing benign path preserved). A missing canonical/structured/evidence
+  layer must not silently suppress output.
+- **Active-input separation gate is not bypassed.** Consuming the contract does not switch PII's
+  active detection input away from technical raw text; that still requires the tested
+  `text_lineage_map`.
+- **Provenance/summary metadata is structural only.** Per-entity provenance and overlap/contract
+  summaries carry reason codes, counts, recognizer names, and ids — never a copy of raw document or
+  entity text. A test must assert a synthetic sensitive value never appears in that metadata.
+- **Deterministic resolution.** Overlap/precedence resolution must be deterministic (order-
+  independent) and provenance-preserving; competing evidence is merged/flagged, never dropped
+  silently.
+- **Derived review views stay pure and non-destructive.** A derived, review-facing view over an
+  immutable artifact (entity grouping, review overlay, and the review-ready entity contract —
+  [ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md)) must not mutate the artifact or
+  its offsets, must not drop an entity because a canonical mapping is missing/partial/ambiguous (it
+  is classified and flagged instead), and must expose a **stable, deterministic id** independent of
+  volatile per-run ids where downstream review depends on identity across re-runs. Any raw/canonical
+  span info is offsets + status codes; an entity's `value` may appear only where `GET …/pii` already
+  exposes it and never inside display metadata, warnings, or provenance — a test must assert a
+  synthetic sensitive value and its surrounding context never leak into those.

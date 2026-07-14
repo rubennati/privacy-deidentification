@@ -40,9 +40,12 @@ input, or report may be committed.
 | `text_geometry` | ✅ OCR L10 (field on `text_result`) | per-page line boxes mapping technical raw spans (persisted `canonical_*` compatibility names) to page-local `x0/y0/x1/y1` bounds (`pdf_points`/`image_pixels`), with page status and coverage; source-anchoring/traceability only, no raw line text | no raw text (offsets + bounds only) | additive optional versioned field on `text_result` |
 | `structured_content` | ✅ OCR L11 + L13 (field on `text_result`) | span-backed tables/cells, label/value fields, sections, and metrics-only counts/flags; L13 adds multiline label/value field continuation | short labels/headings only; values/table contents remain raw/canonical spans | additive optional versioned field on `text_result` |
 | `quality_evidence` | ✅ OCR L14 + L15 (field on `text_result`) | metrics-only provenance, reconstruction, page-zone, and lineage-coverage evidence for the run: a list of `QualityEvidenceItem`s plus a `QualityEvidenceSummary` with `QualityLineageCoverage`; explains where text came from and how well it maps back, without changing any text. L15 adds deterministic noise/token artifact *evidence* (glyph artifacts, suspicious token shapes, character-confusion candidates, spacing candidates, and a document-level `ocr_noise_summary`) into the same list | no raw text (offsets, counts, flags, page zones, coarse bounds, stable reason codes; `details` is `dict[str, int]`) | additive optional versioned field on `text_result` |
-| `document_text_package` (OCR Output Contract v1) | ✅ today, derived API package (ADR-0027) | versioned external package of the `text_result` layers (raw/canonical/layout/structured) + `reading_text_map` + `quality_evidence` + a `contract_status`; the stable boundary consumers depend on instead of OCR internals | packages existing text layers; adds no new raw text beyond them | computed on request by `GET /api/documents/{document_id}/text-package`; not persisted |
-| `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, and L9 run settings | yes | immutable artifact |
+| `reading_text_geometry_projection_map` | ✅ Geometry-backed Reading Projection v1 (field on `text_result`) | **post-render** canonical↔raw projection — built *after* `reading_text` already exists by searching the finished string for an exact, line-bounded occurrence of each raw geometry line, NOT emitted by the reading-text builder: ordered `CanonicalTextSegmentV1`s (canonical span → raw span, deterministic id, role, `mapping_status`) preferred over the post-hoc `reading_text_map` only when a line resolves unambiguously; a line whose exact text repeats (not globally unique among source lines and canonical occurrences) is marked `ambiguous` rather than guessed | no raw text (offsets, ids, roles, statuses, reason codes only — never the duplicated value) | additive optional versioned field on `text_result` |
+| `document_text_package` (OCR Output Contract v1) | ✅ today, derived API package (ADR-0027) | versioned external package of the `text_result` layers (raw/canonical/layout/structured) + `reading_text_map` + `reading_text_geometry_projection_map` + a `lineage_summary` (`geometry_projection`/`fallback_text_match`/`unavailable`) + `quality_evidence` + a `contract_status`; the stable boundary consumers depend on instead of OCR internals | packages existing text layers; adds no new raw text beyond them | computed on request by `GET /api/documents/{document_id}/text-package`; not persisted |
+| `document_text_anchor_graph` (Text Anchor Graph v1) | ✅ today, derived API graph (ADR-0031 Phase B) | OCR/Text-owned identity graph over technical raw, canonical reading, and layout text ranges; raw anchors are primary, canonical ranges attach through the geometry-backed post-render projection first and the post-hoc `reading_text_map` as fallback (per-anchor `canonical_geometry_projection`/`canonical_map_lineage` flag; graph `lineage_summary`) — **neither is builder-emitted construction identity** — layout attaches only when safely byte-aligned in v1, and missing/partial/ambiguous states are explicit | no copied source text (anchor ids, source names, offsets, token classes/shapes, counts, statuses, and warning codes only) | computed on request by `GET /api/documents/{document_id}/text-anchors`; not persisted |
+| `pii_result` | ✅ today | detected spans, offsets, counts, PII L6–L8 validation fields, L9 run settings, and L12 per-entity `provenance` + `input_contract`/`overlap_resolution` summaries | yes (spans); provenance/summaries are reason-codes/counts/ids only | immutable artifact |
 | entity groups (PII L11) | ✅ today | derived, non-persisted grouping of `pii_result` entities by type + normalized-value fingerprint | no (hash + offsets only) | computed on request, never stored |
+| `pii_entity_contract` (anchor-bound review entity contract v1) | ✅ today, derived API view (ADR-0029 + ADR-0031 Phase C) | packages the latest `pii_result` entities as anchor-bound review objects where the matching Text Anchor Graph is available: anchor-derived `entity_id`, `anchor_set`/`anchor_refs`, detector `source_observations`, explicit binding + canonical mapping status, overlap provenance, resolved review state, and a text-free display model; missing/ambiguous/no-graph binding degrades to evidence-only identity without dropping detections | entity `value` mirrors `pii_result` (already on `GET …/pii`); binding/display/warnings/provenance carry ids, ranges, counts, and codes only, no snippet | computed on request by `GET /api/documents/{document_id}/pii/entity-contract`; not persisted |
 | review-decision overlay | ✅ today (partial Review L8) | lineage-bound `pseudonymize`-by-default `keep`/`false_positive`-opt-out decisions per entity group/occurrence (ADR-0021) | no raw entity/document text by default; optional reviewer `note` is free text (same policy as feedback `comment`) | append-only JSONL, latest-per-target on read |
 | `review_result` | 🔜 Review L8 (formal model) | the single-artifact-per-run shape this level originally described; today's decision overlay above covers much of its practical intent | yes | immutable artifact |
 | `benchmark_result` | ✅ today as private reports | routing and PII quality metrics | guarded report metadata and metrics | local report files |
@@ -58,7 +61,13 @@ when `OCR_EXECUTION_MODE=worker`, which is now the default OCR runtime mode. `sy
 explicit fallback; PII execution is still synchronous in the API. It carries only non-sensitive
 lifecycle metadata and references the immutable artifacts a job produces; raw document text,
 canonical reading text, layout text, structured-content payloads, PII values, artifact JSON, stack
-traces, and raw exception text never enter it.
+traces, and raw exception text never enter it. The public `GET /api/jobs/{job_id}` /
+`GET /api/documents/{id}/jobs` status views additionally carry one derived `is_terminal: bool` field
+(Runtime Job UX v1, [ADR-0030](../adr/0030-runtime-job-ux-notifications-v1.md)) so a client does not
+have to hardcode which statuses are terminal; it is computed from `status` and stores nothing new.
+That same ADR adds a frontend-only `jobActivityStore` that mirrors this status metadata into
+`localStorage` for reload recovery — it is a local UI cache of the same safe fields, not a new
+artifact or a second source of truth.
 
 ## Raw, canonical reading, and layout text
 
@@ -134,7 +143,12 @@ Distinct text layers, structured layout blocks, and a lineage map are fixed by t
   any text.
 - **`text_lineage_map`** (new, optional, additive) marries source (page/block/line/word) ↔ canonical
   ↔ PII-input ↔ readable ↔ layout, so PII detected internally can be shown in the layout view while
-  its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction.
+  its authoritative offsets stay canonical. Long-term basis for bounding boxes and redaction. Its
+  target design is specified in
+  [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md). Phase B now delivers the
+  first derived **Text Anchor Graph v1** (`GET …/text-anchors`) with per-view ranges and explicit
+  missing/partial/ambiguous states; downstream `entity_anchors`, review/replacement/reconstruction
+  state, SQLite persistence, and PII-input switching remain future phases.
 
 These layers are additive and never mutate technical raw text or shift PII offsets. `reading_text`
 is a deterministic view over the same extracted source, not an independent source artifact. Until
@@ -218,11 +232,37 @@ computed on request by `GET /api/documents/{document_id}/text-package`, is not p
 artifact, and does not change `GET/POST .../ocr`.
 
 Consumers (PII, Review, pseudonymization, document analysis, export, local AI) can depend on the
-contract and its source roles rather than on individual fields or the underlying engine. PII is
-**not migrated yet**: it still uses technical raw text as primary input; canonical/structured/
-evidence remain secondary or future hint layers, and canonical text must not be treated as
-authoritative. Switching the active PII detection input away from raw still requires the tested
-`text_lineage_map` separation gate.
+contract and its source roles rather than on individual fields or the underlying engine. **PII is
+now the first migrated consumer** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)):
+it consumes `DocumentTextPackageV1` through the `pii_input` intake adapter (`PiiInputDocumentV1`)
+rather than reaching into `TextContent`. Technical raw text stays the **primary and only active
+detection input**; canonical is contextual, structured content a hint layer, and quality/noise
+evidence trust context — none of which is treated as authoritative or applied to silently suppress
+an entity. A structurally invalid package is rejected (`422`), empty raw text stays the benign
+empty-result path, and a degraded package with raw text still processes. Switching the active PII
+detection input away from raw still requires the tested `text_lineage_map` separation gate.
+
+The `pii_result` records what PII consumed and how overlaps resolved in additive, optional fields —
+`PiiContent.input_contract` (contract version/status/package id and which layers were present),
+`PiiContent.overlap_resolution` (deterministic PII L12 merge/drop/flag counts by reason code), and
+`PiiEntity.provenance` (detection source/role, contributing recognizers, merge/overlap reason codes,
+and superseded candidate ids). These are reason-codes/counts/ids only and never copy raw document or
+entity text; legacy `pii_result` artifacts without them stay valid.
+
+## Anchor-bound PII entity contract (implemented)
+
+The **anchor-bound entity contract v1** ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md),
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) is a pure, derived API view
+over the latest `pii_result`, exposed by
+`GET /api/documents/{document_id}/pii/entity-contract` (`pii_entity_contract.py`). It packages each
+L12-resolved entity as `ReviewReadyAnchorBoundPiiEntity`: anchor-derived identity where the matching
+Text Anchor Graph binds exactly/partially, explicit evidence-only identity when binding is missing,
+ambiguous, or not applicable, `anchor_set`/`anchor_refs`, detector `source_observations`,
+view-specific raw/canonical display ranges, canonical `mapping_status`, overlap provenance, and the
+resolved review state from the decision overlay. Missing/partial/ambiguous anchor or canonical
+mapping never drops an entity. It mutates nothing, adds no detection, and keeps technical raw text as
+the only active PII input. This is **not** the formal binding `review_result` — it is the stable
+review-ready read model that model will build on.
 
 ## Dev feedback side-channel
 

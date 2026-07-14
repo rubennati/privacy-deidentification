@@ -69,6 +69,76 @@ describe("PiiEntityCard header controls", () => {
     );
     expect(html).toContain("12–16");
     expect(html).toContain("Im extrahierten Text zu dieser Stelle springen");
+    expect(html).toContain(`id="pii-entity-card-${entity.id}"`);
+  });
+
+  it("labels the raw offset and shows the reading offset when it maps exactly", () => {
+    const mapped: PiiEntity = {
+      ...entity,
+      projection_status: "exact",
+      reading_start_offset: 40,
+      reading_end_offset: 44,
+    };
+    const html = render(
+      <PiiEntityCard
+        entity={mapped}
+        documentId="doc-1"
+        artifactId="art-1"
+        feedbackEnabled={false}
+        existingStatus={null}
+      />,
+    );
+    expect(html).toContain("Rohtext-Offset");
+    expect(html).toContain("12–16"); // raw
+    expect(html).toContain("Lesetext-Offset");
+    expect(html).toContain("40–44"); // reading, distinct from raw
+  });
+
+  it("states explicitly when an entity is not mapped into the reading text", () => {
+    const unmapped: PiiEntity = { ...entity, projection_status: "unmapped" };
+    const html = render(
+      <PiiEntityCard
+        entity={unmapped}
+        documentId="doc-1"
+        artifactId="art-1"
+        feedbackEnabled={false}
+        existingStatus={null}
+      />,
+    );
+    expect(html).toContain("Lesetext-Offset");
+    expect(html).toContain("nicht im Lesetext zugeordnet");
+  });
+
+  it("merges the binding decision into the same detected-entity card", () => {
+    const html = render(
+      <PiiEntityCard
+        entity={entity}
+        documentId="doc-1"
+        artifactId="art-1"
+        feedbackEnabled={false}
+        existingStatus={null}
+        reviewOccurrence={{
+          occurrence_id: entity.id,
+          entity_type: entity.entity_type,
+          entity_group_id: "g".repeat(32),
+          raw_start: entity.start_offset,
+          raw_end: entity.end_offset,
+          score: entity.score,
+          recognizer: entity.recognizer,
+          projection_status: "exact",
+          projection_method: "offset_map",
+          reading_start_offset: 12,
+          reading_end_offset: 16,
+          review_status: "kept",
+          review_decision: "keep",
+          decision_scope: "occurrence",
+        }}
+      />,
+    );
+    expect(html).toContain("Bindende Entscheidung");
+    expect(html).toContain("Nicht pseudonymisiert");
+    expect(html).toContain("individuell");
+    expect(html).toContain('<option value="keep" selected');
   });
 });
 
@@ -83,7 +153,9 @@ describe("PiiEntityCard locked state", () => {
         existingStatus={{ verdict: "positive", issue_type: "correct" }}
       />,
     );
-    expect(html).toContain("Feedback gespeichert: Passt");
+    // A decided card collapses to a one-line summary with an expand toggle, hiding the form.
+    expect(html).toContain("✓ Passt");
+    expect(html).toContain("ausklappen");
     expect(html).not.toContain("Feedback speichern");
     expect(html).not.toContain("Problem auswählen");
   });
@@ -98,7 +170,8 @@ describe("PiiEntityCard locked state", () => {
         existingStatus={{ verdict: "issue", issue_type: "wrong_type" }}
       />,
     );
-    expect(html).toContain("Feedback gespeichert: Falscher Typ");
+    expect(html).toContain("✓ Falscher Typ");
+    expect(html).toContain("ausklappen");
     expect(html).not.toContain("Feedback speichern");
   });
 });
@@ -147,7 +220,50 @@ describe("PiiEntityList", () => {
         }}
       />,
     );
-    expect(html).toContain("Feedback gespeichert: Kein PII (False Positive)");
+    expect(html).toContain("✓ Kein PII (False Positive)");
+    // Collapsed: the value is still shown in the summary, and the details form is hidden.
+    expect(html).toContain("Wien");
     expect(html).not.toContain("Feedback speichern");
+  });
+
+  it("matches review occurrences to detector cards by occurrence id", () => {
+    const html = render(
+      <PiiEntityList
+        entities={[entity]}
+        stale={false}
+        documentId="doc-1"
+        artifactId="art-1"
+        feedbackEnabled={false}
+        feedbackStatuses={{}}
+        review={{
+          document_id: "doc-1",
+          artifact_id: "art-1",
+          groups: [],
+          occurrences: [
+            {
+              occurrence_id: entity.id,
+              entity_type: entity.entity_type,
+              entity_group_id: "g".repeat(32),
+              raw_start: 12,
+              raw_end: 16,
+              score: 0.9,
+              recognizer: "FakeRecognizer",
+              projection_status: "exact",
+              projection_method: "offset_map",
+              reading_start_offset: 12,
+              reading_end_offset: 16,
+              review_status: "accepted",
+              review_decision: null,
+              decision_scope: null,
+            },
+          ],
+          manual_additions: [],
+          stale_decision_count: 0,
+          has_stale_decisions: false,
+        }}
+      />,
+    );
+    expect(html).toContain("Bindende Entscheidung");
+    expect(html).toContain("Wird pseudonymisiert");
   });
 });

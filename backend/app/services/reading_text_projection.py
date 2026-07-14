@@ -8,9 +8,9 @@ from collections.abc import Sequence
 from itertools import pairwise
 
 from app.schemas import PiiEntity, ReadingTextMapSegment, TextPageResult
+from app.services.reading_text import SYNTHETIC_HEADINGS as _SYNTHETIC_HEADINGS
 
 _TOKEN_RE = re.compile(r"\S+")
-_SYNTHETIC_HEADINGS = frozenset({"ANGEBOT", "LEISTUNGEN", "SUMMEN"})
 _PHONE_FORMAT_RE = re.compile(r"^[+\d\s()./\-]+$")
 _FORMAT_SEPARATOR_RE = r"[\s./:\-]*"
 _ID_ENTITY_TYPES = frozenset(

@@ -20,6 +20,7 @@ Behavior contract for Phase 2:
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 
 from fastapi import Depends
 
@@ -31,7 +32,14 @@ from app.services.job_models import (
     JobResult,
     sanitize_job_error,
 )
-from app.services.job_store import JobStore, get_job_store
+from app.services.job_store import (
+    JobNotFoundError,
+    JobStore,
+    StaleJobClaimError,
+    get_job_store,
+)
+
+_DEFAULT_SYNC_LEASE_SECONDS = 3600.0
 
 
 class SyncJobRunner:
@@ -39,8 +47,14 @@ class SyncJobRunner:
 
     execution_mode = JobExecutionMode.SYNCHRONOUS_INLINE
 
-    def __init__(self, store: JobStore | None = None) -> None:
+    def __init__(
+        self,
+        store: JobStore | None = None,
+        *,
+        lease_seconds: float = _DEFAULT_SYNC_LEASE_SECONDS,
+    ) -> None:
         self._store = store
+        self._lease_seconds = lease_seconds
 
     def run[T](self, context: JobContext, operation: Callable[[], T]) -> JobResult[T]:
         """Execute ``operation`` under ``context``, recording lifecycle and a safe outcome.
@@ -54,21 +68,29 @@ class SyncJobRunner:
             self._store.create_job(record)
         record.mark_running()
         if self._store is not None:
-            self._store.mark_running(record)
+            self._store.mark_running(record, lease_seconds=self._lease_seconds)
         try:
             artifact = operation()
         except Exception as exc:
             error_code, error_message = sanitize_job_error(exc)
             record.mark_failed(error_code=error_code, error_message=error_message)
             if self._store is not None:
-                self._store.mark_failed(record)
+                # Deletion terminally removes jobs while a station may still be unwinding, and a
+                # run that outlived its lease was already recovered to an explicit terminal state
+                # — the recovered row stays authoritative over this late writer either way.
+                with suppress(JobNotFoundError, StaleJobClaimError):
+                    self._store.mark_failed(record)
             return JobResult(record=record, error=exc)
         record.mark_succeeded(
             artifact_id=getattr(artifact, "id", None),
             artifact_type=getattr(artifact, "artifact_type", None),
         )
         if self._store is not None:
-            self._store.mark_succeeded(record)
+            # Deletion may win after publication (it also removes the published files), and a run
+            # that outlived its lease keeps its recovered terminal state rather than being
+            # silently flipped back by a writer that already lost the claim.
+            with suppress(JobNotFoundError, StaleJobClaimError):
+                self._store.mark_succeeded(record)
         return JobResult(record=record, artifact=artifact)
 
 
@@ -78,7 +100,11 @@ def get_job_runner(settings: Settings | None = None) -> SyncJobRunner:
     When FastAPI passes request settings, Phase 2 binds the runner to the SQLite job store. A direct
     call remains usable for unit tests and small in-process callers.
     """
-    return SyncJobRunner(get_job_store(settings)) if settings is not None else SyncJobRunner()
+    if settings is None:
+        return SyncJobRunner()
+    return SyncJobRunner(
+        get_job_store(settings), lease_seconds=settings.job_lease_seconds
+    )
 
 
 def provide_job_runner(settings: Settings = Depends(get_settings)) -> SyncJobRunner:

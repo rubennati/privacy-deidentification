@@ -69,8 +69,64 @@ normalized **before** crossing the contract boundary. The implemented v1 package
 immutable text artifact with `contract_version = "1.0"` and a `contract_status`
 (`valid`/`degraded`/`invalid`). Raw text is authoritative; canonical text is derived/contextual;
 `structured_content` is semantic hints; and `quality_evidence` is trust/uncertainty metadata.
-Existing OCR endpoints remain backward-compatible, runtime/worker behavior is unchanged, and PII is
-not migrated yet.
+Existing OCR endpoints remain backward-compatible and runtime/worker behavior is unchanged. **PII is
+now the first migrated consumer** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)):
+it consumes the package through the `pii_input` intake adapter (`PiiInputDocumentV1`) instead of
+`TextContent` internals, detects on raw text as the primary/only active input, treats canonical as
+contextual and structured/quality layers as hints, and resolves duplicate/nested/overlapping
+candidates deterministically (`pii_overlap`, PII L12) with reason-code/count/id provenance on the
+`pii_result`. Switching the active PII detection input away from raw still requires the tested
+`text_lineage_map` separation gate.
+
+Text identity now has its first concrete OCR/Text-owned layer:
+`GET /api/documents/{document_id}/text-anchors` derives **Text Anchor Graph v1** from the same
+`DocumentTextPackageV1`. It emits anchor ids, raw/canonical/layout ranges, counts, statuses, token
+classes/shapes, and warning codes only — no copied text. Canonical ranges attach through the
+geometry-backed, post-render reading projection first (`reading_text_geometry_projection_map` —
+*not* builder-emitted; it searches the already-completed canonical text for an exact, line-bounded
+occurrence of each raw geometry line) and the post-hoc unique-token `reading_text_map` as a labelled
+fallback, so a repeated *sub-token* inside an otherwise-unique multi-token value keeps its canonical
+range, while a genuinely duplicated full-line/label value is declined (marked `ambiguous`) rather
+than guessed by processing order; layout ranges attach only when byte-aligned with raw; and PII
+consumes the matching graph for anchor-bound entity identity without changing the active raw-text
+input.
+
+On top of that, the **anchor-bound entity contract v1**
+([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md),
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)) is the stable, review-facing
+shape the Review UI (and later pseudonymization/analysis/export) depend on: a derived, additive view
+(`pii_entity_contract.py`, `GET …/pii/entity-contract`) that packages each resolved entity with
+anchor-derived identity where available, explicit evidence-only fallback when binding is missing or
+ambiguous, detector source observations, raw/canonical display ranges, overlap provenance, resolved
+review state, and a text-free display model — without mutating the `pii_result` or being the formal
+binding `review_result`. The contract now also carries text-free diagnostics for anchor coverage and
+view-range availability: counts for raw/canonical/layout ranges, reason-code counts, and explicit
+codes for missing canonical/layout ranges, evidence-only fallback, degraded anchor graphs, repeated
+token ambiguity, reading-text mapping gaps, and intentionally unavailable layout mapping. The
+frontend renders PII highlights from this contract rather than deriving independent
+raw/canonical/layout highlight sets; view-specific ranges are used only when the contract provides
+them, and missing/partial/ambiguous mappings remain visible states. An end-to-end feasibility audit
+of the anchor layer ([`text-anchor-architecture-feasibility-audit.md`](text-anchor-architecture-feasibility-audit.md))
+confirms this consumption discipline, classifies the current graph as anchor-*derived* (identity
+offset-minted), and staged construction-time lineage as the next structural step toward true
+anchor-first. A first attempt at that step (`anchor-first-text-package-v2`) was found by a
+contradiction audit to be a *post-render projection*, not construction-time lineage — the reading-text
+builder itself was unchanged, and the mechanism searched the already-completed canonical text. It was
+reclassified and hardened as **Geometry-backed Reading Projection v1**: a stronger post-hoc mechanism
+(full-line granularity, global-uniqueness discipline, declines genuinely ambiguous/duplicate values
+rather than guessing) the graph prefers over the older `reading_text_map` when it can resolve a line
+unambiguously. **Genuine construction-time lineage is now delivered** (the real
+`anchor-first-text-package-v2`, [ADR-0040](../adr/0040-construction-time-canonical-lineage-v3.md),
+building on [ADR-0032](../adr/0032-reading-text-row-construction-lineage-v1.md)/
+[ADR-0036](../adr/0036-reading-text-row-construction-lineage-v2.md)): the reading-text builder
+itself emits canonical↔raw correspondence while rendering, from cell-level source identity captured
+at collection time — pypdf extraction offsets byte-verified against the stored raw text, or
+persisted L10 line offsets — with byte-verified statuses, a symmetric overlap sweep, and explicit
+declines (fused table headers, layout-block ordering). The anchor graph prefers this construction
+lineage per token; the geometry projection and unique-token map remain explicitly flagged, degraded
+fallbacks for the spans it declines and for legacy artifacts. Anchor *ids* are still offset-minted
+per (text-artifact bytes × graph-builder version) — the audit's persistence constraint on durable
+anchor-id storage is unchanged.
 
 ## Runtime job contract
 
@@ -82,6 +138,37 @@ polls; future notification transports (SSE, WebSocket, an event bus) may be adde
 **not change the OCR Output Contract**. Redis/RQ/Celery is not required yet; SQLite remains the
 current durable job state for the single-node local/runtime model (ADR-0023). A future notification
 system changes *how* progress is delivered, never *what* text OCR produces.
+
+**Runtime Job UX v1** ([ADR-0030](../adr/0030-runtime-job-ux-notifications-v1.md)) implements the
+product-facing half of this contract additively: a frontend `jobActivityStore` records job status,
+persists active job ids to `localStorage` so a page reload can recover and resume polling, and
+serializes polling per job id through a single-owner try-lock so a live submit and a reload-recovery
+resume never double-poll the same job. The only backend addition is one additive
+`JobStatusResponse.is_terminal` field; the job model, `JobStore`, and worker are unchanged. This is
+explicitly v1 — polling + `localStorage`, no push transport yet — consistent with the paragraph
+above: a future SSE/WebSocket/event-bus transport would change how the store learns about updates,
+not the job contract or any component that reads from the store.
+
+**Runtime recovery & compatibility integrity**
+([ADR-0041](../adr/0041-runtime-recovery-and-compatibility-integrity.md)) makes the contract
+survive interruption and damage. **Recovery:** every `running` job carries a processing lease
+(job store schema **v2**); an abandoned claim (lease expired, or a pre-lease row) is resolved
+deterministically — requeued while `OCR_WORKER_MAX_ATTEMPTS` remain, otherwise failed explicitly
+with the static `interrupted` code — at worker startup, each poll cycle, job enqueue, and every
+job-status read, so a job can never stay authoritative as `running` merely because its worker
+disappeared. **No conflicting retries:** terminal transitions and worker artifact publication are
+fenced to the claiming attempt (`StaleJobClaimError`), so a worker that lost its lease can neither
+overwrite the recovered outcome nor republish authority. **Readiness:** `/health/ready` now reports
+`storage` / `job_store` / `ocr_worker` components (job-store compatibility + a worker heartbeat)
+and gates on them, so "ready" means requests, persistence, *and* processing work. **Compatibility:**
+the job DB refuses an unknown/newer `user_version` instead of stamping it; the append-only PII
+review log fails reads *and* writes on a damaged or unknown-`record_type` line (only an
+unacknowledged torn tail is ignored) rather than silently reactivating an older decision; and the
+frontend validates job-status and versioned entity-contract payloads (failing closed on an
+unknown shape/version) instead of trusting unchecked casts, while its poll loop always settles
+(bounded retries, 404 cleanup, waiter resolution, explicit failure notices). This delivers the
+Phase-4 stale-claim reclaim and bounded retry from ADR-0023; no queue broker, cancel API, or PII
+worker split is added.
 
 ## Design invariants the engine must keep
 
@@ -152,6 +239,13 @@ When the product needs **query, history, and cross-document state** that the fla
 awkward — concretely, once **review decisions and rules** (Review L2+) must be listed, searched,
 versioned, and reapplied across runs. Detection alone (audit/OCR/PII artifacts) does *not* need a
 DB; the file layout serves it well.
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) (**Proposed for the full
+architecture; Phase B implemented**)
+makes this concrete with a **hybrid (Option E)** model: immutable OCR/Text/anchor artifacts stay
+JSON, while the mutable, queryable de-identification state (review decisions, replacement plans,
+reconstruction map, audit events) moves to SQLite when Review persistence needs it. Phase B now
+implements the first derived anchor graph endpoint without SQLite; PII binding, highlight
+consistency, pseudonymization, and reconstruction remain staged follow-ups.
 
 ### What stays in the filesystem
 

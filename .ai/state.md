@@ -2,29 +2,92 @@
 
 > If this file conflicts with the current branch or commits, trust git.
 
-- Current phase: **Runtime Architecture Phase 3.6 — default worker stack + runtime simplification**.
-- Current objective: ADR-0023 Phase 3.6 is now delivered on top of Phase 3/3.5. The normal Compose
-  stack is `frontend`, `api`, and `ocr-worker`; `OCR_EXECUTION_MODE` defaults to `worker`; and the
-  frontend handles worker-mode OCR end to end by accepting `202` job metadata, polling
-  `GET /api/jobs/{job_id}`, and fetching the finished `text_result`. Sync OCR remains available only
-  as an explicit development/test fallback (`OCR_EXECUTION_MODE=sync`, `201` artifact body). The old
-  slim/pii/ocr/full Make targets and `INSTALL_OCR`/`INSTALL_PII` build toggles are removed; API and
-  OCR worker share one full backend image for now, with a slimmer API image deferred as future
-  optimization. All host storage now lives under a single `DATA_ROOT` (default `./volumes`);
-  Compose maps `uploads`, `document-store` (renamed from `document-data`), `job-state`,
-  `pii-feedback-archive`, and `ocr-models` onto stable internal container paths, which are advanced
-  overrides only (not in `.env.example`). SQLite job state remains file-based but now lives in its
-  own dedicated `job-state` root (`DATA_JOB_STATE_DIR/jobs.sqlite3` by default), no longer beside
-  per-document artifacts, and stores metadata only. PII stays synchronous in the API. There is still no Redis/Celery/RQ, no PII worker
-  split, no OCR/PII engine change, no `reading_text`/`quality_evidence` change, no pseudonymization,
-  redaction, export, local LLM, dictionary/multi-OCR, Kubernetes, or reverse-proxy expansion.
-  Stale-running-job reclaim (lease/heartbeat), bounded parallel concurrency (>1), retry/timeout/
-  cancel controls, and the PII worker are deferred to Phase 4. The **OCR Output Contract v1 /
-  Stable Document Text Package** is now implemented additively as a derived package over existing
-  `text_result` artifacts ([ADR-0027](../docs/adr/0027-ocr-output-contract-v1-strategy.md)); the
-  next planned *engine* step is PII L12 overlap resolution as downstream consumer work.
+- Current phase: **Text Identity Phase C — Anchor-bound PII Entity Model v1**.
+- User flow & review comfort v1 is implemented on `user-flow-review-comfort-v1` (frontend only, no
+  engine or API change): a successful upload navigates straight to the document and auto-starts the
+  Audit → OCR → PII analysis (one-shot via router state, never re-triggered by reload); the
+  documents list shows a per-document analysis badge (Analysiert / Analyse läuft / Nicht
+  analysiert) derived from the metadata-only jobs endpoint, with a slow poll only while something
+  runs, and a quieter delete action; the review summary bar gained ↑/↓ jump navigation through the
+  visible highlights; an in-place decision now confirms with a bottom toast carrying a one-shot
+  undo (re-submitting the previous decision); the stale-decisions notice is an amber warning
+  instead of a red error; decidable highlights are keyboard-accessible (role=button, Enter/Space,
+  plain German aria-labels) and the decision popover manages focus (focus-in, Tab cycle, focus
+  restore); plus polish: German document-status chip ("Hochgeladen"), German entity-type labels in
+  the manual-add picker, proper umlauts in UI strings, and highlight colors for AT identifier
+  types. The same branch also unifies the app shell: one shared layout (gradient background,
+  header with a "Privacy Pilot" placeholder wordmark, global footer on every page) instead of
+  per-page main/background wrappers; the documents list and upload page moved their headers out of
+  the cards (list rows sit directly on the page, with an upload action in the list header); and
+  the list badge treats a pending/running job with no progress for 15 minutes as abandoned
+  (display-only mitigation for the known Phase-3 stale-running gap; real reclaim stays Phase 4).
+- User-view review UX v1 is implemented on `user-view-review-ux-v1` (frontend only, no engine or
+  API change): the user view is single-column (no decision sidebar) with a count/legend summary
+  bar; decisions happen in place via a click popover on a highlight that offers exactly the two
+  alternative decisions; `kept` renders as a solid frame without fill and `false_positive` as a
+  dashed ghost (both stay clickable/revisable — rejected entities are no longer dropped from the
+  highlight model, only from its warning summary); technical binding/contract hints, enum tooltips,
+  and the layout view stay dev-view-only; the user-view analysis button hides while the analysis
+  is current; plain German entity-type labels (`entityTypeLabels.ts`) cover user-facing tooltips
+  and the popover. Dev view behavior is unchanged.
+- Artifact/document lifecycle integrity v1 is implemented on `artifact-lifecycle-integrity-v1`
+  (ADR-0038): new current results are selected through an atomic authority map and job-backed entries
+  activate only after the exact producing job is durably succeeded; OCR text + quality publish as
+  one coherent run; pointed or missing authority fails explicitly without legacy scanning; and a
+  persistent deletion tombstone plus cross-process lock prevents delayed workers from recreating
+  deleted data. Legacy ID-only OCR/PII authority and public exact OCR history are accepted only when
+  exactly one matching durable succeeded job proves commitment; unproven or ambiguous candidates
+  fail closed. Jobless Audit/Review snapshots keep atomic publication as their commit boundary.
+  This is stabilization, not an engine maturity-level advance.
+- PII result-integrity hardening is delivered on `pii-result-integrity-v1` (ADR-0037): PII refuses
+  invalid/missing raw input instead of persisting a false empty success; partial same-type overlaps
+  preserve independent coverage; worker and entity-contract reads use exact artifact identity; and
+  the frontend clears private state on document transitions and requires a coherent exact contract
+  before treating a result as current. This is a stabilization change, not a maturity-level advance.
+- Current objective: ADR-0031 Phase C is now delivered additively. OCR/Text still owns the derived
+  **Text Anchor Graph v1**; PII now consumes the matching graph through
+  `backend/app/services/pii_anchor_binding.py` and normalizes offset-based detections into
+  anchor-bound domain entities exposed by `GET /api/documents/{document_id}/pii/entity-contract`.
+  The contract uses `AnchorBoundPiiEntityV1` / `ReviewReadyAnchorBoundPiiEntity` with
+  `PiiEntityAnchorSet`, `PiiEntityAnchorRef`, `PiiSourceObservation`, and
+  `PiiAnchorBindingSummary`: exact/partial bindings use anchor identity, missing/ambiguous/no-graph
+  cases become explicit evidence-only fallbacks, and duplicate observations for the same anchor set
+  + entity type merge provenance. Raw/canonical ranges remain evidence/display fields; review state
+  still resolves through the existing decision overlay. Anchor and binding diagnostics are now
+  stronger: Text Anchor Graph summaries expose raw/canonical/layout coverage counts; PII binding
+  summaries expose entities-with-raw/canonical/layout ranges, missing canonical/layout counts,
+  binding reason counts, and top-level warning codes; exact anchor-bound entities propagate safe
+  canonical/layout display ranges from complete anchor refs; missing ranges are attributed to stable
+  reason codes such as `canonical_range_missing`, `reading_text_mapping_missing`,
+  `layout_range_missing`, `layout_mapping_unavailable`, `text_anchor_graph_missing`, and
+  `repeated_token_ambiguity`. No detection input switch, SQLite migration, OCR extraction behavior
+  change, pseudonymization, redaction, reconstruction, export, runtime/job change, dependency, or
+  private-corpus fixture is introduced. Frontend PII highlights now consume that server entity
+  contract as their source of truth and derive raw/canonical/layout view ranges from the same
+  anchor-bound entity identity; missing canonical/layout ranges remain visible reason-coded states,
+  never frontend guesses. Formal Review L8 `review_result` is now delivered (ADR-0034, see the
+  "Latest checkpoint" entries below). PII L14 / Review L10 (manual add of missed entities) is now
+  **delivered** (ADR-0035, `pii-l14-manual-add-v1`): a new `manual_addition` record layered on the
+  existing decision log, deliberately kept out of `pii_result` and the anchor-bound entity contract
+  because both structurally assume a detector-originated span. Re-run the checkpoint loop for the
+  next engine priority.
 - Branch policy: feature and documentation PRs target `dev`; `main` is the curated user-stable
   branch. Windows install/update tooling always follows `main`.
+- **GLiNER offline backbone fix (`fix/gliner-offline-backbone`, runtime/infra — no engine level
+  change).** The `gliner` NER backend was never truly offline: `gliner_multi-v2.1` references its
+  `microsoft/mdeberta-v3-base` backbone by HuggingFace id and only the head was provisioned, so
+  GLiNER fetched the backbone at runtime. That was invisible while the api had egress but became a
+  hard `503` ("GLiNER NER model is not available") once the offline isolation (`internal: true`,
+  PR #84) removed egress and a container restart dropped the transient HF cache. Fix: `make
+  ner-models` now provisions the head **and** backbone and rewrites the head `model_name` to the
+  local backbone path; runtime is pinned offline (`HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` default 1
+  in the shared compose env, `app.services.offline_ml_runtime` also switches Presidio's tldextract
+  email-domain check to its bundled snapshot); `make dev` API memory raised 3g→4g (the fp32 backbone
+  peaks ~3 GiB while loading); `pii_ner_gliner._get_model` now logs the real load cause instead of
+  swallowing it. `.env`/`.env.example` no longer pin `API_MEMORY_LIMIT` (that override defeated the
+  make-dev default). Verified end-to-end offline: GLiNER loads with no network and analysis produces
+  entities (PERSON/ORGANIZATION from GLiNER + all pattern types). Detection semantics, `pii_result`
+  schema, and the active raw-text input are unchanged.
 
 ## Product snapshot
 
@@ -43,9 +106,12 @@
   improves table and label/value reconstruction quality on top of that stabilized order. The
   additive Document Text Package v1 endpoint packages the latest `text_result` layers under
   `contract_version = "1.0"` and a `valid`/`degraded`/`invalid` status without changing existing
-  OCR endpoints.
+  OCR endpoints; the derived Text Anchor Graph v1 endpoint exposes text-free raw/canonical/layout
+  anchor identity ranges for future consumers.
 - PII uses Presidio/spaCy behind an adapter, named profiles, AT/DE and domain recognizers, candidate
-  validation, and reproducible engine settings.
+  validation, reproducible engine settings, deterministic overlap resolution, and a derived
+  anchor-bound review entity contract over OCR/Text anchors. Raw text remains the only active
+  detection input.
 - The local private benchmark measures routing and PII quality from existing artifacts. Its
   committed test suite uses synthetic data; private corpus data remains under git-ignored volumes.
 
@@ -146,20 +212,40 @@
     dictionary/lexicon, second OCR engine, or local LLM is used. `details` remains
     `dict[str, int]`; no raw token text is stored. See
     [ADR-0026](../docs/adr/0026-ocr-l15-noise-token-artifact-evidence.md).
-- **PII/Sensitive-Data: L11 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
+- **PII/Sensitive-Data: L14 done; L10 partial.** Dev-only human-feedback capture exists. Conservative
   entity grouping (L11) is delivered as a derived view (`pii_grouping.py`) over `pii_result`, paired
   with a lineage-bound review-decision overlay: every detected entity defaults to `pseudonymize`
   (no separate "pending" state), and a reviewer opts an entity out via `keep` or `false_positive` —
-  see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md).
-  Overlap resolution (L12) and the formal binding-review artifact model (L13) remain open.
-- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6 done; L7–L9 partial.** Grouped
-  occurrences (L6) are delivered, and a file-based (JSONL, not yet a single artifact-per-run)
-  decision overlay covers much of L7–L9's practical intent (decisions persist, restore on reload,
-  and are scoped to the exact current PII artifact so a re-run never silently reapplies a stale one)
-  without an explicit stale-decision flag or the formal `review_result` artifact model — both remain
-  open.
-- **Benchmark/Regression: L8 done; out-of-order L10 OCR confidence/coverage slice delivered.** L9
-  per-profile reporting in one run is next.
+  see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md). **Overlap resolution
+  (L12)** is now delivered: PII consumes the OCR Output Contract v1 Document Text Package through the
+  `pii_input` intake adapter (`PiiInputDocumentV1`) — raw stays the primary/only active detection
+  input — and `pii_overlap` deterministically merges duplicate/nested/same-type spans and flags
+  cross-type overlaps for review, recording additive optional provenance/summary fields on
+  `pii_result` (no raw text). See
+  [ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). On top of L12 and ADR-0031
+  Phase B, the derived **anchor-bound review entity contract v1** (`pii_anchor_binding.py`,
+  `pii_entity_contract.py`, `GET …/pii/entity-contract`) packages each resolved entity as
+  `AnchorBoundPiiEntityV1` / `ReviewReadyAnchorBoundPiiEntity`: entity identity is anchor-derived
+  when binding is exact or partial, evidence-only when binding is missing/ambiguous/not applicable;
+  `source_observations` carry detector evidence; raw + optional canonical ranges remain
+  view-specific display/evidence; provenance and review state are preserved; metadata stays
+  text-free. Review decisions now carry direct PII + Text artifact lineage in both new JSONL records
+  and immutable snapshots, completing binding confirm/reject at PII L13. **Manual add (L14)** is
+  now delivered: a reviewer adds a span the engine missed as a distinct `manual_addition`, captured
+  against canonical `reading_text` offsets with a best-effort raw-span reverse projection reusing
+  the Text Anchor Graph's existing raw↔canonical pairing — never merged into `pii_result` or the
+  anchor-bound entity contract, since both structurally assume a detector origin. See
+  [ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md).
+- **Review/Human-Feedback: L2 production; L3–L5 dev-only; L6–L10 done.** Grouped
+  occurrences and the lineage-bound JSONL decision log now produce an immutable `review_result`
+  snapshot after every decision. Superseded decisions are explicitly surfaced as stale and never
+  reapplied; direct text-artifact lineage completes confirm/reject semantics at Review L9/PII L13.
+  **Manual add (L10)** is now delivered alongside PII L14 above — a human-added span rejects,
+  keeps, or gets pseudonymized through the existing decision endpoint, and staleness for it keys off
+  the text artifact rather than the PII artifact.
+- **Benchmark/Regression: L10 done.** L9 compares the newest available immutable PII artifact for
+  every configured profile in one read-only invocation and reports missing profile coverage;
+  the previously delivered OCR confidence/coverage columns complete cumulative L10.
 - **Redaction/De-Identification: L0 by design.** It remains blocked on mature OCR, PII, and review
   foundations.
 
@@ -198,9 +284,22 @@ now implemented additively as the OCR/Text output boundary before further engine
 entity grouping and the review-decision overlay, L12/L13 reading and structure order, the L10.5
 canonical-reading/raw-text contract, L10 span geometry, L9 layout-aware blocks, readable text (L8),
 confidence capture (L6), `quality_report` (L7), L14 quality-evidence/lineage-coverage
-observability, and L15 noise/token artifact evidence. **PII L12 overlap resolution is the next
-engine priority** as downstream consumer work; PII is not migrated yet and still consumes technical
-raw text.
+observability, and L15 noise/token artifact evidence. **PII L12 overlap resolution is now delivered**
+as the first downstream consumer step: PII consumes the contract through the `pii_input` adapter and
+resolves overlaps deterministically ([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
+On top of that, the **anchor-bound PII entity model v1** is delivered additively — the derived
+`GET …/pii/entity-contract` view now binds detections to Text Anchor Graph v1 where available,
+keeps detection evidence in `source_observations`, exposes explicit binding status/summary, and
+degrades to evidence-only identity when anchors are unavailable or ambiguous. This remains a
+stabilization milestone, not the binding `review_result`
+([ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md),
+[ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md)). PII still detects on
+technical raw text only. Frontend highlight rendering now uses the server entity contract as the
+single PII highlight source of truth: raw/canonical/layout views render only the view-specific
+ranges the contract provides, and missing/partial/ambiguous or evidence-only states are visible
+instead of guessed. Formal Review L8 `review_result` and the **PII validation transparency report**
+are now delivered. The next documented independent engine priority is **Benchmark L9 per-profile
+reporting**, followed by a checkpoint before PII advances beyond L12.
 
 **Strategic direction (OCR/Text as an independent module).** The **OCR Output Contract v1 /
 Document Text Package** stabilizes OCR/Text output as a versioned package of
@@ -229,18 +328,18 @@ detection-input switch. `pii_input_text` may become the
 runs exclusively on technical raw text today, regardless of other views. The reading/readable/
 layout/PII-input layers are additive and never a standalone PII input.
 
-The checkpoint leaves OCR/Text at L15 (built on the L10.5 prerequisite), PII at L11 done/L10
+The checkpoint leaves OCR/Text at L15 (built on the L10.5 prerequisite), PII at L12 done/L10
 partial, and Redaction L0; after reconfirming the next-three cadence, the plan is:
 
-1. Advance PII **L12 — overlap resolution** (deterministic engine-level precedence for
-   duplicate/nested/overlapping candidates) as **downstream work**, once PII consumes the OCR/Text
-   contract boundary.
-2. Formalize the **Review L8 `review_result`** artifact model — today's JSONL decision overlay
-   (see [ADR-0021](../docs/adr/0021-pii-entity-grouping-and-review-decisions.md)) covers much of
-   L8/L9's practical intent but not the single-artifact-per-run shape or an explicit stale-decision
-   flag (L7); keep `pii_result` immutable.
-3. Surface the **PII validation transparency report** by exposing already-stored L6 validation
-   counts without changing detection.
+1. Re-scope the next real construction-time OCR lineage coverage path; keep the existing partial
+   row-construction boundary explicit and do not claim full-document lineage.
+2. Re-run the prerequisite checkpoint before completing PII L13 / Review L9 semantics or advancing
+   PII further; the active-input separation gate remains closed.
+3. Keep Redaction at L0 until stable reviewed PII and redaction-ready mapping prerequisites are met.
+
+PII **L12 — overlap resolution** (deterministic engine-level precedence for duplicate/nested/
+overlapping candidates) is now delivered as downstream consumer work
+([ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md)).
 
 **Previous checkpoint (OCR L10.5 intermediate):** OCR/Text retained formal L10 maturity and completed
 the canonical-reading-text/raw-text prerequisite before L11. Versioned `reading_text` is additive
@@ -483,6 +582,500 @@ and there is no runtime/worker, PII, benchmark-payload, pseudonymization, redact
 dictionary/lexicon, multi-OCR, or local-LLM change. Next: **PII L12 overlap resolution**, formal
 **Review L8 `review_result`**, and the **PII validation transparency report** downstream as
 consumers of the contract.
+
+**Latest checkpoint (PII L12 — intake adapter + overlap resolution):** PII/Sensitive-Data advances
+from **L11 done to L12 done** as the **first downstream consumer** of the OCR Output Contract v1
+Document Text Package. PII now consumes `DocumentTextPackageV1` through a dedicated intake adapter
+(`pii_input.py`, internal `PiiInputDocumentV1`) instead of reaching into `TextContent` internals:
+`pii_service._analyze_text` reads only the adapter's model. Technical raw text stays the **primary
+and only active detection input**; canonical reading text is contextual, `structured_content` a hint
+layer, and quality/noise evidence trust context — none applied to silently suppress an entity. A
+**structurally invalid** package (unsupported version, malformed source roles, unresolvable id) is
+rejected with a controlled `422`; ADR-0037 also rejects missing/empty required raw text; a
+**degraded** package with trustworthy raw text still processes.
+Deterministic overlap resolution (`pii_overlap.py`) runs after candidate validation and before
+reading-text projection: exact duplicates merge (recording recognizers + superseded ids), same-type
+fully contained same-type candidates may be superseded while partial overlaps remain to preserve
+coverage, and
+different-type overlaps are preserved and flagged for review (`ambiguous_overlap_review_required`) —
+a specific cross-type auto-suppression precedence table is deferred. Additive optional `pii_result`
+fields carry the outcome (`PiiEntity.provenance`, `PiiContent.input_contract`,
+`PiiContent.overlap_resolution`) as reason-codes/counts/ids only, never raw text; legacy artifacts
+stay valid. Baseline raw-text detection is byte-identical (existing PII tests unchanged apart from
+the new additive fields), the active-input `text_lineage_map` separation gate is not bypassed, and
+there is no change to detection, recognizers, the `DocumentTextPackageV1` schema, OCR extraction,
+review/feedback flows, runtime/worker behavior, benchmark payloads, pseudonymization, redaction, or
+export. Existing PII API routes and the frontend review flow are unchanged (only additive optional
+TS types were added). See
+[ADR-0028](../docs/adr/0028-pii-intake-document-text-package-v1.md). Next: formal **Review L8
+`review_result`**, then the **PII validation transparency report**.
+
+**Latest checkpoint (Anchor-bound PII entity model v1):** ADR-0029's derived review-facing contract
+is extended by ADR-0031 Phase C. `pii_entity_contract.py` still builds `PiiEntityContractV1` from the
+latest `pii_result`, but it now uses `pii_anchor_binding.py` to bind detections to the matching Text
+Anchor Graph where available. Each `ReviewReadyAnchorBoundPiiEntity` carries an anchor-derived
+`entity_id` for exact/partial bindings, explicit evidence-only identity for
+missing/ambiguous/no-graph binding, `anchor_set`/`anchor_refs`, detector `source_observations`,
+raw/canonical display ranges, canonical `mapping_status`, overlap provenance, resolved review
+state, and a text-free display model. Missing/partial/ambiguous anchor or canonical mapping never
+drops an entity; value remains confined to the entity value field already mirrored from
+`GET …/pii`, and no surrounding text snippet is copied. It mutates nothing, adds no detection, keeps
+technical raw text the primary/only active input, and leaves `GET …/pii` and `GET …/pii/review`
+unchanged; the frontend now consumes the entity contract for review highlights. This is **not** the
+formal binding `review_result` (still open). See
+[ADR-0029](../docs/adr/0029-pii-review-ready-entity-contract.md) and
+[ADR-0031](../docs/adr/0031-text-identity-anchor-lineage-architecture.md). Frontend highlight
+consistency via anchors is now wired through the entity contract; next is formal **Review L8
+`review_result`** and the **PII validation transparency report**.
+
+**Latest checkpoint (Anchor-first PII highlight conformance fix):** A root-cause fix for the residual
+raw-vs-canonical highlight divergence, not a diagnostics/UI patch and no engine level change. The
+Text Anchor Graph tokenizer's phone pattern (`document_text_anchors._PHONE_RE`) matched across
+`\s` — including `\n` — so a line-ending date fused with the next line's leading number into one
+bogus multi-line anchor whose canonical range spanned unrelated reading text; the two clean values
+then bound `partial` and silently lost their canonical highlights. Constraining the phone pattern to
+horizontal whitespace (`[ \t]`) makes anchors per-line identity units again, so clean unique values
+present in both views now propagate a canonical (and, when the layout view is byte-aligned, layout)
+display range through the *same* anchor-bound `entity_id` — Raw and Canonical no longer diverge for
+values with anchor lineage. Genuinely repeated values (a header+footer company name under reordering)
+remain canonical-missing **with** an explicit `repeated_token_ambiguity`/`canonical_range_missing`
+reason, never silently. New `backend/tests/test_anchor_bound_pii_e2e_conformance.py` proves the full
+`DocumentTextPackageV1 → anchor graph → binding → entity contract` path end to end (and fails without
+the fix); anchor line-boundary integrity is guarded in `test_document_text_anchors.py`. No detection,
+recognizer, `pii_result` schema, active-input, frontend guessing, pseudonymization, redaction, or DB
+change; frontend still renders only contract-supplied ranges. See the anchor gates in
+[`quality-gates.md`](quality-gates.md).
+
+**Latest checkpoint (Text anchor architecture feasibility audit — docs only):** A deep architecture
+and conformance audit of the anchor approach is recorded in
+[`docs/engine/text-anchor-architecture-feasibility-audit.md`](../docs/engine/text-anchor-architecture-feasibility-audit.md).
+Verdict: keep the architecture; current v1 is a sound **anchor-derived** transitional layer
+(consumption is contract-enforced and honest), not yet anchor-first — anchor ids are offset-minted
+and canonical lineage rests on the post-hoc unique-token `reading_text_map`. Key constraints it
+adds: anchor ids are stable only per (text-artifact bytes × graph-builder version), so no durable
+state may store anchor ids before the graph (or a builder version pin) is persisted with them; the
+`text_match` display fallback should retire once construction-time lineage lands. Recommended next
+three branches: `anchor-first-text-package-v2` (builder-emitted construction-time lineage),
+`pii-binding-quality-suite` (hard-case regression corpus + frontend contract-failure notice), then
+`review-result-v1` (occurrence-id-primary keys). No code, detection, schema, or runtime change.
+
+**Latest checkpoint (Geometry-backed reading projection v1 — post-render, NOT construction-time
+lineage):** A contradiction audit of an initial `anchor-first-text-package-v2` attempt found it did
+**not** implement construction-time lineage despite its naming: `reading_text.py` (the actual
+reading-text builder) was provably unchanged (0 diff), the new mechanism was called strictly *after*
+`build_reading_text(...)` already returned a finished string, and its core operation was `str.find`
+over that completed string — a post-hoc reconstruction, exactly like the pre-existing unique-token
+`reading_text_map`, just at full-line granularity. Worse, the audit reproduced a concrete
+duplicate-value identity defect: two textually-identical full raw lines could be bound to *inverted*
+canonical occurrences (both confidently labeled `exact`, `confidence=1.0`) depending only on the
+order geometry lines happened to be processed in — determinism, not identity proof. This checkpoint
+is the corrective hardening pass, reclassified as **Geometry-backed Reading Projection v1**.
+Renamed throughout: `ReadingTextConstructionMap`→`ReadingTextGeometryProjectionMap`,
+`ReadingTextConstructionSummary`→`ReadingTextGeometryProjectionSummary`,
+`reading_text_construction_map[_version]`→`reading_text_geometry_projection_map[_version]`,
+anchor flag `canonical_construction_lineage`→`canonical_geometry_projection`, summary field
+`canonical_construction_count`→`canonical_geometry_projection_count`, lineage-source literal
+`construction`→`geometry_projection`; the module moved from `reading_text_lineage.py` to
+`reading_text_geometry_projection.py` (`build_reading_text_geometry_projection_map`). The identity
+defect is fixed with a global-uniqueness + line-boundary discipline: a source line may be projected
+as `exact` only when its exact text occurs exactly once among the collected verbatim source lines
+**and** exactly once (delimited by `\n`/string edges, so a short line like `"Wien"` cannot falsely
+match inside a longer line like `"1010 Wien"`) in the canonical text; every other candidate
+occurrence of a non-unique value becomes an explicit `ambiguous` segment (`source_range=None`,
+`confidence=None`, reason codes `duplicate_source_value`/`multiple_canonical_candidates`/
+`identity_ambiguous`/`relative_order_not_identity_proof` — never the duplicated value itself).
+Verified by construction: the same raw/canonical text projected with reversed geometry-line encounter
+order now yields *identical* (still-ambiguous) output instead of two mutually-inverted `exact`
+claims. `DocumentTextPackageV1`'s `lineage_summary` now names `geometry_projection` /
+`fallback_text_match` / `unavailable` and carries a `geometry_projection_ambiguous_count`; the Text
+Anchor Graph prefers geometry-projection segments over the older `reading_text_map` only when they
+resolve a raw token unambiguously, and flags which post-hoc mechanism won per anchor — **neither is
+authoritative construction identity**. The useful case survives: two genuinely distinct company
+names sharing a repeated `GmbH` suffix in a reordered document still keep their full canonical
+highlight, because each is a globally-unique whole line; a genuinely duplicated full-line/label value
+(same value twice, or the same value repeated across pages) is now explicitly declined end-to-end
+through anchor binding (`canonical_range_missing` + `repeated_token_ambiguity`), never silently
+guessed. **`reading_text.py` (the actual reading-text builder) is unchanged and still discards its
+own per-fragment source knowledge** (`ReadingRow`/`ReadingCell` carry no raw offsets); genuine
+builder-emitted construction-time lineage remains **unimplemented** — Phase 1 of the feasibility
+audit's recommendation is **not** complete, and a real `anchor-first-text-package-v2` remains a
+separate, future branch. No change to PII detection semantics/input, recognizers, reading-text
+output bytes, runtime, or the DB. Metadata stays text-free (leak-tested, including reason codes).
+Covered by `backend/tests/test_reading_text_geometry_projection.py` (renamed from
+`test_anchor_first_text_package_v2.py`) plus updated anchor-graph, package, and E2E-conformance
+suites. Next: thread real raw offsets through `reading_text.py`'s own `ReadingRow`/`ReadingCell` path
+for genuine construction-time lineage (delivered as a partial first slice — see the "Reading-text row
+construction lineage v1" checkpoint below), then `pii-binding-quality-suite`, then `review-result-v1`.
+
+**Latest checkpoint (Runtime Job UX / in-app notifications v1):** Cross-cutting runtime/UX step, not
+an engine level change. On top of ADR-0023's job model/status API, the product-facing presentation
+layer is delivered: `JobStatusResponse` gains one additive `is_terminal: bool` field
+(`backend/app/schemas.py`/`backend/app/api/jobs.py`); no other backend change — the existing
+`GET /api/jobs/{job_id}` and `GET /api/documents/{document_id}/jobs` (already newest-first,
+document-scoped, bounded) already carried enough safe metadata for this UX. The frontend gains a
+small, framework-agnostic `jobActivityStore` (`frontend/src/lib/jobActivity.ts`): it records job
+status, persists active (non-terminal) jobs to `localStorage` for reload recovery, and serializes
+polling per job id through a single-owner try-lock (`beginPolling`/`endPolling` +
+`pollJobUntilTerminal`) so a live `runOcr()` call and a reload-recovery resume can never double-poll
+the same job. `runOcr()` now records into and polls through this shared store instead of its own
+private loop, with its external artifact-or-throw contract and existing fetch-call-count tests
+unchanged. `resumeActiveJobs()` rehydrates a document's tracked jobs from `localStorage` and
+falls back to `GET /api/documents/{id}/jobs` if the id was not available locally (cleared storage,
+different browser/tab). A small `JobStatusBanner` (`frontend/src/components/JobStatusBanner.tsx`,
+text in `frontend/src/lib/jobDisplay.ts`) shows accepted/running/succeeded/failed/canceled for a
+recovered job on the document detail page, only while nothing on the page is already showing its
+own live-run progress UI. A recovered `succeeded` job refreshes the OCR artifact (showing a
+controlled message if that refetch itself fails); a recovered `failed`/`canceled` job shows the
+backend's sanitized `error_message`, never raw text. This is explicitly **polling + `localStorage`,
+v1** — no Redis/RQ/Celery, no WebSocket/SSE, no browser/OS/email push; a future push transport can
+replace *how* the store learns about updates without changing the job contract, `JobStatus` shape,
+or any component reading from the store. No OCR/PII detection, artifact contract, `OCR_EXECUTION_MODE`
+semantics, Docker/Compose, or Makefile change. See
+[ADR-0030](../docs/adr/0030-runtime-job-ux-notifications-v1.md).
+
+**Latest checkpoint (Reading-text row construction lineage v1 — Phase 1, partial):** The first
+genuinely builder-emitted (not post-render) raw↔canonical lineage mechanism. `reading_text.py`'s
+`ReadingRow` gains an optional page-local `source_range`, attached once at collection time — exact
+from persisted L10 geometry, or via a global-uniqueness match of a row's own text against the page's
+raw lines for the primary pypdf-visitor path (reusing `text_geometry.py`'s exact-match discipline,
+now shared as `segment_page_lines`/`collapse_line`) — and threaded only through the
+plain-paragraph/body rendering path (`_join_continuations_with_flags`); a merge of rows unions their
+ranges only when every contributing row has one and raw order stays non-decreasing, so a visual
+(reading-order) merge of raw-reordered rows declines instead of risking a swallowed unrelated range.
+Canonical offsets are computed by walking the same block/line join arithmetic the text was already
+assembled with (`_join_blocks_with_lineage`, byte-identical to the existing `_join_blocks`), never by
+searching the finished string — and `build_reading_text` only keeps the result when the exact
+per-page strings it was computed against are still the ones being joined (an equality check),
+discarding it entirely if repeated-margin filtering or a whole-document fallback later changes that
+text. New `ReadingTextRowLineageMap` (`lineage_source: row_construction`) is preferred over
+`geometry_projection` over `fallback_text_match` in `DocumentTextPackageLineageSummary` and the Text
+Anchor Graph's per-token projection (new `canonical_row_construction` flag/count). This is
+deliberately partial, not a claim of full coverage: party columns, tables, multi-column
+reconstruction, metadata, and post-table rendering always decline row-construction lineage (those
+spans keep falling back to the pre-existing post-hoc mechanisms, unchanged), and cell-level
+granularity remains out of scope. No detection, active-PII-input, routing, schema-breaking,
+pseudonymization, redaction, export, or dependency change; `reading_text` bytes are unchanged, proven
+byte-identical across the full existing regression suite. See
+[ADR-0032](../docs/adr/0032-reading-text-row-construction-lineage-v1.md) and the "Phase 1" gap
+in [`text-anchor-architecture-feasibility-audit.md`](../docs/engine/text-anchor-architecture-feasibility-audit.md).
+Next: extend real coverage to more rendering paths (re-scoped explicitly, not assumed), then the
+feasibility audit's remaining two recommended branches, **`pii-binding-quality-suite`** and
+**`review-result-v1`**.
+
+**Latest checkpoint (PII binding quality suite — Phase 2):** Not an engine level change. Delivers
+the feasibility audit's Phase 2: `PiiAnchorBindingSummary` gains additive
+`anchor_bound_ratio`/`exact_bound_ratio` coverage metrics; a new synthetic regression corpus
+(`backend/tests/test_pii_binding_quality_suite.py`) covers the audit's previously-untested hard
+cases (adjacent same-line date+phone tokenizer fusion, a punctuation/character-swallowing
+recognizer span, table-column canonical-range cross-contamination, a DOCX/no-geometry document)
+plus a coverage-ratio floor gate. Scoping the fusion case found a **real, previously-untested
+tokenizer edge case** — `document_text_anchors.py`'s phone pattern fuses a date directly adjacent to
+a phone number into one raw anchor — intentionally left unfixed (per this phase's "do not tune
+recognizers" guardrail) and instead regression-locked as an honest `partial` degrade, never a false
+`exact` or a lost/merged entity. A builder-version identity-drift test proves the audit's stated
+safety property directly: the anchor-derived `entity_id` is free to drift with the graph builder,
+while the underlying occurrence id durable review decisions key on never does, plus a guard test
+that neither durable JSONL-writing module (`pii_review_service.py`, `feedback_service.py`)
+references an anchor id today. The frontend `fetchPiiEntityContract` now returns a discriminated
+`ok`/`not_found`/`error` result instead of `T | null`, so `DocumentDetailPage.tsx` shows a distinct
+"PII highlights could not be loaded" notice on a genuine fetch failure instead of rendering
+indistinguishably from "no PII yet." No recognizer, detection, tokenizer, active-PII-input, or
+binding-algorithm change. See [ADR-0033](../docs/adr/0033-pii-binding-quality-suite.md). Next:
+**`review-result-v1`** (Phase 3, Review L8) is the last of the feasibility audit's three
+recommended branches.
+
+**Latest checkpoint (Review L8 `review_result` artifact — Phase 3, final audit branch):** Not an
+engine level change. Delivers the feasibility audit's Phase 3: a new immutable
+`PiiReviewResultArtifact` (same envelope/persistence pattern as `PiiArtifact`/`TextArtifact`),
+keyed occurrence-id-primary (never on anchor-derived identity, per the audit's guardrail and
+ADR-0033's drift finding). `set_pii_review_decision` still appends its JSONL record exactly as
+before, then persists a fresh immutable snapshot after every decision; new
+`GET …/pii/review-result` returns the latest one. `PiiReviewResult` gains additive
+`stale_decision_count`/`has_stale_decisions`: decisions recorded against a since-superseded
+`pii_result` were already never silently reapplied (unchanged) — this makes that fact explicit
+instead of looking identical to "nothing was ever reviewed," surfaced in `GET …/pii/review` and a
+new `DocumentDetailPage.tsx` notice. The JSONL log remains the append-only write-time source of
+truth (migration path documented in the ADR, not executed); no SQLite introduced, no
+detection/`pii_result`-schema/active-PII-input/pseudonymization/redaction/export change; existing
+`GET …/pii/review`/`POST …/pii/review/decisions` behavior is unchanged except for the two additive
+fields. See [ADR-0034](../docs/adr/0034-review-l8-review-result-artifact.md). This was the last of
+the feasibility audit's three recommended branches (Phases 1–3); the next engine priority should
+re-run the checkpoint loop against this file's current-sequence section rather than continuing that
+specific audit's list.
+
+**Latest checkpoint (PII validation transparency report):** No engine level change. The Dev View
+renders the already-stored `PiiValidationSummary` from the latest immutable `pii_result` as a
+readable report: kept/dropped/score-down counts plus deterministic fixed reason-code counts. Legacy
+artifacts without the optional summary and runs with validation disabled remain explicit states.
+No metric is recomputed, no candidate/entity/document text is added, and detection, recognizers,
+artifact schemas, APIs, dependencies, benchmark logic, active PII input, pseudonymization,
+redaction, and export are unchanged. Review L8 and this planned transparency slice are closed.
+Next: Benchmark L9 per-profile reporting, then the checkpointed OCR-lineage/PII-L13 choices above.
+
+**Latest checkpoint (Benchmark L9 — per-profile reporting):** Benchmark/Regression advances from
+L8 to **L10 cumulative** because L9 is now delivered and the L10 OCR confidence/coverage slice was
+already present. One read-only invocation loads the newest immutable `pii_result` per configured
+profile and document, then emits side-by-side P/R/F1 and validation aggregates in JSON, Markdown,
+console output, and `benchmark_profiles.csv`. Missing profile artifacts are explicit zero-coverage
+states and are never generated by the runner. The legacy global/latest-artifact report remains
+compatible. No API call, job, detection, private input, dependency, runtime, or artifact change is
+introduced; privacy guards still run before report files are written. Next: the scoped
+construction-time OCR lineage coverage plan above.
+
+**Latest checkpoint (Construction-time post-table row lineage):** No engine level change. ADR-0032's
+partial builder-emitted lineage now covers an additional deliberately narrow path: an unchanged
+post-table total or standalone row retains its pre-attached raw range while rendering; the synthetic
+`SUMMEN` heading, table cells/rows, metadata, party/multi-column reconstruction, and joined
+post-table prose still decline rather than guess. Canonical reading-text bytes, raw offsets, active
+PII input, artifacts, APIs, dependencies, detection, review, pseudonymization, redaction, and export
+are unchanged. The 0–19 OCR/Text level remains L15; next is the prerequisite checkpoint before PII
+L13/Review L9 completion.
+
+**Latest checkpoint (PII L13 / Review L9 direct decision lineage):** PII/Sensitive-Data advances
+from L12 to **L13 done** and Review from L8 to **L9 done**. New decision-log records and immutable
+`review_result` snapshots carry the direct `text_result` id alongside the exact PII artifact id;
+the review API exposes that additive link. Legacy records remain readable. Existing stale behavior
+is unchanged: decisions never silently reapply across a new PII artifact, and the stale count stays
+explicit. No detection, active input, anchors, SQLite, dependency, pseudonymization, redaction, or
+export change. Next: PII L14 / Review L10 manual add of missed entities remains checkpoint-gated.
+
+**Latest checkpoint (PII L14 / Review L10 — manual add scope, docs-only):** Not an engine level
+change; PII L14 and Review L10 both remain `⛔ open`. Scopes the architecture for the step named at
+the end of the previous entry. An audit of `pii_review_service.py`, `schemas.py`,
+`pii_entity_contract.py`, `pii_anchor_binding.py`, and the frontend review components found four
+load-bearing constraints a naive implementation would break: `pii_result` stays
+immutable/detector-only; `AnchorBoundPiiEntityV1.source_observations` structurally requires a
+detector observation (`Field(min_length=1)`) and even its evidence-only fallback identity derives
+from a `PiiEntity`'s raw offsets, so a human-added span with no detection has no path into that
+model; `PiiReviewResultArtifact`/`PiiReviewResult` are occurrence-id-primary and
+`PiiReviewOccurrence.occurrence_id` *is* `PiiEntity.id` (ADR-0033/ADR-0034's deliberate choice); and
+no actor/origin field exists anywhere in review persistence today (`PiiReviewDecisionRecord.source`
+is a static request-source tag, not a per-record origin marker). The scoped decision: a new
+`manual_addition` record variant appended to the existing `pii_review_decisions.jsonl` log, and an
+additive `PiiReviewResult.manual_additions` list — never merged into `pii_result` or the anchor-bound
+entity contract. Canonical-text (`reading_text`) offsets are captured at add time (matching the
+acceptance criterion already stated in `pii-engine-levels.md`/`review-feedback-levels.md`), with a
+best-effort raw-span reverse projection reusing the *existing* `reading_text_map`/anchor projection
+machinery (exact/partial/unmapped, never a new matching heuristic); staleness keys off
+`text_artifact_id` rather than a `pii_result` artifact id, since a manual addition has no originating
+detection to key on; the entity-type picker is constrained to the current `pii_result`'s own
+`PiiContent.configured_entity_types`; and once created, an addition's own accept/keep/reject
+reuses the existing `POST …/pii/review/decisions` endpoint under a new
+`target_type: "manual_addition"` rather than a new edit/delete action. The frontend gap is real and
+explicitly named: text-selection capture, an entity-type picker, and a visually distinct rendering
+for human-added spans are net-new primitives — none exist in `PiiTextViewer.tsx`/
+`ReviewTextViewer.tsx`/`PiiReviewGroupList.tsx` today. No detection, `pii_result` schema,
+anchor-graph, active-PII-input, pseudonymization, redaction, export, dependency, or code change is
+introduced by this checkpoint. See
+[ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md). Next: implement this design as
+the `pii-l14-manual-add-v1` branch, then re-run the checkpoint loop.
+
+**Latest checkpoint (PII L14 / Review L10 — manual add v1, implemented):** PII advances from L13 to
+**L14 done**; Review advances from L9 to **L10 done**. Implements the design scoped in the previous
+entry: `PiiManualAddition`/`PiiManualAdditionRecord`/`PiiManualAdditionRequest`/
+`PiiManualAdditionAck` in `schemas.py`; a new `pii_manual_addition.py` module whose
+`resolve_canonical_span_to_raw` filters the Text Anchor Graph's existing raw↔canonical anchor
+pairing rather than adding a new matching heuristic (no anchors overlap → `unmapped`; full
+canonical coverage with a contiguous raw span → `exact`; otherwise a raw envelope, `partial`); and
+`add_pii_manual_entity`/`POST …/pii/review/manual-additions` in `pii_review_service.py`/`api/pii.py`.
+`_load_latest_decisions`, `_count_stale_decisions`, and `_target_exists` became target-type-aware:
+entity-group/occurrence items stay scoped to the exact current `pii_result` artifact id (unchanged
+behavior), while manual-addition items scope to `text_artifact_id` instead, since a manual addition
+has no detector origin to key on — a PII re-run alone never makes one stale, only a new text
+artifact does. Manual additions are never merged into `pii_result` or `AnchorBoundPiiEntityV1`; they
+surface only through the additive `PiiReviewResult.manual_additions` list, and an addition's own
+accept/keep/reject reuses the existing decision endpoint (`target_type: "manual_addition"`) rather
+than a new action. Frontend: `getCharacterOffsetsFromSelection` (`textSelection.ts`, using the
+`Range.setEnd` + `toString().length` technique, wired only into the canonical reading-text view);
+`buildManualAdditionHighlights` (`piiHighlights.ts`, a display-only merge into the existing
+highlight-building pipeline — canonical always, raw only when the reverse projection is exact —
+never touching the backend contract); a distinguishing `ring-2 ring-sky-500` highlight plus
+"Manuell hinzugefügt" tooltip text for `origin: "human"` spans in `PiiTextViewer.tsx`; a "Manuelle
+Ergänzungen" list in `PiiReviewGroupList.tsx` reusing the exact same decision-`<select>` pattern as
+groups/occurrences; and a new `AddPiiManualEntity.tsx` panel (selection preview, an entity-type
+picker sourced from the run's own `configured_entity_types`, submit) wired into
+`DocumentDetailPage.tsx`. `make lint`/`make typecheck`/`make test` pass for both backend (mypy,
+Ruff, full pytest suite) and frontend (tsc, ESLint, full Vitest suite); a live `make up` browser
+session confirmed the full flow end to end — selecting "2019" in a synthetic DOCX's reading text,
+adding it as `DATE_TIME`, an exact raw-span resolution, the distinguishing highlight/tooltip, the
+review-list entry, a `false_positive` decision removing the highlight and flipping the status, and
+`GET …/pii` / `GET …/pii/entity-contract` staying byte-identical (7/7 entities, the manual addition
+absent from both) before and after. No dependency, recognizer, detection, `pii_result` schema,
+anchor-graph, active-PII-input, pseudonymization, redaction, or export change. See
+[ADR-0035](../docs/adr/0035-pii-l14-review-l10-manual-add-scope.md). Next: re-run the checkpoint
+loop against this file's current-sequence section for the next engine priority.
+
+**Latest checkpoint (Unified Dev View entity review cards):** No engine level or contract change.
+The Dev View no longer renders detector entities once in `PiiEntityList` and again in the separate
+grouped `PiiReviewGroupList`. Each detected-entity card now combines recognizer evidence, dev
+feedback, current binding status, and an occurrence-level `pseudonymize`/`keep`/`false_positive`
+decision; refreshing that decision still uses the existing review API and keeps text highlights in
+sync. Clicking a text highlight scrolls to the same unified card. The grouped review UI remains
+unchanged in User View, while Dev View retains a separate section only for human-added entities
+that have no detector card. No backend, artifact, detection, review semantics, manual-addition,
+dependency, or privacy-boundary change.
+
+**Latest checkpoint (Reading-text row construction lineage v2 — Phase 2):** No engine level change.
+Re-scopes and delivers ADR-0032's own "Next" section: builder-emitted, construction-time row
+lineage now extends beyond the plain-paragraph/body path to party/two-column heading grouping (a
+row wholly on one side keeps its own range through the reorder; a row split across both sides still
+declines), keyword-header and generic geometric tables (row-granularity lineage per rendered table
+line, shared between both table renderers; a fused 1–2-cell header still declines), and
+metadata/offer-field rows (a single untouched row is attributed; a row fused into several
+`"Label: value"` fields still declines). `RowLineageSegment` gains a `status:
+"exact"|"normalized"|"merged"` computed purely from already-known lengths; the synthetic
+`"ANGEBOT"`/`"LEISTUNGEN"`/`"SUMMEN"` headings this module inserts are now recognized as explicit
+`"inserted"` segments (checked against a closed, code-owned vocabulary, never a text search) instead
+of silent gaps. Fixed a latent adapter bug in `document_text_anchors.py` that hardcoded
+`mapping_status="exact"` regardless of a row-lineage segment's real status. Multi-column prose
+reconstruction and in-row label/value splitting remain deliberately fallback-only — documented and
+regression-tested as explicit, not silently missing. A notable consequence: a fully attributed,
+exact-length row now resolves a repeated-interior-token multi-word entity (the recently-fixed
+cross-view highlight case) via simple arithmetic projection, without needing the boundary-bridging
+fallback added for the post-hoc mechanisms at all — proven end to end through the real entity
+contract with `reading_text_map` deliberately empty and no geometry projection map present. Genuine
+duplicate entities at distinct raw positions each resolve their own correct, distinct canonical
+range from position alone, never guessed. No detection, active-PII-input, routing, schema-breaking,
+pseudonymization, redaction, export, or dependency change; `reading_text` bytes are unchanged (907
+backend tests passing, full suite green). See
+[ADR-0036](../docs/adr/0036-reading-text-row-construction-lineage-v2.md). Cell-level granularity and
+multi-column prose lineage remain open, re-scoped explicitly for a future PR rather than assumed.
+
+**Latest checkpoint (PII binding quality suite — Phase 3, correctness hardening):** Not an engine
+level change. Extends the Phase 2 hard-case corpus (`test_pii_binding_quality_suite.py`) with two
+more binding-layer regressions — trailing punctuation (no separating space) within a detected span
+still binds `exact` with a full canonical bridge, and mutually overlapping candidate anchors bind
+`ambiguous`/evidence-only rather than guessed — and extends
+`test_anchor_bound_pii_e2e_conformance.py` with two full HTTP entity-contract proofs. Scoping the
+first proof (ADR-0036's `normalized`/`merged` `RowLineageSegment.status`) found a **real,
+previously-untested defect**: `pii_entity_contract.py`'s `_mapping_status` collapsed every
+anchor-derived canonical range to `mapping_status: "exact"` regardless of whether the underlying
+row-lineage/geometry-projection segment was itself byte-exact, `normalized`, or `merged` — a
+reformatted table/party-column row (real length, not byte-identical to its raw span) was reported
+identically to a genuinely byte-exact one. Fixed by threading the per-view
+`DocumentTextAnchorRange.mapping_status` through `pii_anchor_binding.py`'s `_RawAnchor` and a new
+additive `PiiEntityAnchorRef.mapping_status` field (`None`-safe, legacy-compatible) into
+`_anchor_display_range`'s envelope computation, so a bridged range downgrades honestly to the
+existing `"projected"` state — the same non-exact state the older post-hoc projection path already
+used — whenever any contributing anchor was non-exact. The second new e2e proof confirms a
+fallback-only artifact (only the post-hoc `reading_text_map`, no row lineage, no geometry
+projection) remains visible and distinguishable one layer down on the Text Anchor Graph
+(`lineage_summary.lineage_source == "fallback_text_match"`, per-anchor `canonical_map_lineage` flag
+present and the stronger flags absent) even though its `mapping_status` legitimately stays `exact`
+for byte-identical fallback text. No recognizer, detection, tokenizer, active-PII-input, or
+binding-algorithm change; the previously-fixed cross-view organisation highlight behavior (repeated
+interior token, genuine duplicates, trailing newline) is unchanged and still covered by the existing
+corpus. 909 backend tests / 201 frontend tests pass.
+
+**Latest checkpoint (Review Result v1 — unified stable entity entries):** Not an engine level
+change (PII L17 "stable entity model with lineage" remains `⛔ open` — identity still does not
+survive a PII re-run by design; this delivers the review-result *contract* prerequisite, never a
+claim of cross-re-run stability). Closes the feasibility audit's third and final recommended branch
+(`review-result-v1`), on top of the already-delivered Review L8 `review_result` artifact
+(ADR-0034) and manual additions (ADR-0035). New `PiiReviewResultEntry`
+(`PiiReviewResult.entries`/`PiiReviewResultArtifact.content.entries`) unifies detector-origin
+occurrences and reviewer-added manual additions behind one shape: `entry_id` stays
+occurrence/addition-id-primary (ADR-0033's anchor-id-drift guardrail unchanged), `origin` replaces
+needing two record types, `anchor_entity_id` is an additive secondary reference into the
+anchor-bound entity contract (ADR-0031 Phase C) rebuilt fresh on every read from the entry's own
+originating pii/text artifact pair — never "today's" pair for a stale entry, and never persisted as
+a lookup key. `identity_status` (`resolved`/`unresolved`/`incompatible`) and `artifact_currency`
+(`current`/`stale`) make explicit, per entry, what was previously only a document-level aggregate
+(`has_stale_decisions`) or not surfaced at all (anchor-binding gaps); `mapping_status` is visible on
+every entry and a decision never upgrades it. `pii_entity_contract.py`'s private mapping-status/
+display-range/reason-code helpers moved to a new leaf module `pii_entity_display.py` (zero behavior
+change, proven by the unchanged entity-contract suite) so the new `pii_review_result.py` builder
+reuses them instead of duplicating logic or importing `pii_entity_contract.py` back (which would
+cycle, since that module already imports `pii_review_service.py`). Integration is additive on the
+*existing* Review L8 artifact/endpoints — no new endpoint, no SQLite, no change to the append-only
+JSONL write path or to `groups`/`occurrences`/`manual_additions`. A dedicated end-to-end test proves
+`pii_result` and the anchor-bound entity contract stay byte-identical before/after a review
+decision; other tests cover stale/incompatible/unresolved identity, mapping-quality stability across
+accept/keep/reject, cross-view identity agreement (the same `anchor_entity_id` ties the raw and
+canonical views to one entity), and no copied source text. No detection, recognizer, `pii_result`
+schema, active-PII-input, anchor-graph, tokenizer, pseudonymization, redaction, or export change.
+See [ADR-0039](../docs/adr/0039-review-result-v1-unified-entity-contract.md). Next: re-run the
+checkpoint loop against this file's current-sequence section for the next engine priority; a
+Replacement Plan consuming `PiiReviewResultEntry` is the next step this branch was scoped to
+unblock, explicitly not implemented here.
+
+**Latest checkpoint (Construction-time canonical lineage v3 — anchor-first text package v2):** No
+engine level change (OCR/Text stays L15); this closes the feasibility audit's Phase 1 gap for real —
+the reading-text builder itself now emits canonical↔raw correspondence at cell granularity across
+its rendering paths, and construction-time lineage is the preferred identity boundary rather than a
+partial optimization. Delivered per [ADR-0040](../docs/adr/0040-construction-time-canonical-lineage-v3.md):
+(1) `ReadingCell.source_range` attached at collection time — pypdf pages capture per-fragment raw
+offsets from the extraction process itself (cursor accumulation over the extraction visitor's own
+chunks, byte-verified against the stored raw page text; on any mismatch every offset is discarded
+and the old globally-unique row matching remains the explicit fallback, which now also refuses raw
+lines already covered by extraction offsets), OCR/geometry pages keep per-line offsets per cell;
+repeated values and repeated suffixes keep distinct identities with **no uniqueness requirement**.
+(2) Previously-declining paths attribute honestly: in-row label/value splits (each line owns
+exactly its two cells; sibling unions must be known and strictly raw-ordered or all decline
+together), party cells split across columns (per-cell identity through the reorder), fused two-cell
+metadata rows (split parts attributed only when every boundary coincides with a cell boundary,
+walked with the same join arithmetic the text was built with), multi-column prose (synthesized
+column rows own exactly their contributing cells' union), post-table joined prose, and the
+raw-order fallback (one output line per raw line via cursor arithmetic — DOCX/minimal inputs now
+get construction lineage; layout-text and whole-document fallbacks still decline). Fused table
+headers and the layout-block path remain explicit declines served by the fallbacks. (3) Statuses
+are **byte-verified** at the join point: `exact` now means byte-identical (a bullet-substituted
+line honestly downgrades to `normalized`), new `split` marks sub-row cell attributions with changed
+bytes, `merged` multi-row unions; `ReadingTextRowLineageMap` bumps to `map_version: "2"` (legacy
+"1" artifacts stay readable; `TextContent` cross-checks version agreement; summary gains additive
+per-status counts; split segments carry an `in_row_split` reason code). (4) A document-level
+symmetric overlap sweep (`_resolve_raw_overlaps`) drops conflicted merge envelopes first (precise
+claims win), then both sides of any precise-vs-precise conflict — set-based, processing-order
+independent, so an interleaved-column wrap merge loses lineage rather than lying. (5) The Text
+Anchor Graph/package preference (`row_construction` → `geometry_projection` →
+`fallback_text_match`) is unchanged in mechanism but now rides on broad construction coverage;
+module/schema docs state plainly that the post-hoc mechanisms are degraded fallback identity, and
+only byte-verified `exact` construction segments feed sub-token arithmetic projection. Proven by
+`backend/tests/test_reading_text_construction_lineage.py` (real-PDF extraction-offset capture with
+repeated values, mismatch fallback, GmbH-suffix anchor distinctness, split/party/metadata/
+multi-column/fallback attribution, sweep behavior both interleaved and sequential, byte-verification
+honesty, legacy-artifact fallback, construction-vs-fallback non-confusability, an entity-contract
+e2e on a span only cell lineage can resolve, and a no-copied-text leak test) plus updated
+row-lineage/ocr/e2e suites; `reading_text` bytes unchanged (full backend suite green, lint/mypy
+clean). No detection, recognizer, active-PII-input, `pii_result` schema, runtime, frontend,
+pseudonymization, redaction, export, or dependency change; artifact identity, committed-run
+authority, and fail-closed behavior untouched. Next: re-run the checkpoint loop; fused-header
+sub-cell attribution and any `reading_text_map` retirement stay explicitly re-scoped future work.
+
+**Latest checkpoint (Runtime recovery & compatibility integrity v1):** No engine level change;
+runtime/robustness step delivering ADR-0023's remaining Phase-4 stale-claim reclaim + bounded
+retry ([ADR-0041](../docs/adr/0041-runtime-recovery-and-compatibility-integrity.md), branch
+`runtime-recovery-and-compatibility-v1`). Root causes fixed: a claimed job could stay `running`
+forever after a worker crash; terminal transitions were unfenced; the job DB stamped its schema
+version unconditionally (silently downgrading a newer/foreign file); readiness ignored the job
+store and worker; frontend polling could hang, leak unresolved waiters, retry a vanished job
+forever, or resurrect stale `localStorage` activity; API/entity-contract payloads were trusted via
+unchecked casts; and a damaged newest review-log line silently reactivated the older decision.
+Fixes: (1) job store **schema v2** — every `running` row carries a `lease_expires_at`;
+`recover_abandoned_jobs` requeues worker rows with attempts remaining or fails everything else
+explicitly (`interrupted`), run at worker startup (which reclaims all worker-mode `running` rows of
+its kind — single-worker deployment ⇒ orphans), each poll cycle, job enqueue, and every job-status
+read (observation recovers first); `OCR_WORKER_MAX_ATTEMPTS` default 2 = one automatic retry.
+(2) Terminal transitions and worker artifact publication are **fenced to the claiming attempt**
+(`StaleJobClaimError`), so retries never conflict/duplicate and a stale worker can't overwrite
+authority; sync inline runs tolerate the fence like deletion. (3) The job DB reads `user_version`
+and **refuses** an unknown/newer/unversioned-with-data file (`JobStoreIncompatibleError`) instead
+of stamping it; the known v1 migrates in one serialized transaction preserving rows. (4)
+`/health/ready` reports `storage`/`job_store`/`ocr_worker` component states (job-store
+compatibility + a worker heartbeat written from a dedicated thread into a new `worker_status`
+table) and gates on them. (5) Frontend `pollJobUntilTerminal` retries transient failures (bounded),
+drops a 404'd job, records explicit poll failures, and settles every waiter on owner exit;
+`resumeActiveJobs` catches resume failures; stale/unknown-status persisted jobs are pruned at load;
+`JobStatusBanner` surfaces recovery-failure notices. (6) Job-status and PII entity-contract
+payloads are validated (unknown `status`/`contract_version` fail closed). (7) The review JSONL log
+fails reads and writes on a damaged/unknown-`record_type` line (`PiiReviewLogDamagedError`); only an
+unacknowledged torn tail is ignored. Proven by new `backend/tests/test_runtime_recovery.py`
+(interruption/restart, expired-lease recovery on observation, sync-inline failure-only recovery,
+claim fencing, enqueue recovery, readiness liveness/incompatibility, schema refusal/migration),
+review-log integrity tests in `test_pii_review.py`, and frontend recovery/contract tests. No engine
+level, detection, OCR/PII algorithm, artifact contract, or dependency change; no queue broker,
+cancel API, or PII worker split (remaining Phase-4 items). Full lint/typecheck/test/benchmark/
+runtime-surface/compose/build/`git diff --check` green.
 
 **Checkpoint loop:** after every engine PR, record which level changed, confirm OCR/Text is still
 sufficiently ahead of PII/Redaction, check for benchmark/feedback-driven re-prioritisation and

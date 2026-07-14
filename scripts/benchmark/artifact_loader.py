@@ -168,6 +168,7 @@ class PiiSummary:
     entities: tuple[DetectedEntity, ...]
     entity_counts: dict[str, int]
     flags: tuple[str, ...]
+    profile: str = "custom"
     validation: ValidationSummary | None = None
 
 
@@ -178,6 +179,7 @@ class DocumentArtifacts:
     text: TextSummary | None
     pii: PiiSummary | None
     quality_report: QualityReportSummary | None = None
+    pii_by_profile: dict[str, PiiSummary] = field(default_factory=dict)
     load_errors: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -225,6 +227,7 @@ def _load_one_document(uploads_dir: Path, document_dir: Path) -> DocumentArtifac
 
     artifacts_dir = document_dir / _ARTIFACTS_DIRNAME
     audit = text = quality_report = pii = None
+    pii_by_profile: dict[str, PiiSummary] = {}
     if artifacts_dir.is_dir():
         audit, audit_errors = _latest_artifact(artifacts_dir, "audit_result", _parse_audit)
         text, text_errors = _latest_artifact(artifacts_dir, "text_result", _parse_text)
@@ -232,7 +235,8 @@ def _load_one_document(uploads_dir: Path, document_dir: Path) -> DocumentArtifac
             artifacts_dir, "quality_report", _parse_quality_report
         )
         pii, pii_errors = _latest_artifact(artifacts_dir, "pii_result", _parse_pii)
-        errors.extend(audit_errors + text_errors + quality_errors + pii_errors)
+        pii_by_profile, profile_errors = _latest_pii_artifacts_by_profile(artifacts_dir)
+        errors.extend(audit_errors + text_errors + quality_errors + pii_errors + profile_errors)
 
     return DocumentArtifacts(
         document=document,
@@ -240,8 +244,39 @@ def _load_one_document(uploads_dir: Path, document_dir: Path) -> DocumentArtifac
         text=text,
         pii=pii,
         quality_report=quality_report,
+        pii_by_profile=pii_by_profile,
         load_errors=tuple(errors),
     )
+
+
+def _latest_pii_artifacts_by_profile(
+    artifacts_dir: Path,
+) -> tuple[dict[str, PiiSummary], list[str]]:
+    """Return the newest valid immutable PII artifact for every recorded named profile."""
+    errors: list[str] = []
+    candidates: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
+    for path in sorted(artifacts_dir.glob("*.json")):
+        raw = _read_json(path)
+        if raw is None or raw.get("artifact_type") != "pii_result":
+            continue
+        created_at = raw.get("created_at")
+        artifact_id = raw.get("id")
+        content = raw.get("content") or {}
+        settings = content.get("engine_settings") or {}
+        profile = settings.get("pii_profile") or content.get("profile")
+        if not all(isinstance(value, str) for value in (created_at, artifact_id, profile)):
+            errors.append(f"{path.name}:missing_id_created_at_or_profile")
+            continue
+        candidates.setdefault(profile, []).append((created_at, artifact_id, raw))
+
+    latest: dict[str, PiiSummary] = {}
+    for profile, profile_candidates in candidates.items():
+        _, _, raw = max(profile_candidates, key=lambda item: (item[0], item[1]))
+        try:
+            latest[profile] = _parse_pii(raw)
+        except (KeyError, TypeError, ValueError):
+            errors.append(f"pii_result:{profile}:malformed_content")
+    return latest, errors
 
 
 def _latest_artifact(
@@ -425,6 +460,11 @@ def _parse_pii(raw: dict[str, Any]) -> PiiSummary:
         entities=entities,
         entity_counts=dict(content.get("entity_counts") or {}),
         flags=tuple(content.get("flags") or ()),
+        profile=str(
+            (content.get("engine_settings") or {}).get("pii_profile")
+            or content.get("profile")
+            or "custom"
+        ),
         validation=_parse_validation(content.get("validation")),
     )
 

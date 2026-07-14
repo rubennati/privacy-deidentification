@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   PII_REVIEW_DECISION_OPTIONS,
   fetchPiiReview,
+  reviewDecisionLabel,
   reviewStatusLabel,
   submitPiiReviewDecision,
   type PiiReviewDecisionScope,
@@ -25,6 +26,8 @@ interface PiiReviewGroupListProps {
   /** When false (User View), hides the reading-text projection summary and the per-occurrence
    *  offset/override list — only the group-level decision remains. Defaults to true (Dev View). */
   showTechnicalDetails?: boolean;
+  /** Dev View can merge detector decisions into entity cards and render only manual additions. */
+  showDetectedGroups?: boolean;
 }
 
 const STATUS_STYLES: Record<PiiReviewStatus, string> = {
@@ -54,6 +57,7 @@ export function PiiReviewGroupList({
   onReviewChanged,
   selectedOccurrenceId,
   showTechnicalDetails = true,
+  showDetectedGroups = true,
 }: PiiReviewGroupListProps) {
   const [savingTarget, setSavingTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +75,10 @@ export function PiiReviewGroupList({
     scrollAndFlash(groupElementId(occurrence.entity_group_id));
   }, [selectedOccurrenceId, review]);
 
-  if (!review || review.groups.length === 0) {
+  if (!review || (review.groups.length === 0 && review.manual_additions.length === 0)) {
+    return null;
+  }
+  if (!showDetectedGroups && review.manual_additions.length === 0) {
     return null;
   }
 
@@ -107,16 +114,22 @@ export function PiiReviewGroupList({
   }
 
   return (
-    <section aria-labelledby="review-groups-heading" className="mt-6">
-      <div className="flex items-center justify-between gap-3">
-        <h2 id="review-groups-heading" className="font-semibold text-ink">
-          Review-Entscheidungen
-        </h2>
-        <span className="text-xs text-muted">{review.groups.length}</span>
-      </div>
+    <section
+      aria-labelledby={showDetectedGroups ? "review-groups-heading" : "manual-additions-heading"}
+      className="mt-6"
+    >
+      {showDetectedGroups && (
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="review-groups-heading" className="font-semibold text-ink">
+            Review-Entscheidungen
+          </h2>
+          <span className="text-xs text-muted">{review.groups.length}</span>
+        </div>
+      )}
       {error && <p className="mt-2 text-xs font-medium text-red-700">{error}</p>}
-      <ul className="mt-4 space-y-3">
-        {review.groups.map((group) => {
+      {showDetectedGroups && (
+        <ul className="mt-4 space-y-3">
+          {review.groups.map((group) => {
           const occurrences = occurrencesByGroup.get(group.entity_group_id) ?? [];
           const expanded = expandedGroupId === group.entity_group_id;
           return (
@@ -141,6 +154,15 @@ export function PiiReviewGroupList({
                   Lesetext-Abdeckung: {group.projection_summary.exact_count} exakt ·{" "}
                   {group.projection_summary.partial_count} teilweise ·{" "}
                   {group.projection_summary.unmapped_count} nur Rohtext
+                </p>
+              )}
+              {group.stale_decision != null && (
+                // A previous decision named this same (deterministic) group id, but was recorded
+                // against a since-superseded PII run — never applied to the current status/dropdown
+                // above. Shown as explicit history, not as the active decision.
+                <p className="mt-2 rounded-md bg-accent-soft px-2 py-1 text-xs text-ink">
+                  Vorherige Entscheidung (gilt nicht mehr für dieses Ergebnis):{" "}
+                  {reviewDecisionLabel(group.stale_decision)}
                 </p>
               )}
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -233,8 +255,92 @@ export function PiiReviewGroupList({
               )}
             </li>
           );
-        })}
-      </ul>
+          })}
+        </ul>
+      )}
+      {review.manual_additions.length > 0 && (
+        <>
+          <div className="mt-6 flex items-center justify-between gap-3">
+            <h2 id="manual-additions-heading" className="font-semibold text-ink">
+              Manuelle Ergänzungen
+            </h2>
+            <span className="text-xs text-muted">{review.manual_additions.length}</span>
+          </div>
+          <ul aria-labelledby="manual-additions-heading" className="mt-4 space-y-3">
+            {review.manual_additions.map((addition) => {
+              // A stale addition's canonical offsets refer to a superseded text result: it stays
+              // listed for audit/history, but must never look like an active, decidable entry —
+              // the backend also refuses a new decision against it (404, target no longer exists).
+              const isStale = addition.artifact_currency === "stale";
+              return (
+              <li
+                key={addition.addition_id}
+                id={groupElementId(addition.addition_id)}
+                className={`scroll-mt-16 rounded-lg border border-card-border bg-card p-3 ${
+                  isStale ? "opacity-70" : ""
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <span className="rounded-full bg-accent-soft px-2 py-1 text-xs font-medium text-accent-dark">
+                      {addition.entity_type}
+                    </span>
+                    <span className="ml-2 text-xs text-muted">manuell hinzugefügt</span>
+                  </div>
+                  {isStale ? (
+                    <span className="text-xs font-medium text-red-700">
+                      Veraltet · gilt nicht mehr für den aktuellen Text
+                    </span>
+                  ) : (
+                    <span className={`text-xs font-medium ${STATUS_STYLES[addition.review_status]}`}>
+                      {reviewStatusLabel(addition.review_status)}
+                    </span>
+                  )}
+                </div>
+                {showTechnicalDetails && (
+                  <p className="mt-2 text-xs text-muted">
+                    <button
+                      type="button"
+                      onClick={() => jumpToOccurrence(addition.addition_id)}
+                      title="Im extrahierten Text zu dieser Stelle springen"
+                      className="font-medium text-accent-dark underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                    >
+                      Lesetext-Offset {addition.canonical_start}–{addition.canonical_end}
+                    </button>
+                    {addition.raw_projection_status === "unmapped"
+                      ? " · kein Rohtext-Bezug"
+                      : addition.raw_projection_status === "partial"
+                        ? " · Rohtext-Bezug unsicher"
+                        : ""}
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <label className="sr-only" htmlFor={`manual-addition-decision-${addition.addition_id}`}>
+                    Entscheidung für manuelle Ergänzung
+                  </label>
+                  <select
+                    id={`manual-addition-decision-${addition.addition_id}`}
+                    value={addition.review_decision ?? "pseudonymize"}
+                    disabled={isStale || savingTarget === addition.addition_id}
+                    onChange={(event) => {
+                      const value = event.target.value as PiiReviewDecisionValue;
+                      void submit("manual_addition", addition.addition_id, value);
+                    }}
+                    className="rounded-lg border border-card-border bg-dropzone px-2 py-1 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {PII_REVIEW_DECISION_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
     </section>
   );
 }

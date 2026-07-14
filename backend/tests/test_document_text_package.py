@@ -684,6 +684,10 @@ def test_text_package_endpoint_degrades_gracefully_for_legacy_artifact(
         "reading_text_flags",
         "reading_text_map_version",
         "reading_text_map",
+        "reading_text_geometry_projection_map_version",
+        "reading_text_geometry_projection_map",
+        "reading_text_row_lineage_map_version",
+        "reading_text_row_lineage_map",
         "layout_text_result",
         "layout_blocks_version",
         "layout_blocks",
@@ -722,3 +726,24 @@ def test_existing_ocr_endpoint_response_shape_is_unchanged(
         assert "contract_status" not in body["content"]
         assert body["artifact_type"] == "text_result"
         assert body["station"] == "ocr"
+
+
+def test_lineage_summary_reports_fallback_when_only_reading_text_map_exists() -> None:
+    """A package with canonical text and the post-hoc map (but no geometry projection) names the
+    fallback mechanism explicitly, so a consumer can tell the geometry-backed projection from the
+    weaker unique-token string-match fallback. Neither is builder-emitted construction identity."""
+    package = _full_package()
+    assert package.lineage_summary is not None
+    assert package.lineage_summary.canonical_available is True
+    assert package.lineage_summary.geometry_projection_available is False
+    assert package.lineage_summary.reading_text_map_available is True
+    assert package.lineage_summary.lineage_source == "fallback_text_match"
+    assert package.lineage_summary.geometry_projection_segment_count == 0
+
+
+def test_lineage_summary_reports_unavailable_without_canonical_text() -> None:
+    content = _build_text_content(include_canonical=False)
+    package = build_document_text_package(_text_artifact(content))
+    assert package.lineage_summary is not None
+    assert package.lineage_summary.canonical_available is False
+    assert package.lineage_summary.lineage_source == "unavailable"

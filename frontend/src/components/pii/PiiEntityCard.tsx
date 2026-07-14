@@ -2,6 +2,15 @@ import { useState } from "react";
 
 import type { PiiEntity } from "../../api/workstations";
 import {
+  PII_REVIEW_DECISION_OPTIONS,
+  fetchPiiReview,
+  reviewStatusLabel,
+  submitPiiReviewDecision,
+  type PiiReviewOccurrence,
+  type PiiReviewResult,
+  type PiiReviewDecisionValue,
+} from "../../api/piiReview";
+import {
   PII_FEEDBACK_ISSUE_OPTIONS,
   buildIssueFeedback,
   buildPositiveFeedback,
@@ -21,6 +30,9 @@ interface PiiEntityCardProps {
   feedbackEnabled: boolean;
   /** Feedback already recorded for this entity in this artifact, if any. */
   existingStatus: PiiFeedbackStatus | null;
+  /** Binding review state for this exact detector occurrence. */
+  reviewOccurrence?: PiiReviewOccurrence | null;
+  onReviewChanged?: (review: PiiReviewResult) => void;
 }
 
 type SubmitState = "idle" | "saving" | "error";
@@ -31,6 +43,29 @@ const RECOGNIZER_HELP = "Modul/Regel/Modell, das diese Entity erkannt hat.";
 /** Briefly scroll to and flash the highlighted span for this entity in the extracted-text view. */
 function jumpToEntity(entityId: string): void {
   scrollAndFlash(`pii-mark-${entityId}`);
+}
+
+/** Whether this entity has no exact reading-text mapping (so its raw offset does not apply there). */
+function readingOffsetIsMissing(entity: PiiEntity): boolean {
+  return entity.projection_status !== "exact";
+}
+
+/**
+ * Reading-text offset shown next to the raw offset. Raw offsets are the detection basis but do not
+ * line up in the canonical reading text — so we show the reading offset only when it maps exactly,
+ * and otherwise an explicit reason (never a misleading raw number pretending to be a reading offset).
+ */
+function readingOffsetLabel(entity: PiiEntity): string {
+  if (
+    entity.projection_status === "exact" &&
+    entity.reading_start_offset != null &&
+    entity.reading_end_offset != null
+  ) {
+    return `${entity.reading_start_offset}–${entity.reading_end_offset}`;
+  }
+  if (entity.projection_status === "partial") return "teilweise zugeordnet";
+  if (entity.projection_status === "unmapped") return "nicht im Lesetext zugeordnet";
+  return "—";
 }
 
 /**
@@ -45,13 +80,22 @@ export function PiiEntityCard({
   artifactId,
   feedbackEnabled,
   existingStatus,
+  reviewOccurrence = null,
+  onReviewChanged,
 }: PiiEntityCardProps) {
   const [saved, setSaved] = useState<PiiFeedbackStatus | null>(existingStatus);
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [issueType, setIssueType] = useState<PiiIssueOnly | "">("");
   const [comment, setComment] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewError, setReviewError] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const locked = saved !== null;
+  // Once feedback is saved ("Passt" or a problem) the card collapses to a one-line summary, so the
+  // reviewer keeps sight of the still-open entities. It re-expands on demand.
+  const decided = locked;
+  const decidedSummary = saved ? issueTypeLabel(saved.issue_type) : "";
 
   async function submitPositive() {
     if (locked || submitState === "saving") {
@@ -84,10 +128,60 @@ export function PiiEntityCard({
     }
   }
 
+  async function submitReviewDecision(decision: PiiReviewDecisionValue) {
+    if (!reviewOccurrence || reviewSaving) return;
+    setReviewSaving(true);
+    setReviewError(false);
+    try {
+      await submitPiiReviewDecision(documentId, {
+        target_type: "occurrence",
+        target_id: reviewOccurrence.occurrence_id,
+        decision,
+      });
+      const updated = await fetchPiiReview(documentId);
+      if (updated) onReviewChanged?.(updated);
+    } catch {
+      setReviewError(true);
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
   const selectedExplanation = issueType === "" ? undefined : issueExplanation(issueType);
 
+  if (decided && !expanded) {
+    return (
+      <li
+        id={`pii-entity-card-${entity.id}`}
+        className="scroll-mt-16 rounded-lg border border-card-border bg-dropzone/60 px-3 py-2"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent-dark">
+              {entity.entity_type}
+            </span>
+            <span className="truncate text-xs text-muted">{entity.text}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-xs font-medium text-accent-dark">✓ {decidedSummary}</span>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="text-xs text-muted underline decoration-dotted underline-offset-2 hover:decoration-solid"
+            >
+              ausklappen
+            </button>
+          </div>
+        </div>
+      </li>
+    );
+  }
+
   return (
-    <li className="rounded-lg border border-card-border bg-dropzone p-3">
+    <li
+      id={`pii-entity-card-${entity.id}`}
+      className="scroll-mt-16 rounded-lg border border-card-border bg-dropzone p-3"
+    >
       <div className="flex items-start justify-between gap-3">
         <span className="rounded-full bg-accent-soft px-2 py-1 text-xs font-medium text-accent-dark">
           {entity.entity_type}
@@ -96,6 +190,15 @@ export function PiiEntityCard({
           <span className="text-xs font-medium text-muted" title={CONFIDENCE_HELP}>
             {(entity.score * 100).toFixed(0)} %
           </span>
+          {decided && (
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              className="text-xs text-muted underline decoration-dotted underline-offset-2 hover:decoration-solid"
+            >
+              einklappen
+            </button>
+          )}
           {feedbackEnabled && !locked && (
             <button
               type="button"
@@ -112,7 +215,9 @@ export function PiiEntityCard({
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs text-muted">
         <dt>Seite</dt>
         <dd>{entity.page_number ?? "–"}</dd>
-        <dt>Offset</dt>
+        <dt title="Zeichen-Offset im technischen Rohtext (die verbindliche Detektions-Basis)">
+          Rohtext-Offset
+        </dt>
         <dd>
           <button
             type="button"
@@ -123,11 +228,54 @@ export function PiiEntityCard({
             {entity.start_offset}–{entity.end_offset}
           </button>
         </dd>
+        <dt title="Zeichen-Offset im kanonischen Lesetext; kann abweichen oder fehlen">
+          Lesetext-Offset
+        </dt>
+        <dd className={readingOffsetIsMissing(entity) ? "text-muted italic" : undefined}>
+          {readingOffsetLabel(entity)}
+        </dd>
         <dt title={RECOGNIZER_HELP}>Recognizer</dt>
         <dd className="break-all" title={RECOGNIZER_HELP}>
           {entity.recognizer}
         </dd>
       </dl>
+
+      {reviewOccurrence && (
+        <div className="mt-3 border-t border-card-border pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span className="text-xs font-medium text-muted">Bindende Entscheidung</span>
+              <p className="mt-0.5 text-xs text-accent-dark">
+                {reviewStatusLabel(reviewOccurrence.review_status)}
+                {reviewOccurrence.decision_scope === "occurrence" ? " · individuell" : ""}
+              </p>
+            </div>
+            <label className="sr-only" htmlFor={`entity-decision-${entity.id}`}>
+              Entscheidung für diese Entity
+            </label>
+            <select
+              id={`entity-decision-${entity.id}`}
+              value={reviewOccurrence.review_decision ?? "pseudonymize"}
+              disabled={reviewSaving}
+              onChange={(event) =>
+                void submitReviewDecision(event.target.value as PiiReviewDecisionValue)
+              }
+              className="rounded-lg border border-card-border bg-card px-2 py-1 text-xs text-ink"
+            >
+              {PII_REVIEW_DECISION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {reviewError && (
+            <p className="mt-2 text-xs font-medium text-red-700">
+              Entscheidung konnte nicht gespeichert werden.
+            </p>
+          )}
+        </div>
+      )}
 
       {feedbackEnabled && locked && saved && (
         <div className="mt-3 border-t border-card-border pt-3">

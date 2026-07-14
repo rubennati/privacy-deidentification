@@ -24,6 +24,11 @@ pii = [
     "presidio-analyzer==2.2.362",
     "spacy==3.8.14",
     "de-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl",
+    # Local GLiNER NER backend for PERSON/ORGANIZATION (ADR-0042). torch is pinned to the CPU wheel
+    # index below so the image avoids the large CUDA/nvidia tree (this is a local, CPU-only tool).
+    # The GLiNER model itself is provisioned offline (scripts/fetch-ner-models.sh), never at runtime.
+    "gliner>=0.2.13,<1.0",
+    "torch>=2,<3",
 ]
 
 [dependency-groups]
@@ -43,6 +48,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+# Resolve torch from the CPU wheel index so the local GLiNER NER backend stays CPU-only and the
+# image avoids the large CUDA/nvidia dependency tree (this is a local, CPU-only tool). See ADR-0042.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -81,6 +96,11 @@ strict = true
 warn_unused_ignores = true
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# tldextract ships no type stubs; offline_ml_runtime only touches it to force snapshot-only resolution.
+module = ["tldextract", "tldextract.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -19,7 +19,7 @@ from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
 from app.main import app
 from app.services.artifact_service import get_latest_quality_report_artifact
-from app.services.job_store import get_job_store
+from app.services.job_store import JobStoreUnavailableError, get_job_store
 from app.services.layout_text import build_pdf_layout_blocks
 from app.services.ocr_adapters import (
     OcrExtractionResult,
@@ -293,6 +293,39 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
     assert audit_path.read_bytes() == audit_bytes
 
 
+def test_pdf_text_layer_single_line_gets_real_row_construction_lineage(
+    client: TestClient, ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer]
+) -> None:
+    """End-to-end proof that the real pypdf-visitor row matching in ``collect_pdf_reading_rows``
+
+    (not just directly-constructed ``ReadingRow`` fixtures elsewhere) resolves construction-time row
+    lineage for a single, unambiguous line extracted through the actual PDF text layer.
+    """
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Digital text"), "application/pdf"
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["reading_text"] == "Digital text"
+    row_lineage_map = content["reading_text_row_lineage_map"]
+    assert content["reading_text_row_lineage_map_version"] == "2"
+    assert row_lineage_map is not None
+    assert row_lineage_map["lineage_source"] == "row_construction"
+    assert len(row_lineage_map["segments"]) == 1
+    segment = row_lineage_map["segments"][0]
+    assert segment["mapping_status"] == "exact"
+    assert segment["confidence"] == 1.0
+    assert (segment["canonical_start"], segment["canonical_end"]) == (0, len("Digital text"))
+    source_range = segment["source_range"]
+    assert source_range is not None
+    assert (source_range["start"], source_range["end"]) == (0, len("Digital text"))
+    assert content["text"][source_range["start"] : source_range["end"]] == "Digital text"
+    assert row_lineage_map["summary"]["coverage_ratio"] == 1.0
+
+
 def test_mixed_pdf_routes_each_page_and_preserves_order(
     client: TestClient,
     upload_dir: Path,
@@ -328,7 +361,10 @@ def test_mixed_pdf_routes_each_page_and_preserves_order(
     assert all(upload_dir not in path.parents for path in adapter.calls)
     assert all(not path.exists() for path in adapter.calls)
     artifact_directory = document_data_dir / str(upload["id"]) / "artifacts"
-    assert all(path.suffix == ".json" for path in artifact_directory.rglob("*"))
+    assert all(
+        path.suffix == ".json" or path.name == "current-artifacts"
+        for path in artifact_directory.rglob("*")
+    )
 
 
 def test_docx_extracts_paragraphs_without_ocr(
@@ -717,6 +753,121 @@ def test_get_returns_latest_text_artifact(
     assert response.json()["id"] == second.json()["id"]
 
 
+def test_invalid_current_text_is_explicit_and_does_not_fall_back(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
+    )
+    first = client.post(f"/api/documents/{upload['id']}/ocr")
+    second = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert first.status_code == 201
+    assert second.status_code == 201
+    current_path = _artifact_path(document_data_dir, upload["id"], second.json()["id"])
+    current_path.write_text('{"artifact_type":"text_result","contract":"future"}', encoding="utf-8")
+
+    response = client.get(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 409
+    assert "invalid or incompatible" in response.json()["detail"]
+    historical = client.get(
+        f"/api/documents/{upload['id']}/ocr", params={"artifact_id": first.json()["id"]}
+    )
+    assert historical.status_code == 200
+    assert historical.json()["id"] == first.json()["id"]
+
+
+def test_missing_authority_is_explicit_and_exact_history_remains_available(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
+    )
+    created = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert created.status_code == 201
+    authority = document_data_dir / str(upload["id"]) / "artifacts" / "current-artifacts"
+    authority.unlink()
+
+    current = client.get(f"/api/documents/{upload['id']}/ocr")
+    historical = client.get(
+        f"/api/documents/{upload['id']}/ocr",
+        params={"artifact_id": created.json()["id"]},
+    )
+
+    assert current.status_code == 409
+    assert historical.status_code == 200
+    assert historical.json()["id"] == created.json()["id"]
+
+
+def test_id_only_authority_without_durable_success_is_not_current_or_historical(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
+    )
+
+    def fail_job_completion(*_args: object, **_kwargs: object) -> None:
+        raise JobStoreUnavailableError
+
+    monkeypatch.setattr("app.services.job_store.JobStore.mark_succeeded", fail_job_completion)
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert response.status_code == 503
+    artifacts = _artifact_payloads_by_type(
+        document_data_dir, upload["id"], "text_result"
+    )
+    assert len(artifacts) == 1
+    authority_path = (
+        document_data_dir / str(upload["id"]) / "artifacts" / "current-artifacts"
+    )
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority["text_result"] = artifacts[0]["id"]
+    authority_path.write_text(json.dumps(authority), encoding="utf-8")
+
+    current = client.get(f"/api/documents/{upload['id']}/ocr")
+    assert current.status_code == 409
+    exact = client.get(
+        f"/api/documents/{upload['id']}/ocr",
+        params={"artifact_id": artifacts[0]["id"]},
+    )
+    assert exact.status_code == 409
+    assert "not a successfully committed" in exact.json()["detail"]
+
+
+def test_id_only_authority_is_accepted_when_one_successful_job_proves_it(
+    client: TestClient,
+    document_data_dir: Path,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    upload, _ = _upload_and_audit(
+        client, "text.pdf", _pdf_pages_bytes("Text"), "application/pdf"
+    )
+    created = client.post(f"/api/documents/{upload['id']}/ocr")
+    assert created.status_code == 201
+    authority_path = (
+        document_data_dir / str(upload["id"]) / "artifacts" / "current-artifacts"
+    )
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority["text_result"] = created.json()["id"]
+    authority_path.write_text(json.dumps(authority), encoding="utf-8")
+
+    current = client.get(f"/api/documents/{upload['id']}/ocr")
+    historical = client.get(
+        f"/api/documents/{upload['id']}/ocr",
+        params={"artifact_id": created.json()["id"]},
+    )
+
+    assert current.status_code == 200
+    assert current.json()["id"] == created.json()["id"]
+    assert historical.status_code == 200
+
+
 def test_rerun_creates_new_immutable_quality_report(
     client: TestClient,
     settings: Settings,
@@ -1096,6 +1247,10 @@ def test_legacy_text_artifact_without_additive_fields_remains_valid(
     payload["content"].pop("reading_text_flags", None)
     payload["content"].pop("reading_text_map_version", None)
     payload["content"].pop("reading_text_map", None)
+    payload["content"].pop("reading_text_geometry_projection_map_version", None)
+    payload["content"].pop("reading_text_geometry_projection_map", None)
+    payload["content"].pop("reading_text_row_lineage_map_version", None)
+    payload["content"].pop("reading_text_row_lineage_map", None)
     payload["content"].pop("layout_text_result", None)
     payload["content"].pop("layout_blocks_version", None)
     payload["content"].pop("layout_blocks", None)

@@ -1,7 +1,57 @@
 import { describe, expect, it } from "vitest";
 
+import type { PiiEntityContractV1, ReviewReadyAnchorBoundPiiEntity } from "../api/piiEntityContract";
 import type { PiiEntity } from "../api/workstations";
-import { buildHighlightSegments } from "./piiHighlights";
+import type { PiiManualAddition } from "../api/piiReview";
+import {
+  buildAnchorBoundHighlightSegments,
+  buildAnchorBoundPiiHighlights,
+  buildHighlightSegments,
+  buildManualAdditionHighlights,
+  invalidAnchorBoundHighlights,
+  type AnchorBoundPiiHighlight,
+} from "./piiHighlights";
+
+function anchorHighlight(overrides: Partial<AnchorBoundPiiHighlight> = {}): AnchorBoundPiiHighlight {
+  return {
+    entity_id: "a".repeat(32),
+    entity_type: "LOCATION",
+    identity_basis: "anchor_exact",
+    source_entity_ids: ["a".repeat(32)],
+    primary_source_entity_id: "a".repeat(32),
+    anchor_ids: ["anchor-1"],
+    source_name: "technical_raw_text",
+    start: 0,
+    end: 5,
+    binding_status: "exact",
+    mapping_status: "exact",
+    review_state: "accepted",
+    needs_review: false,
+    reason_codes: [],
+    confidence: 0.9,
+    ...overrides,
+  };
+}
+
+function manualAddition(overrides: Partial<PiiManualAddition> = {}): PiiManualAddition {
+  return {
+    addition_id: "d".repeat(32),
+    entity_type: "LOCATION",
+    canonical_start: 17,
+    canonical_end: 21,
+    text_artifact_id: "e".repeat(32),
+    raw_start: 6,
+    raw_end: 10,
+    raw_projection_status: "exact",
+    origin: "human",
+    note: null,
+    created_at: "2026-07-11T10:00:00Z",
+    review_status: "accepted",
+    review_decision: null,
+    artifact_currency: "current",
+    ...overrides,
+  };
+}
 
 function entity(
   id: string,
@@ -22,6 +72,148 @@ function entity(
     page_end_offset: null,
     score,
     recognizer: "TestRecognizer",
+  };
+}
+
+function anchorEntity(
+  overrides: Partial<ReviewReadyAnchorBoundPiiEntity> = {},
+): ReviewReadyAnchorBoundPiiEntity {
+  const base: ReviewReadyAnchorBoundPiiEntity = {
+    entity_id: "1".repeat(32),
+    entity_type: "LOCATION",
+    identity_basis: "anchor_exact",
+    binding_status: "exact",
+    binding_reasons: ["anchor_exact_match"],
+    anchor_set: { anchor_ids: ["a".repeat(32)], binding_status: "exact", count: 1 },
+    anchor_refs: [
+      {
+        anchor_id: "a".repeat(32),
+        source_name: "technical_raw_text",
+        source_range: { start: 0, end: 4 },
+        binding_status: "exact",
+        binding_role: "entity_span",
+        confidence: 1,
+        reason_codes: ["anchor_exact_match"],
+      },
+      {
+        anchor_id: "a".repeat(32),
+        source_name: "canonical_reading_text",
+        source_range: { start: 7, end: 11 },
+        binding_status: "exact",
+        binding_role: "display_span",
+        confidence: null,
+        reason_codes: [],
+      },
+    ],
+    source_observations: [
+      {
+        detection_id: "2".repeat(32),
+        recognizer: "TestRecognizer",
+        entity_type: "LOCATION",
+        source_name: "technical_raw_text",
+        detection_source: "raw_text",
+        detection_role: "primary",
+        source_range: { start: 0, end: 4, page_number: null, page_start: null, page_end: null },
+        confidence: 0.9,
+        binding_status: "exact",
+        binding_reasons: ["anchor_exact_match"],
+        provenance: null,
+      },
+    ],
+    provenance: null,
+    confidence: 0.9,
+    value: "Wien",
+    raw_text_range: { start: 0, end: 4, page_number: null, page_start: null, page_end: null },
+    entity_group_id: "3".repeat(32),
+    source_entity_ids: ["2".repeat(32)],
+    mapping_status: "exact",
+    canonical_reading_text_range: { start: 7, end: 11, projection_method: "offset_map" },
+    review_state: "accepted",
+    review_decision: null,
+    decision_scope: null,
+    display: {
+      preferred_text_source: "canonical_reading_text",
+      raw_highlight_range: { start: 0, end: 4 },
+      canonical_highlight_range: { start: 7, end: 11 },
+      display_label: "LOCATION",
+      display_context_available: true,
+      needs_review: false,
+      review_reason_codes: [],
+    },
+    warnings: [],
+  };
+  return { ...base, ...overrides };
+}
+
+function contract(entities: ReviewReadyAnchorBoundPiiEntity[]): PiiEntityContractV1 {
+  return {
+    contract_version: "1.0",
+    document_id: "d".repeat(32),
+    pii_artifact_id: "p".repeat(32),
+    package_id: "t".repeat(32),
+    text_artifact_id: "t".repeat(32),
+    reading_text_available: true,
+    anchor_graph_available: true,
+    anchor_graph_status: "valid",
+    input_contract: null,
+    overlap_resolution: null,
+    entities,
+    binding_summary: {
+      total: entities.length,
+      anchor_bound: entities.filter((item) => item.identity_basis !== "evidence_only").length,
+      evidence_only: entities.filter((item) => item.identity_basis === "evidence_only").length,
+      exact: entities.filter((item) => item.binding_status === "exact").length,
+      partial: entities.filter((item) => item.binding_status === "partial").length,
+      missing: entities.filter((item) => item.binding_status === "missing").length,
+      ambiguous: entities.filter((item) => item.binding_status === "ambiguous").length,
+      not_applicable: entities.filter((item) => item.binding_status === "not_applicable").length,
+      total_entities: entities.length,
+      anchor_bound_entities: entities.filter((item) => item.identity_basis !== "evidence_only")
+        .length,
+      evidence_only_entities: entities.filter((item) => item.identity_basis === "evidence_only")
+        .length,
+      exact_bound_entities: entities.filter((item) => item.binding_status === "exact").length,
+      partial_bound_entities: entities.filter((item) => item.binding_status === "partial").length,
+      ambiguous_bound_entities: entities.filter((item) => item.binding_status === "ambiguous")
+        .length,
+      entities_with_raw_range: entities.length,
+      entities_with_canonical_range: entities.filter(
+        (item) => item.display.canonical_highlight_range != null,
+      ).length,
+      entities_with_layout_range: entities.filter((item) =>
+        item.anchor_refs.some(
+          (ref) =>
+            ref.source_name === "layout_text" &&
+            ref.binding_role === "display_span" &&
+            ref.source_range != null,
+        ),
+      ).length,
+      missing_canonical_range_count: entities.filter(
+        (item) => item.display.canonical_highlight_range == null,
+      ).length,
+      missing_layout_range_count: entities.filter(
+        (item) =>
+          !item.anchor_refs.some(
+            (ref) =>
+              ref.source_name === "layout_text" &&
+              ref.binding_role === "display_span" &&
+              ref.source_range != null,
+          ),
+      ).length,
+      binding_reason_counts: {},
+      warning_codes: [],
+      anchor_bound_ratio: 0,
+      exact_bound_ratio: 0,
+    },
+    mapping_summary: {
+      exact: entities.filter((item) => item.mapping_status === "exact").length,
+      projected: entities.filter((item) => item.mapping_status === "projected").length,
+      partial: entities.filter((item) => item.mapping_status === "partial").length,
+      missing: entities.filter((item) => item.mapping_status === "missing").length,
+      ambiguous: entities.filter((item) => item.mapping_status === "ambiguous").length,
+      not_applicable: entities.filter((item) => item.mapping_status === "not_applicable").length,
+    },
+    needs_review_count: entities.filter((item) => item.display.needs_review).length,
   };
 }
 
@@ -128,5 +320,257 @@ describe("buildHighlightSegments", () => {
         { kind: "entity", text: "Anna", entity: accepted, reviewStatus: "accepted" },
       ]);
     });
+  });
+});
+
+describe("buildAnchorBoundPiiHighlights", () => {
+  it("builds raw and canonical highlights from one anchor-bound identity", () => {
+    const model = buildAnchorBoundPiiHighlights(contract([anchorEntity()]));
+
+    expect(model.byView.technical_raw_text).toMatchObject([
+      { entity_id: "1".repeat(32), entity_type: "LOCATION", start: 0, end: 4 },
+    ]);
+    expect(model.byView.canonical_reading_text).toMatchObject([
+      { entity_id: "1".repeat(32), entity_type: "LOCATION", start: 7, end: 11 },
+    ]);
+  });
+
+  it("renders raw and canonical highlights as the same entity identity across views", () => {
+    const model = buildAnchorBoundPiiHighlights(contract([anchorEntity()]));
+    const [raw] = model.byView.technical_raw_text;
+    const [canonical] = model.byView.canonical_reading_text;
+
+    // One anchor-bound entity powers both views: same entity id and type, view-specific ranges.
+    expect(raw.entity_id).toBe(canonical.entity_id);
+    expect(raw.entity_type).toBe(canonical.entity_type);
+    expect(raw.source_name).toBe("technical_raw_text");
+    expect(canonical.source_name).toBe("canonical_reading_text");
+    expect(raw.anchor_ids).toEqual(canonical.anchor_ids);
+    // The frontend renders the contract-supplied ranges verbatim; it does not re-derive them.
+    expect({ start: raw.start, end: raw.end }).toEqual({ start: 0, end: 4 });
+    expect({ start: canonical.start, end: canonical.end }).toEqual({ start: 7, end: 11 });
+  });
+
+  it("builds layout highlights only from layout anchor refs", () => {
+    const model = buildAnchorBoundPiiHighlights(
+      contract([
+        anchorEntity({
+          anchor_refs: [
+            ...anchorEntity().anchor_refs,
+            {
+              anchor_id: "a".repeat(32),
+              source_name: "layout_text",
+              source_range: { start: 2, end: 6 },
+              binding_status: "exact",
+              binding_role: "display_span",
+              confidence: null,
+              reason_codes: [],
+            },
+          ],
+        }),
+      ]),
+    );
+
+    expect(model.byView.layout_text).toMatchObject([
+      { entity_id: "1".repeat(32), source_name: "layout_text", start: 2, end: 6 },
+    ]);
+    expect(model.summary.missing_layout_count).toBe(0);
+  });
+
+  it("keeps evidence-only fallback raw highlights but marks the fallback state", () => {
+    const evidenceOnly = anchorEntity({
+      identity_basis: "evidence_only",
+      binding_status: "missing",
+      binding_reasons: ["anchor_missing", "detection_evidence_only"],
+      anchor_set: { anchor_ids: [], binding_status: "missing", count: 0 },
+      anchor_refs: [],
+      mapping_status: "missing",
+      canonical_reading_text_range: null,
+      display: {
+        preferred_text_source: "technical_raw_text",
+        raw_highlight_range: { start: 0, end: 4 },
+        canonical_highlight_range: null,
+        display_label: "LOCATION",
+        display_context_available: false,
+        needs_review: true,
+        review_reason_codes: ["anchor_binding_missing", "canonical_mapping_missing"],
+      },
+      warnings: ["anchor_binding_missing", "canonical_mapping_missing"],
+    });
+
+    const model = buildAnchorBoundPiiHighlights(contract([evidenceOnly]));
+
+    expect(model.byView.technical_raw_text[0]).toMatchObject({
+      entity_id: "1".repeat(32),
+      identity_basis: "evidence_only",
+      binding_status: "missing",
+      needs_review: true,
+    });
+    expect(model.byView.canonical_reading_text).toEqual([]);
+    expect(model.summary.evidence_only_count).toBe(1);
+    expect(model.summary.missing_binding_count).toBe(1);
+    expect(model.summary.missing_canonical_count).toBe(1);
+    expect(model.summary.binding_reason_counts.anchor_missing).toBe(1);
+    expect(model.summary.warning_codes).toContain("anchor_missing");
+  });
+
+  it("does not invent canonical highlights for missing, partial, or ambiguous mappings", () => {
+    const entities = (["missing", "partial", "ambiguous"] as const).map((mapping_status, index) =>
+      anchorEntity({
+        entity_id: `${index + 1}`.repeat(32),
+        mapping_status,
+        canonical_reading_text_range: null,
+        display: {
+          preferred_text_source: "technical_raw_text",
+          raw_highlight_range: { start: index * 5, end: index * 5 + 4 },
+          canonical_highlight_range: null,
+          display_label: "LOCATION",
+          display_context_available: false,
+          needs_review: true,
+          review_reason_codes: [`canonical_mapping_${mapping_status}`],
+        },
+      }),
+    );
+
+    const model = buildAnchorBoundPiiHighlights(contract(entities));
+
+    expect(model.byView.technical_raw_text).toHaveLength(3);
+    expect(model.byView.canonical_reading_text).toEqual([]);
+    expect(model.summary.missing_canonical_count).toBe(1);
+    expect(model.summary.partial_canonical_count).toBe(1);
+    expect(model.summary.ambiguous_canonical_count).toBe(1);
+  });
+
+  it("uses contract ranges instead of globally highlighting repeated words by value", () => {
+    const model = buildAnchorBoundPiiHighlights(contract([anchorEntity()]));
+    const segments = buildAnchorBoundHighlightSegments(
+      "Wien und Wien",
+      model.byView.technical_raw_text,
+    );
+
+    expect(segments.filter((segment) => segment.kind === "entity")).toHaveLength(1);
+  });
+
+  it("does not copy private values into highlight metadata", () => {
+    const model = buildAnchorBoundPiiHighlights(contract([anchorEntity({ value: "Secret Value" })]));
+    const metadata = JSON.stringify(model.byView);
+
+    expect(metadata).not.toContain("Secret Value");
+    expect(metadata).not.toContain("Wien");
+  });
+
+  it("keeps a rejected entity renderable as a dismissed ghost but out of the summary", () => {
+    const model = buildAnchorBoundPiiHighlights(
+      contract([
+        anchorEntity({
+          review_state: "rejected",
+          binding_status: "missing",
+          mapping_status: "missing",
+          identity_basis: "evidence_only",
+          binding_reasons: ["anchor_binding_missing"],
+          display: {
+            ...anchorEntity().display,
+            canonical_highlight_range: null,
+          },
+        }),
+      ]),
+    );
+
+    // Still renderable in the raw view so the decision stays visible and revisable in place …
+    expect(model.byView.technical_raw_text).toHaveLength(1);
+    expect(model.byView.technical_raw_text[0].review_state).toBe("rejected");
+    // … but the warning/coverage summary describes only active entities.
+    expect(model.summary.missing_binding_count).toBe(0);
+    expect(model.summary.missing_canonical_count).toBe(0);
+    expect(model.summary.evidence_only_count).toBe(0);
+    expect(model.summary.missing_layout_count).toBe(0);
+    expect(model.summary.warning_codes).toEqual([]);
+  });
+});
+
+describe("buildManualAdditionHighlights", () => {
+  it("always highlights the canonical span, marked with origin=human", () => {
+    const { canonical } = buildManualAdditionHighlights([manualAddition()]);
+
+    expect(canonical).toHaveLength(1);
+    expect(canonical[0]).toMatchObject({
+      entity_id: "d".repeat(32),
+      entity_type: "LOCATION",
+      source_name: "canonical_reading_text",
+      start: 17,
+      end: 21,
+      origin: "human",
+    });
+  });
+
+  it("highlights the raw span only when the reverse projection is exact", () => {
+    const exact = buildManualAdditionHighlights([manualAddition({ raw_projection_status: "exact" })]);
+    expect(exact.raw).toHaveLength(1);
+    expect(exact.raw[0]).toMatchObject({ source_name: "technical_raw_text", start: 6, end: 10 });
+
+    const partial = buildManualAdditionHighlights([
+      manualAddition({ raw_projection_status: "partial" }),
+    ]);
+    expect(partial.raw).toHaveLength(0);
+
+    const unmapped = buildManualAdditionHighlights([
+      manualAddition({ raw_projection_status: "unmapped", raw_start: null, raw_end: null }),
+    ]);
+    expect(unmapped.raw).toHaveLength(0);
+  });
+
+  it("keeps a rejected manual addition renderable as a dismissed ghost", () => {
+    const { canonical } = buildManualAdditionHighlights([
+      manualAddition({ review_status: "rejected" }),
+    ]);
+
+    expect(canonical).toHaveLength(1);
+    expect(canonical[0].review_state).toBe("rejected");
+  });
+
+  it("carries the resolved review status onto the highlight", () => {
+    const { canonical } = buildManualAdditionHighlights([manualAddition({ review_status: "kept" })]);
+
+    expect(canonical[0].review_state).toBe("kept");
+  });
+
+  it("excludes a stale manual addition entirely, even if accepted", () => {
+    // A stale addition's offsets refer to a superseded text buffer -- rendering it against the
+    // current one would decorate unrelated characters, so it must never reach either view.
+    const { canonical, raw } = buildManualAdditionHighlights([
+      manualAddition({ artifact_currency: "stale" }),
+    ]);
+
+    expect(canonical).toHaveLength(0);
+    expect(raw).toHaveLength(0);
+  });
+
+  it("keeps a current manual addition active", () => {
+    const { canonical } = buildManualAdditionHighlights([
+      manualAddition({ artifact_currency: "current" }),
+    ]);
+
+    expect(canonical).toHaveLength(1);
+  });
+});
+
+describe("invalidAnchorBoundHighlights", () => {
+  it("returns highlights that do not fit the given text buffer", () => {
+    const text = "Hallo Wien";
+    const valid = anchorHighlight({ start: 0, end: 5 });
+    const outOfBounds = anchorHighlight({ start: 0, end: 500 });
+    const negative = anchorHighlight({ start: -3, end: 4 });
+    const empty = anchorHighlight({ start: 3, end: 3 });
+
+    const invalid = invalidAnchorBoundHighlights(text, [valid, outOfBounds, negative, empty]);
+
+    expect(invalid).toEqual([outOfBounds, negative, empty]);
+  });
+
+  it("returns an empty list when every highlight fits", () => {
+    const text = "Hallo Wien";
+    const valid = anchorHighlight({ start: 0, end: 5 });
+
+    expect(invalidAnchorBoundHighlights(text, [valid])).toEqual([]);
   });
 });

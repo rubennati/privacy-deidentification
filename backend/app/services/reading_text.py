@@ -9,6 +9,19 @@ L10 foundation, then persisted L10 line geometry, L9 layout blocks, layout text,
 page text. Bounded document heuristics group simple paired party columns, offer metadata, line-item
 tables, totals, and split prose. When those signals are absent or ambiguous it preserves source
 order instead of inventing structure.
+
+Construction-time lineage: the builder itself emits raw<->canonical correspondence while rendering
+(``ReadingTextResult.row_lineage``). Source identity is attached before rendering -- per fragment
+from the extraction process (byte-verified visitor offsets) or persisted L10 line offsets, per row
+as the union of its fragments -- and each rendered line's canonical offset is computed by walking
+the same join arithmetic the text is assembled with, never by searching the finished string.
+Reorderings keep each line's own range; merges union ranges under an all-known/non-decreasing
+discipline; in-row splits attribute each resulting line exactly its own cells; statuses are
+byte-verified (``exact``/``normalized``/``merged``/``split``); paths with no raw offsets (layout
+blocks) and synthetic headings simply emit no segment rather than a guess, and a document-level
+overlap sweep drops colliding claims symmetrically. Downstream, this lineage is the preferred
+identity source; the post-render geometry projection and unique-token map remain explicit
+fallbacks for spans construction declines.
 """
 
 from __future__ import annotations
@@ -16,7 +29,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
 from statistics import median
 from typing import Any, Literal
@@ -25,6 +38,7 @@ from pypdf import PageObject
 
 from app.schemas import LayoutBlock, TextGeometry, TextGeometryPage, TextPageResult
 from app.services.layout_text import _PdfTextState, _transform_point
+from app.services.text_geometry import collapse_line, segment_page_lines
 
 _SPACE_RUN_RE = re.compile(r"[ \t]+")
 _TABLE_HEADER_LEADERS = ("pos", "position", "vorlage", "gewerk", "bezeichnung")
@@ -63,6 +77,10 @@ _PARTY_HEADING_MARKERS = (
     "RECHNUNG AN",
     "RECHNUNGSDETAILS",
 )
+# Synthetic section headings this builder inserts itself (never sourced from raw text). Shared with
+# ``reading_text_projection.py`` and ``reading_text_row_lineage.py`` so both can recognize exactly
+# the closed set of strings this module invents, rather than guessing from content.
+SYNTHETIC_HEADINGS = frozenset({"ANGEBOT", "LEISTUNGEN", "SUMMEN"})
 _METADATA_PREFIXES = (
     "angebot nr.",
     "angebot nr:",
@@ -172,21 +190,84 @@ _CLOSING_LINE_RE = re.compile(
 
 @dataclass(frozen=True)
 class ReadingCell:
-    """One transient text fragment with normalized horizontal bounds."""
+    """One transient text fragment with normalized horizontal bounds.
+
+    ``source_range`` is this fragment's own page-local, half-open offset span into the page's
+    technical raw text, attached at collection time — from the extraction process itself (the raw
+    page text is byte-verified to be the concatenation of the visitor fragments this cell came
+    from, so the fragment's cumulative offset *is* its raw offset) or from persisted L10 geometry
+    line offsets. It is never derived by searching rendered text, and stays ``None`` whenever the
+    collection path cannot establish it (then only row-level lineage, if any, applies).
+    """
 
     text: str
     x0: float
     x1: float
+    source_range: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
 class ReadingRow:
-    """One transient top-to-bottom row; cells stay left-to-right."""
+    """One transient top-to-bottom row; cells stay left-to-right.
+
+    ``source_range`` is an optional page-local, half-open offset span into this page's technical raw
+    text (``TextPageResult.text``) that this row's own text was constructed from. It is attached at
+    collection time -- either directly from persisted L10 geometry line offsets (exact), or by
+    matching this row's whitespace-collapsed text against the page's raw lines under a global-
+    uniqueness requirement (see ``_match_row_source_ranges``) -- never by searching the finished
+    rendered text afterward. It is row-granularity provenance, not a claim about individual cells or
+    characters, and stays ``None`` whenever it cannot be established without guessing.
+    """
 
     page_number: int
     y0: float
     y1: float
     cells: tuple[ReadingCell, ...]
+    source_range: tuple[int, int] | None = None
+
+
+RowLineageStatus = Literal["exact", "normalized", "merged", "split"]
+# One rendered line's provenance kind while rendering is still in flight: constructed from exactly
+# one whole collected row ("row"), from more than one row ("merge"), or from a subset of one row's
+# cells — an in-row split, a redistributed column cell, a paired label/value cell run ("cells").
+_LineSourceKind = Literal["row", "merge", "cells"]
+# One rendered line's page-local raw lineage: (page_start, page_end, kind), or ``None`` when this
+# rendering step declines to attribute the line. Used only as a type alias to keep long per-line
+# lineage list signatures readable; ``RowLineageSegment.status`` below carries the document-level,
+# schema-facing status computed from it (plus a byte comparison against the raw span).
+_LineSource = tuple[int, int, _LineSourceKind]
+_LineLineage = list[_LineSource | None]
+
+
+@dataclass(frozen=True)
+class RowLineageSegment:
+    """One construction-time-attributed reading-text line.
+
+    ``[canonical_start, canonical_end)`` is this line's own half-open offset in the finished
+    ``ReadingTextResult.text``; ``[page_start, page_end)`` is the page-local raw
+    ``TextPageResult.text`` range (on ``page_number``) it was rendered from. Unlike the post-render
+    projection mechanisms, every segment here traces back to a ``ReadingRow.source_range`` or
+    ``ReadingCell.source_range`` that was already known before this line was assembled -- offsets
+    are computed by walking the same block structure the text was joined from, never by searching
+    the finished string.
+
+    ``status`` is ``"exact"`` when the rendered line is byte-identical to its raw span (verified by
+    directly comparing the rendered line against the raw span it claims -- a verification of a
+    known correspondence, never a search for one), ``"merged"`` when more than one row's own range
+    was unioned into this one line (a wrap continuation or adjacent label/value pairing),
+    ``"split"`` when the line was constructed from a subset of one row's cells (an in-row
+    label/value split, a party-column cell, a redistributed multi-column cell) and is not
+    byte-identical to that subset's raw span, or ``"normalized"`` for any other single-row
+    rendering whose bytes changed (reformatted table/party/metadata cells, de-hyphenation,
+    whitespace collapsing).
+    """
+
+    page_number: int
+    canonical_start: int
+    canonical_end: int
+    page_start: int
+    page_end: int
+    status: RowLineageStatus = "exact"
 
 
 @dataclass(frozen=True)
@@ -196,13 +277,27 @@ class ReadingTextResult:
     text: str
     status: Literal["heuristic", "fallback"]
     flags: tuple[str, ...]
+    row_lineage: tuple[RowLineageSegment, ...] = ()
 
 
-def collect_pdf_reading_rows(page: PageObject, page_number: int) -> list[ReadingRow]:
+def collect_pdf_reading_rows(
+    page: PageObject, page_number: int, page_text: str
+) -> list[ReadingRow]:
     """Collect transient positioned rows from a PDF text layer.
 
     This reads pypdf's decoded visitor callbacks and never persists word/cell geometry. Returning an
     empty list is the safe failure mode; callers then continue through the documented fallbacks.
+    ``page_text`` is this page's already-extracted technical raw text (the same string the caller
+    stores on ``TextPageResult.text``).
+
+    Construction-time source identity: pypdf's extracted page text *is* the in-order concatenation
+    of the text chunks this visitor receives, so accumulating a cursor over every chunk yields each
+    fragment's exact raw offset from the extraction process itself -- no text search, and no
+    reliance on uniqueness, so repeated values keep distinct identities. Because ``page_text`` was
+    produced by a separate ``extract_text()`` call, the concatenation is byte-verified against it
+    before any offset is trusted; on any mismatch (e.g. tool-version drift) every fragment offset
+    is discarded and the older global-uniqueness row matching (``_match_row_source_ranges``) is the
+    explicit fallback.
     """
 
     try:
@@ -212,12 +307,18 @@ def collect_pdf_reading_rows(page: PageObject, page_number: int) -> list[Reading
         bottom = float(page.mediabox.bottom)
         if width <= 0.0 or height <= 0.0:
             return []
-        fragments: list[tuple[str, float, float, float, float]] = []
+        fragments: list[tuple[str, float, float, float, float, tuple[int, int] | None]] = []
         state = _PdfTextState()
+        chunks: list[str] = []
+        cursor = 0
 
         def visitor_text(
             text: str, _cm: Any, _tm: Any, _font: Any, font_size: float
         ) -> None:
+            nonlocal cursor
+            chunk_start = cursor
+            cursor += len(text)
+            chunks.append(text)
             normalized = _normalize_line(text)
             if state.pending is None:
                 return
@@ -235,12 +336,28 @@ def collect_pdf_reading_rows(page: PageObject, page_number: int) -> list[Reading
             y0 = _clamp((height - y - size) / height)
             y1 = _clamp((height - y + size * 0.2) / height)
             if x1 > x0 and y1 > y0:
-                fragments.append((normalized, x0, y0, x1, y1))
+                fragments.append(
+                    (normalized, x0, y0, x1, y1, _stripped_span(text, chunk_start))
+                )
 
         page.extract_text(visitor_operand_before=state.visit_operand, visitor_text=visitor_text)
-        return _group_fragments(fragments, page_number)
+        if "".join(chunks) != page_text:
+            # The stored raw text is not this visitor pass's concatenation, so the cumulative
+            # offsets describe a different string. Discard them all rather than mis-anchor.
+            fragments = [(*fragment[:5], None) for fragment in fragments]
+        rows = _group_fragments(fragments, page_number)
+        return _match_row_source_ranges(rows, page_text)
     except Exception:
         return []
+
+
+def _stripped_span(chunk: str, chunk_start: int) -> tuple[int, int] | None:
+    """The chunk's own raw span with surrounding whitespace excluded, or ``None`` when blank."""
+    stripped = chunk.strip()
+    if not stripped:
+        return None
+    leading = len(chunk) - len(chunk.lstrip())
+    return chunk_start + leading, chunk_start + leading + len(stripped)
 
 
 def build_reading_text(
@@ -270,9 +387,14 @@ def build_reading_text(
     page_blocks: list[str] = []
     flags: list[str] = []
     used_heuristic_source = False
+    # Page-local row lineage, kept alongside each contributed page's rendered text so it can be
+    # discarded (never mis-mapped) if repeated-margin filtering or a whole-document fallback later
+    # changes that page's text.
+    page_numbers: list[int] = []
+    page_lineage: list[list[tuple[int, int, int, int, RowLineageStatus]]] = []
     for page in pages:
         page_geometry = geometry_by_page.get(page.page_number)
-        rendered, page_flags, used_heuristic = _build_page_reading(
+        rendered, page_flags, used_heuristic, page_segments = _build_page_reading(
             page,
             page_geometry,
             blocks_by_page.get(page.page_number, []),
@@ -280,9 +402,12 @@ def build_reading_text(
         )
         if rendered:
             page_blocks.append(rendered)
+            page_numbers.append(page.page_number)
+            page_lineage.append(page_segments)
             flags.extend(page_flags)
         used_heuristic_source = used_heuristic_source or used_heuristic
 
+    pre_filter_page_blocks = list(page_blocks)
     page_blocks, filtered_margins = _filter_repeated_page_margins(page_blocks)
     flags.extend(["repeated_page_margins_filtered"] if filtered_margins else [])
     used_heuristic_source = used_heuristic_source or filtered_margins
@@ -308,10 +433,97 @@ def build_reading_text(
 
     if len(page_blocks) > 1:
         flags.append("multi_page")
+
+    # Row lineage is only trustworthy when the exact per-page strings it was computed against are
+    # still the ones being joined into the final text -- never recomputed by searching the (possibly
+    # margin-filtered, layout-fallback-replaced, or raw-fallback-replaced) final string. The overlap
+    # sweep then drops any segments whose raw-range claims collide (an interleaved-column merge
+    # envelope, or two in-row cell runs whose raw order defied their visual order), symmetrically
+    # and independently of processing order.
+    row_lineage = (
+        _resolve_raw_overlaps(_canonical_row_lineage(page_numbers, page_blocks, page_lineage))
+        if page_blocks == pre_filter_page_blocks
+        else ()
+    )
+
     return ReadingTextResult(
         text="\n\n".join(page_blocks),
         status="heuristic" if used_heuristic_source else "fallback",
         flags=tuple(dict.fromkeys(flags)),
+        row_lineage=row_lineage,
+    )
+
+
+def _canonical_row_lineage(
+    page_numbers: Sequence[int],
+    page_blocks: Sequence[str],
+    page_lineage: Sequence[list[tuple[int, int, int, int, RowLineageStatus]]],
+) -> tuple[RowLineageSegment, ...]:
+    """Offset each page's already-known page-local segments into the final joined text.
+
+    Purely arithmetic: it walks ``page_blocks`` with the same running ``len(rendered) + 2``
+    ("\\n\\n" join) accounting ``build_reading_text`` itself uses, never searching any text.
+    """
+    segments: list[RowLineageSegment] = []
+    canonical_base = 0
+    for page_number, rendered, page_segments in zip(
+        page_numbers, page_blocks, page_lineage, strict=True
+    ):
+        for rendered_start, rendered_end, page_start, page_end, status in page_segments:
+            segments.append(
+                RowLineageSegment(
+                    page_number=page_number,
+                    canonical_start=canonical_base + rendered_start,
+                    canonical_end=canonical_base + rendered_end,
+                    page_start=page_start,
+                    page_end=page_end,
+                    status=status,
+                )
+            )
+        canonical_base += len(rendered) + 2
+    return tuple(segments)
+
+
+def _resolve_raw_overlaps(
+    segments: tuple[RowLineageSegment, ...],
+) -> tuple[RowLineageSegment, ...]:
+    """Drop segments whose page-local raw-range claims collide, symmetrically and set-based.
+
+    A ``merged`` segment's raw range is an *envelope* over several rows; when reading order
+    interleaves sources (multi-column prose, reordered sections), that envelope can legitimately
+    contain raw text some other segment maps precisely, so every conflicted merge is dropped first
+    (the precise claims win). Any conflict that then remains is between two precise claims -- a
+    state with no honest winner -- so both sides are dropped. No step depends on processing or
+    cursor order, and the same input always resolves to the same survivors.
+    """
+    conflicted_merges = {
+        index
+        for index, segment in enumerate(segments)
+        if segment.status == "merged"
+        and any(_raw_ranges_overlap(segment, other) for other in segments if other is not segment)
+    }
+    remaining = [
+        (index, segment)
+        for index, segment in enumerate(segments)
+        if index not in conflicted_merges
+    ]
+    survivors = [
+        segment
+        for index, segment in remaining
+        if not any(
+            _raw_ranges_overlap(segment, other)
+            for other_index, other in remaining
+            if other_index != index
+        )
+    ]
+    return tuple(survivors)
+
+
+def _raw_ranges_overlap(left: RowLineageSegment, right: RowLineageSegment) -> bool:
+    return (
+        left.page_number == right.page_number
+        and left.page_start < right.page_end
+        and right.page_start < left.page_end
     )
 
 
@@ -320,20 +532,30 @@ def _build_page_reading(
     geometry: TextGeometryPage | None,
     layout_blocks: Sequence[LayoutBlock],
     positioned_rows: Sequence[ReadingRow],
-) -> tuple[str | None, list[str], bool]:
+) -> tuple[str | None, list[str], bool, list[tuple[int, int, int, int, RowLineageStatus]]]:
+    """Render one page, returning text/flags/heuristic-used plus page-local row lineage segments.
+
+    ``page_segments`` entries are ``(rendered_start, rendered_end, page_start, page_end, status)``:
+    the line's ``[rendered_start, rendered_end)`` offset within the returned ``rendered`` string,
+    paired with the page-local ``[page_start, page_end)`` raw range (into ``page.text``) it was
+    constructed from and its honestly-computed ``status``. The geometry/positioned-row path and the
+    raw-order fallback (one output line per raw line, offsets from plain cursor arithmetic over the
+    input) produce these; the layout-block path always returns an empty list (layout blocks carry
+    no raw offsets to construct from).
+    """
     rows = list(positioned_rows)
     if not rows and geometry is not None and geometry.status != "unsupported":
         rows = _rows_from_geometry(page, geometry)
     if rows and _source_covers_raw(
         (cell.text for row in rows for cell in row.cells), page.text
     ):
-        blocks, flags = _render_positioned_rows(rows)
-        rendered = _join_blocks(blocks)
+        blocks, flags, blocks_lineage = _render_positioned_rows(rows)
+        rendered, page_segments = _join_blocks_with_lineage(blocks, blocks_lineage, page.text)
         if rendered:
             flags.append("geometry_ordering")
             if geometry is not None and geometry.status != "complete":
                 flags.append("partial_geometry")
-            return rendered, flags, True
+            return rendered, flags, True, page_segments
 
     usable_blocks = [
         block
@@ -345,20 +567,26 @@ def _build_page_reading(
     ):
         rendered = _render_layout_blocks(usable_blocks)
         if rendered:
-            return rendered, ["layout_block_ordering"], True
+            return rendered, ["layout_block_ordering"], True, []
 
-    raw_fallback = _render_fallback_text(page.text)
-    return raw_fallback or None, ["raw_order_fallback"] if raw_fallback else [], False
+    fallback_blocks, fallback_lineage = _fallback_blocks_with_lineage(page.text)
+    raw_fallback, fallback_segments = _join_blocks_with_lineage(
+        fallback_blocks, fallback_lineage, page.text
+    )
+    if not raw_fallback:
+        return None, [], False, []
+    return raw_fallback, ["raw_order_fallback"], False, fallback_segments
 
 
-def _group_fragments(
-    fragments: list[tuple[str, float, float, float, float]], page_number: int
-) -> list[ReadingRow]:
+_Fragment = tuple[str, float, float, float, float, tuple[int, int] | None]
+
+
+def _group_fragments(fragments: list[_Fragment], page_number: int) -> list[ReadingRow]:
     if not fragments:
         return []
     heights = [fragment[4] - fragment[2] for fragment in fragments]
     tolerance = max(0.002, median(heights) * 0.6)
-    groups: list[list[tuple[str, float, float, float, float]]] = []
+    groups: list[list[_Fragment]] = []
     for fragment in sorted(fragments, key=lambda item: ((item[2] + item[4]) / 2, item[1])):
         center = (fragment[2] + fragment[4]) / 2
         if groups:
@@ -375,12 +603,99 @@ def _group_fragments(
             y0=min(fragment[2] for fragment in group),
             y1=max(fragment[4] for fragment in group),
             cells=tuple(
-                ReadingCell(text=fragment[0], x0=fragment[1], x1=fragment[3])
+                ReadingCell(
+                    text=fragment[0],
+                    x0=fragment[1],
+                    x1=fragment[3],
+                    source_range=fragment[5],
+                )
                 for fragment in sorted(group, key=lambda item: item[1])
             ),
+            source_range=_merge_fragment_ranges(group),
         )
         for group in groups
     ]
+
+
+def _merge_fragment_ranges(group: Sequence[_Fragment]) -> tuple[int, int] | None:
+    """Union contributing fragments' known raw ranges, or decline when any fragment lacks one.
+
+    A fragment without a known range means part of this row's provenance is unaccounted for, so the
+    whole row must decline rather than silently understate its own source span.
+    """
+    ranges: list[tuple[int, int]] = []
+    for fragment in group:
+        source_range = fragment[5]
+        if source_range is None:
+            return None
+        ranges.append(source_range)
+    return min(start for start, _end in ranges), max(end for _start, end in ranges)
+
+
+def _match_row_source_ranges(rows: list[ReadingRow], page_text: str) -> list[ReadingRow]:
+    """Attach construction-time page-local source ranges to pypdf-visitor-collected rows.
+
+    This is the explicit fallback for rows whose fragments carry no extraction offsets (the
+    byte-verification in ``collect_pdf_reading_rows`` failed, or a legacy path produced rows
+    without them); rows that already have a ``source_range`` are left untouched. A row's range can
+    then only be established by matching its own (whitespace-collapsed) text against this page's
+    raw lines -- the exact discipline ``text_geometry.py`` already uses for L10 span geometry,
+    applied once per row at collection time instead of once per output line after rendering. A
+    row's range is assigned only when both sides are globally unique on this page: its collapsed
+    text is not shared by any other collected row, its match is the only raw line sharing that
+    exact collapsed text, and no other row claims the same raw line. Any of those conditions
+    failing declines (``source_range`` stays ``None``) rather than guessing by processing order --
+    duplicated/repeated lines are exactly the case this must not silently resolve.
+    """
+    if not rows or all(row.source_range is not None for row in rows):
+        return rows
+    raw_lines = segment_page_lines(page_text)
+    raw_line_indices_by_text: dict[str, list[int]] = {}
+    for index, (_start, _end, collapsed) in enumerate(raw_lines):
+        raw_line_indices_by_text.setdefault(collapsed, []).append(index)
+
+    row_collapsed = [
+        collapse_line(_join_cell_texts(cell.text for cell in row.cells)) for row in rows
+    ]
+    row_text_counts = Counter(text for text in row_collapsed if text)
+
+    known_ranges = [row.source_range for row in rows if row.source_range is not None]
+    claims: dict[int, list[int]] = {}
+    for row_index, collapsed in enumerate(row_collapsed):
+        if rows[row_index].source_range is not None:
+            continue
+        if not collapsed or row_text_counts[collapsed] != 1:
+            continue
+        candidates = raw_line_indices_by_text.get(collapsed, [])
+        if len(candidates) != 1:
+            continue
+        claims.setdefault(candidates[0], []).append(row_index)
+
+    resolved = _resolve_unique_row_claims(claims, raw_lines, known_ranges)
+    if not resolved:
+        return rows
+    return [
+        replace(row, source_range=resolved[index]) if index in resolved else row
+        for index, row in enumerate(rows)
+    ]
+
+
+def _resolve_unique_row_claims(
+    claims: dict[int, list[int]],
+    raw_lines: Sequence[tuple[int, int, str]],
+    known_ranges: Sequence[tuple[int, int]],
+) -> dict[int, tuple[int, int]]:
+    resolved: dict[int, tuple[int, int]] = {}
+    for raw_index, row_indices in claims.items():
+        if len(row_indices) != 1:
+            continue
+        start, end, _collapsed = raw_lines[raw_index]
+        # A raw line already covered by another row's extraction offsets is not this row's to
+        # claim, no matter how unique its text looks.
+        if any(start < other_end and other_start < end for other_start, other_end in known_ranges):
+            continue
+        resolved[row_indices[0]] = (start, end)
+    return resolved
 
 
 def _rows_by_page(rows: Sequence[ReadingRow]) -> dict[int, list[ReadingRow]]:
@@ -394,13 +709,14 @@ def _rows_by_page(rows: Sequence[ReadingRow]) -> dict[int, list[ReadingRow]]:
 
 
 def _rows_from_geometry(page: TextPageResult, geometry: TextGeometryPage) -> list[ReadingRow]:
-    fragments = [
+    fragments: list[_Fragment] = [
         (
             _normalize_line(page.text[line.page_start : line.page_end]),
             line.x0 / geometry.page_width,
             line.y0 / geometry.page_height,
             line.x1 / geometry.page_width,
             line.y1 / geometry.page_height,
+            _stripped_span(page.text[line.page_start : line.page_end], line.page_start),
         )
         for line in geometry.lines
         if page.text[line.page_start : line.page_end].strip()
@@ -414,10 +730,12 @@ def _without_separator_cells(row: ReadingRow) -> ReadingRow:
     )
     if cells == row.cells:
         return row
-    return ReadingRow(page_number=row.page_number, y0=row.y0, y1=row.y1, cells=cells)
+    return replace(row, cells=cells)
 
 
-def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
+def _render_positioned_rows(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[list[str]], list[str], list[_LineLineage]]:
     # A separator-rule fragment (long underscore/dash run above a heading or table) can share a row
     # with real content purely because of PDF run boundaries. Left in, it both breaks table-header
     # leader detection (the rule becomes "cell 0" instead of the real label) and inflates rendered
@@ -426,7 +744,7 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
     # accounting changes.
     cleaned = [row for row in (_without_separator_cells(row) for row in rows) if row.cells]
     if not cleaned:
-        return [], []
+        return [], [], []
     ordered = sorted(cleaned, key=lambda row: (row.y0, row.cells[0].x0))
     table_index = next(
         (index for index, row in enumerate(ordered) if _is_table_header(row.cells)), None
@@ -438,10 +756,12 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
     )
     blocks: list[list[str]] = []
     flags: list[str] = []
+    blocks_lineage: list[_LineLineage] = []
     body_cursor = 0
     if party_index is not None:
-        pre_party_blocks, pre_party_flags = _body_blocks(ordered[:party_index])
+        pre_party_blocks, pre_party_flags, pre_party_lineage = _body_blocks(ordered[:party_index])
         blocks.extend(pre_party_blocks)
+        blocks_lineage.extend(pre_party_lineage)
         flags.extend(pre_party_flags)
         metadata_index = next(
             (
@@ -455,9 +775,12 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
             metadata_index,
             _party_gap_end(ordered, party_index, metadata_index),
         )
-        left, right = _party_columns(ordered[party_index:metadata_index])
+        left, right, left_lineage, right_lineage = _party_columns(
+            ordered[party_index:metadata_index]
+        )
         if left and right:
             blocks.extend((left, right))
+            blocks_lineage.extend((left_lineage, right_lineage))
             flags.append("two_column_grouping")
             body_cursor = metadata_index
         else:
@@ -471,58 +794,84 @@ def _render_positioned_rows(rows: Sequence[ReadingRow]) -> tuple[list[list[str]]
             ),
             body_end,
         )
-        body_blocks, body_flags = _body_blocks(ordered[:metadata_index])
+        body_blocks, body_flags, body_lineage = _body_blocks(ordered[:metadata_index])
         blocks.extend(body_blocks)
+        blocks_lineage.extend(body_lineage)
         flags.extend(body_flags)
         body_cursor = metadata_index
 
     metadata_rows = ordered[body_cursor:body_end]
     if metadata_rows:
-        metadata_blocks, metadata_flags = _render_metadata(metadata_rows)
+        metadata_blocks, metadata_flags, metadata_lineage = _render_metadata(metadata_rows)
         blocks.extend(metadata_blocks)
+        blocks_lineage.extend(metadata_lineage)
         flags.extend(metadata_flags)
 
     table_end = body_end
     if table_index is not None:
-        table_block, table_end, table_flags = _render_table(ordered, table_index)
+        table_block, table_end, table_flags, table_lineage = _render_table(ordered, table_index)
         if table_block:
             section_heading = _table_section_heading(ordered[table_index])
-            blocks.append([*([section_heading] if section_heading else []), *table_block])
+            rendered_table_block = [*([section_heading] if section_heading else []), *table_block]
+            rendered_table_lineage = [
+                *([None] if section_heading else []),
+                *table_lineage,
+            ]
+            blocks.append(rendered_table_block)
+            blocks_lineage.append(rendered_table_lineage)
             flags.append("table_row_reconstruction")
             flags.extend(table_flags)
             if section_heading:
                 flags.append("document_sections")
         else:
-            fallback_blocks, fallback_flags = _body_blocks(ordered[table_index : table_index + 1])
+            fallback_blocks, fallback_flags, fallback_lineage = _body_blocks(
+                ordered[table_index : table_index + 1]
+            )
             blocks.extend(fallback_blocks)
+            blocks_lineage.extend(fallback_lineage)
             flags.extend(fallback_flags)
             table_end = table_index + 1
 
     if table_end < len(ordered):
-        post_blocks, post_flags = _render_post_table(ordered[table_end:])
+        post_blocks, post_flags, post_lineage = _render_post_table(ordered[table_end:])
         blocks.extend(post_blocks)
+        blocks_lineage.extend(post_lineage)
         flags.extend(post_flags)
-    return [block for block in blocks if block], flags
+    kept_blocks, kept_lineage = _drop_empty_blocks(blocks, blocks_lineage)
+    return kept_blocks, flags, kept_lineage
+
+
+def _drop_empty_blocks(
+    blocks: Sequence[list[str]], blocks_lineage: Sequence[_LineLineage]
+) -> tuple[list[list[str]], list[_LineLineage]]:
+    kept_blocks = [block for block in blocks if block]
+    kept_lineage = [
+        lineage for block, lineage in zip(blocks, blocks_lineage, strict=True) if block
+    ]
+    return kept_blocks, kept_lineage
 
 
 def _plain_blocks(rows: Sequence[ReadingRow]) -> list[list[str]]:
-    blocks, _ = _plain_blocks_with_flags(rows)
+    blocks, _flags, _lineage = _plain_blocks_with_flags(rows)
     return blocks
 
 
-def _body_blocks(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
-    column_blocks = _multi_column_blocks(rows)
-    if column_blocks is not None:
-        return column_blocks, ["multi_column_reconstruction"]
-    table_blocks = _generic_table_blocks(rows)
-    if table_blocks is not None:
-        return table_blocks
+def _body_blocks(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[list[str]], list[str], list[_LineLineage]]:
+    column_result = _multi_column_blocks(rows)
+    if column_result is not None:
+        column_blocks, column_lineage = column_result
+        return column_blocks, ["multi_column_reconstruction"], column_lineage
+    table_result = _generic_table_blocks(rows)
+    if table_result is not None:
+        return table_result
     return _plain_blocks_with_flags(rows)
 
 
 def _generic_table_blocks(
     rows: Sequence[ReadingRow],
-) -> tuple[list[list[str]], list[str]] | None:
+) -> tuple[list[list[str]], list[str], list[_LineLineage]] | None:
     """OCR/Text L13: detect a table from repeated row geometry alone, without header keywords.
 
     Only a maximal run of 3+ consecutive rows that all align on the same 3+ column x-positions
@@ -530,7 +879,8 @@ def _generic_table_blocks(
     body rows. A shorter or less consistent run is left on the existing safe paths (plain rows, or
     multi-column prose when it already matched) instead of guessing at structure. Row order, cell
     text, and multiline continuation handling all reuse the same primitives as the keyword-header
-    table renderer.
+    table renderer, including per-row lineage for the detected table's own rows (see
+    ``_extend_aligned_table_rows``); only a genuine in-row split still declines.
     """
 
     row_list = [row for row in rows if row.cells]
@@ -540,20 +890,34 @@ def _generic_table_blocks(
     if run is None:
         return None
     start, end, column_x = run
-    body_rows, _ = _extend_aligned_table_rows(row_list, start + 1, column_x)
+    body_rows, body_lineage, _ = _extend_aligned_table_rows(row_list, start + 1, column_x)
     aligned_rows = [_align_table_cells(row_list[start], column_x), *body_rows]
     table_block = [" | ".join(cells) for cells in aligned_rows]
+    table_lineage = [_single_row_source(row_list[start]), *body_lineage]
 
-    prefix_blocks, prefix_flags = (
-        _plain_blocks_with_flags(row_list[:start]) if start else ([], [])
-    )
-    blocks = [*prefix_blocks, table_block]
+    prefix_blocks: list[list[str]]
+    prefix_flags: list[str]
+    prefix_lineage: list[_LineLineage]
+    if start:
+        prefix_blocks, prefix_flags, prefix_lineage = _plain_blocks_with_flags(row_list[:start])
+    else:
+        prefix_blocks, prefix_flags, prefix_lineage = [], [], []
+    blocks: list[list[str]] = [*prefix_blocks, table_block]
+    blocks_lineage: list[_LineLineage] = [*prefix_lineage, table_lineage]
     flags = [*prefix_flags, "table_row_reconstruction", "generic_table_reconstruction"]
     if end < len(row_list):
-        post_blocks, post_flags = _render_post_table(row_list[end:])
+        post_blocks, post_flags, post_lineage = _render_post_table(row_list[end:])
         blocks.extend(post_blocks)
+        blocks_lineage.extend(post_lineage)
         flags.extend(post_flags)
-    return blocks, flags
+    return blocks, flags, blocks_lineage
+
+
+def _none_lineage(
+    blocks: Sequence[Sequence[str]],
+) -> list[_LineLineage]:
+    """A parallel all-``None`` lineage shape for a block list this step declines to attribute."""
+    return [[None for _ in block] for block in blocks]
 
 
 def _find_generic_table_run(
@@ -563,21 +927,46 @@ def _find_generic_table_run(
         if len(row.cells) < _TABLE_MIN_OCCUPIED_COLUMNS:
             continue
         column_x = [cell.x0 for cell in row.cells]
-        body_rows, end = _extend_aligned_table_rows(rows, index + 1, column_x)
+        body_rows, _body_lineage, end = _extend_aligned_table_rows(rows, index + 1, column_x)
         if 1 + len(body_rows) >= _GENERIC_TABLE_MIN_ROWS:
             return index, end, column_x
     return None
 
 
-def _multi_column_blocks(rows: Sequence[ReadingRow]) -> list[list[str]] | None:
+def _multi_column_blocks(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[list[str]], list[_LineLineage]] | None:
+    """Reconstruct multi-column prose, keeping each redistributed cell run's own identity.
+
+    Column rows are synthesized from redistributed cells (``_column_rows``): a single source row's
+    cells can land in *different* synthesized column rows (the column split can cut through one
+    row, not just reorder whole rows), so a synthesized row never inherits a whole row's
+    ``source_range``. Instead it carries the union of exactly its own contributing cells'
+    collection-time ranges (or none, when any cell lacks one) -- so every attributed line here is
+    an in-row "cells" attribution, honestly distinct from a whole-row one. Wrap merges within a
+    column go through the same union discipline as elsewhere; a merge whose envelope would swallow
+    the *other* column's interleaved raw text is dropped by the document-level overlap sweep in
+    ``build_reading_text`` rather than kept as a lie.
+    """
+
     columns = _detect_multi_column_layout(rows)
     if columns is None:
         return None
     blocks: list[list[str]] = []
+    blocks_lineage: list[_LineLineage] = []
     for column_rows in columns:
-        column_blocks, _ = _plain_blocks_with_flags(column_rows)
+        column_blocks, _flags, column_lineage = _plain_blocks_with_flags(column_rows)
         blocks.extend(column_blocks)
-    return blocks or None
+        blocks_lineage.extend(
+            [
+                (source[0], source[1], "cells" if source[2] == "row" else source[2])
+                if source is not None
+                else None
+                for source in line_lineage
+            ]
+            for line_lineage in column_lineage
+        )
+    return (blocks, blocks_lineage) if blocks else None
 
 
 def _detect_multi_column_layout(
@@ -630,6 +1019,11 @@ def _column_rows(rows: Sequence[ReadingRow], boundaries: Sequence[float]) -> lis
         for index, cells in enumerate(assigned):
             if not cells:
                 continue
+            # The synthesized row's range is the union of exactly its own contributing cells'
+            # collection-time ranges -- never the whole source row's range, which may span the
+            # other column's cells too.
+            run_source = _cell_run_source(cells)
+            run_range = (run_source[0], run_source[1]) if run_source is not None else None
             column_rows[index].append(
                 ReadingRow(
                     page_number=row.page_number,
@@ -640,8 +1034,10 @@ def _column_rows(rows: Sequence[ReadingRow], boundaries: Sequence[float]) -> lis
                             text=_join_cell_texts(cell.text for cell in cells),
                             x0=min(cell.x0 for cell in cells),
                             x1=max(cell.x1 for cell in cells),
+                            source_range=run_range,
                         ),
                     ),
+                    source_range=run_range,
                 )
             )
     return column_rows
@@ -762,9 +1158,11 @@ def _column_index(cell: ReadingCell, boundaries: Sequence[float]) -> int:
     return len(boundaries)
 
 
-def _plain_blocks_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
+def _plain_blocks_with_flags(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[list[str]], list[str], list[_LineLineage]]:
     if not rows:
-        return [], []
+        return [], [], []
     groups: list[list[ReadingRow]] = [[]]
     heights = [max(0.001, row.y1 - row.y0) for row in rows]
     gap_limit = median(heights) * 2.2
@@ -781,13 +1179,15 @@ def _plain_blocks_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[list[str]
         previous_is_letter_marker = is_letter_marker
     blocks: list[list[str]] = []
     flags: list[str] = []
+    blocks_lineage: list[_LineLineage] = []
     for group in groups:
         if not group:
             continue
-        lines, group_flags = _join_continuations_with_flags(group)
+        lines, group_flags, lines_lineage = _join_continuations_with_flags(group)
         blocks.append(lines)
+        blocks_lineage.append(lines_lineage)
         flags.extend(group_flags)
-    return blocks, flags
+    return blocks, flags, blocks_lineage
 
 
 def _is_letter_marker_row(row: ReadingRow) -> bool:
@@ -802,11 +1202,13 @@ def _is_letter_marker_row(row: ReadingRow) -> bool:
 
 
 def _join_continuations(rows: Sequence[ReadingRow]) -> list[str]:
-    lines, _ = _join_continuations_with_flags(rows)
+    lines, _flags, _lineage = _join_continuations_with_flags(rows)
     return lines
 
 
-def _join_continuations_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[str], list[str]]:
+def _join_continuations_with_flags(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[str], list[str], _LineLineage]:
     """Render one gap-grouped block, joining bullet/prose wrap continuations conservatively.
 
     A bulleted item or long prose line keeps absorbing the next row while it has not yet reached a
@@ -815,17 +1217,28 @@ def _join_continuations_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[str
     post-table joiner below): this block's rows can share near-identical line spacing between
     genuinely separate sentences, so row-closeness alone is not a reliable continuation signal and
     would otherwise keep absorbing unrelated following lines.
+
+    This is the plain-paragraph/body rendering path. The third return value is a per-output-line
+    list of page-local raw source ranges (parallel to ``lines``): a single untouched row passes its
+    own known ``source_range`` through directly (never a merge), a merge of several rows (wrap
+    continuation, adjacent label/value pairing) unions their ranges only when *every* contributing
+    row has one (flagged as a real merge whenever more than one row contributed), and a within-row
+    split (``_paired_cell_lines``) attributes each resulting line the union of exactly the cells it
+    was built from (an in-row "cells" attribution) when every cell carries its own collection-time
+    range -- declining all of the row's lines otherwise rather than guess a sub-row boundary.
     """
 
     row_list = list(rows)
     rendered = [_row_text(row) for row in row_list]
     lines: list[str] = []
     flags: list[str] = []
+    lines_lineage: _LineLineage = []
     cursor = 0
     while cursor < len(rendered):
-        paired = _paired_cell_lines(row_list[cursor])
+        paired, paired_lineage = _paired_cell_lines_with_sources(row_list[cursor])
         if paired:
             lines.extend(paired)
+            lines_lineage.extend(paired_lineage)
             flags.append("label_value_pairing")
             cursor += 1
             continue
@@ -839,6 +1252,7 @@ def _join_continuations_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[str
             for extra in rendered[cursor + 2 : value_end]:
                 value_text = _join_wrapped_line(value_text, extra)
             lines.append(f"{line.rstrip().rstrip(':')}: {value_text}")
+            lines_lineage.append(_union_source_ranges(row_list[cursor:value_end]))
             flags.append("label_value_pairing")
             if value_end > cursor + 2:
                 flags.append("multiline_value_pairing")
@@ -847,6 +1261,7 @@ def _join_continuations_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[str
         is_bullet = line.startswith("- ")
         if is_bullet or _is_long_prose_line(line):
             paragraph = line
+            paragraph_rows = [row_list[cursor]]
             cursor += 1
             while (
                 cursor < len(rendered)
@@ -858,25 +1273,115 @@ def _join_continuations_with_flags(rows: Sequence[ReadingRow]) -> tuple[list[str
                 and _rows_are_close(row_list[cursor - 1], row_list[cursor])
             ):
                 paragraph = _join_wrapped_line(paragraph, rendered[cursor])
+                paragraph_rows.append(row_list[cursor])
                 cursor += 1
             lines.append(paragraph)
+            lines_lineage.append(_union_source_ranges(paragraph_rows))
             continue
         lines.append(line)
+        lines_lineage.append(_single_row_source(row_list[cursor]))
         cursor += 1
-    return lines, flags
+    return lines, flags, lines_lineage
+
+
+def _union_source_ranges(rows: Sequence[ReadingRow]) -> _LineSource | None:
+    """Union rows' known source ranges when every row has one and raw order stays non-decreasing.
+
+    Rows merged here were adjacent in *visual* (reading) order, not necessarily in *raw* order --
+    reordered columns/sections can interleave. Requiring each next row's range to start no earlier
+    than the previous row's own range ended keeps a merged envelope from silently spanning raw text
+    that belongs to some other, separately rendered row; any out-of-order pair declines instead,
+    and the document-level overlap sweep in ``build_reading_text`` additionally drops any merge
+    whose envelope still swallows another attributed segment's raw range (interleaved columns).
+
+    The third element is ``"merge"`` when more than one row genuinely contributed (a real merge),
+    so callers can report an honest ``"merged"`` status rather than implying a single untouched
+    row.
+    """
+    ranges: list[tuple[int, int]] = []
+    for row in rows:
+        if row.source_range is None:
+            return None
+        ranges.append(row.source_range)
+    if not ranges:
+        return None
+    for previous, current in pairwise(ranges):
+        if current[0] < previous[1]:
+            return None
+    return ranges[0][0], ranges[-1][1], "merge" if len(ranges) > 1 else "row"
+
+
+def _single_row_source(row: ReadingRow) -> _LineSource | None:
+    """A single untouched row's own known range, never a merge."""
+    if row.source_range is None:
+        return None
+    return row.source_range[0], row.source_range[1], "row"
+
+
+def _cell_run_source(cells: Sequence[ReadingCell]) -> _LineSource | None:
+    """Union a consecutive cell run's own known ranges -- an in-row ("cells") attribution.
+
+    Every contributing cell must carry its own collection-time range, and the ranges must stay in
+    non-decreasing raw order (cells are visited in visual x-order, which is not proof of raw
+    order); otherwise the run declines rather than risk an envelope swallowing a sibling cell that
+    is rendered elsewhere. The document-level overlap sweep still guards the residual case where
+    two runs' envelopes overlap.
+    """
+    ranges: list[tuple[int, int]] = []
+    for cell in cells:
+        if cell.source_range is None:
+            return None
+        ranges.append(cell.source_range)
+    if not ranges:
+        return None
+    for previous, current in pairwise(ranges):
+        if current[0] < previous[1]:
+            return None
+    return ranges[0][0], ranges[-1][1], "cells"
 
 
 def _paired_cell_lines(row: ReadingRow) -> list[str]:
+    lines, _lineage = _paired_cell_lines_with_sources(row)
+    return lines
+
+
+def _paired_cell_lines_with_sources(row: ReadingRow) -> tuple[list[str], _LineLineage]:
+    """Split one row's label/value cell pairs into lines, each keeping its own cells' identity.
+
+    Every output line is built from exactly two known cells, so its source is the union of those
+    two cells' collection-time ranges -- an in-row split made explicit rather than declined. If any
+    contributing cell lacks a range, or the per-line unions are not strictly ordered in raw space
+    (so one line's envelope could cover a sibling line's raw text), the whole row's lines decline
+    together, deterministically, rather than attributing some pairs by luck of position.
+    """
     if len(row.cells) < 4 or len(row.cells) % 2 != 0:
-        return []
+        return [], []
     pairs: list[str] = []
+    pair_sources: _LineLineage = []
     for index in range(0, len(row.cells), 2):
         label = _normalize_line(row.cells[index].text)
         value = _normalize_line(row.cells[index + 1].text)
         if not _is_standalone_field_label(label) or _is_standalone_field_label(value):
-            return []
+            return [], []
         pairs.append(f"{label.rstrip(':')}: {value}")
-    return pairs
+        pair_sources.append(_cell_run_source(row.cells[index : index + 2]))
+    return pairs, _ordered_or_declined(pair_sources)
+
+
+def _ordered_or_declined(sources: _LineLineage) -> _LineLineage:
+    """Keep a sibling-source list only when every entry is known and strictly raw-ordered.
+
+    Sibling lines split from one row must partition that row's raw span: a missing entry or an
+    out-of-order/overlapping pair means the split's raw boundaries are not fully established, so
+    all siblings decline together (position in the processing order is never identity evidence).
+    """
+    known = [source for source in sources if source is not None]
+    if len(known) != len(sources):
+        return [None] * len(sources)
+    for (_s0, previous_end, _k0), (current_start, _e1, _k1) in pairwise(known):
+        if current_start < previous_end:
+            return [None] * len(sources)
+    return sources
 
 
 def _safe_adjacent_label_value(label_row: ReadingRow, value_row: ReadingRow) -> bool:
@@ -992,17 +1497,40 @@ def _is_party_heading_cell(text: str) -> bool:
     return normalized in _PARTY_HEADING_MARKERS
 
 
-def _party_columns(rows: Sequence[ReadingRow]) -> tuple[list[str], list[str]]:
+def _party_columns(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[str], list[str], _LineLineage, _LineLineage]:
+    """Split rows into left/right party column text, preserving lineage through the reorder.
+
+    A row with exactly one cell that lands wholly on one side reorders straight into that side's
+    output without changing its own content -- its known ``source_range`` is attributed to the
+    resulting line unchanged (this is the module's reordering case: source identity survives being
+    moved into a different sequence). A row with cells split across both sides (e.g. a shared
+    two-party heading row), or with more than one cell contributed to the same side, renders each
+    cell as its own output line; each such line is attributed exactly its own cell's
+    collection-time range (an in-row "cells" attribution), or declines when that cell never
+    learned one -- never a guessed sub-row boundary.
+    """
     if not rows or len(rows[0].cells) < 2:
-        return [], []
+        return [], [], [], []
     boundary = (rows[0].cells[0].x0 + rows[0].cells[-1].x0) / 2
     left: list[str] = []
     right: list[str] = []
+    left_lineage: _LineLineage = []
+    right_lineage: _LineLineage = []
     for row in rows:
+        whole_row_attributable = len(row.cells) == 1
         for cell in row.cells:
-            target = left if cell.x0 < boundary else right
+            target_side = 0 if cell.x0 < boundary else 1
+            target, target_lineage = (
+                (left, left_lineage) if target_side == 0 else (right, right_lineage)
+            )
             target.append(cell.text)
-    return left, right
+            if whole_row_attributable:
+                target_lineage.append(_single_row_source(row))
+            else:
+                target_lineage.append(_cell_run_source([cell]))
+    return left, right, left_lineage, right_lineage
 
 
 def _party_gap_end(rows: Sequence[ReadingRow], start: int, limit: int) -> int:
@@ -1017,17 +1545,68 @@ def _party_gap_end(rows: Sequence[ReadingRow], start: int, limit: int) -> int:
     return limit
 
 
-def _render_metadata(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
-    lines = [part for row in rows for part in _split_paired_labels(_row_text(row))]
+def _render_metadata(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[list[str]], list[str], list[_LineLineage]]:
+    """Render offer/metadata fields, attributing lineage per rendered line.
+
+    An untouched single-line row keeps its own known ``source_range``. A row that
+    ``_split_paired_labels`` splits into several fused "Label: value" fields is attributed
+    per part when -- and only when -- every part boundary coincides with a cell boundary
+    (``_metadata_part_sources`` walks the same cell-join arithmetic the row text was built with);
+    each part then owns exactly its contributing cells' collection-time ranges. A part boundary
+    falling *inside* one cell means the split has no established raw boundary, so all of that
+    row's parts decline together. The synthetic ``ANGEBOT`` section heading this function may
+    insert carries no source range, since it was never present in the raw text.
+    """
+    lines: list[str] = []
+    lines_lineage: _LineLineage = []
+    for row in rows:
+        parts = _split_paired_labels(_row_text(row))
+        lines.extend(parts)
+        if len(parts) == 1:
+            lines_lineage.append(_single_row_source(row))
+        else:
+            lines_lineage.extend(_metadata_part_sources(row, parts))
     if not lines:
-        return [], []
+        return [], [], []
     has_offer = any(
         line.casefold().startswith(("angebot", "datum:", "bauvorhaben:"))
         for line in lines
     )
     if has_offer:
-        return [["ANGEBOT", *lines]], []
-    return [lines], []
+        return [["ANGEBOT", *lines]], [], [[None, *lines_lineage]]
+    return [lines], [], [lines_lineage]
+
+
+def _metadata_part_sources(row: ReadingRow, parts: Sequence[str]) -> _LineLineage:
+    """Attribute each split metadata part to the consecutive cell run it was built from.
+
+    This walks the row's own cells in order, extending the current run until its cell-join text
+    equals the next part -- the same join arithmetic the row text was assembled with, applied to
+    already-known cells, never a search over unknown content. The partition succeeds only when
+    every part is exactly a whole cell run and every cell is consumed; any leftover, overrun, or
+    mid-cell boundary declines all parts together.
+    """
+    declined: _LineLineage = [None] * len(parts)
+    sources: _LineLineage = []
+    cell_index = 0
+    for part in parts:
+        run: list[ReadingCell] = []
+        while cell_index < len(row.cells):
+            run.append(row.cells[cell_index])
+            cell_index += 1
+            joined = _join_cell_texts(cell.text for cell in run)
+            if joined == part:
+                break
+            if len(joined) >= len(part):
+                return declined
+        else:
+            return declined
+        sources.append(_cell_run_source(run))
+    if cell_index != len(row.cells):
+        return declined
+    return _ordered_or_declined(sources)
 
 
 def _is_table_header(cells: Sequence[ReadingCell]) -> bool:
@@ -1074,35 +1653,54 @@ def _table_section_heading(header: ReadingRow) -> str | None:
     return "LEISTUNGEN" if first.startswith("pos") and len(header.cells) >= 5 else None
 
 
-def _render_table(rows: Sequence[ReadingRow], start: int) -> tuple[list[str], int, list[str]]:
+def _render_table(
+    rows: Sequence[ReadingRow], start: int
+) -> tuple[list[str], int, list[str], _LineLineage]:
+    """Render a keyword-header table, attributing row-granularity lineage per rendered line.
+
+    A non-fused header (3+ header cells, one input row) and each non-continuation body row keep
+    their own row's ``source_range`` -- reformatting a row's cells into ``"col | col | col"`` text
+    changes its length but not its provenance, so this is reported ``"normalized"`` rather than
+    ``"exact"`` by the length-comparison this module's final join step already applies uniformly. A
+    *fused* header (1-2 raw cells split into 3+ labels by regex) cannot be attributed to any single
+    resulting column label without guessing a sub-cell boundary, so it declines like the module's
+    other in-row-split cases. A multiline continuation row folds into its owning row's cell and
+    merges lineage the same way a wrapped paragraph line does elsewhere in this module.
+    """
     header = rows[start]
     header_labels = _table_header_labels(header)
     column_x = _table_column_positions(rows, start, len(header_labels))
     if len(header_labels) < 3 or column_x is None:
-        return [], start, []
-    body_rows, end = _extend_aligned_table_rows(rows, start + 1, column_x)
+        return [], start, [], []
+    body_rows, body_lineage, end = _extend_aligned_table_rows(rows, start + 1, column_x)
     aligned_rows = [header_labels, *body_rows]
+    header_lineage = _single_row_source(header) if len(header.cells) >= 3 else None
+    lineage = [header_lineage, *body_lineage]
     flags = ["dense_table_reconstruction"] if len(header.cells) in (1, 2) else []
-    return [" | ".join(cells) for cells in aligned_rows], end, flags
+    return [" | ".join(cells) for cells in aligned_rows], end, flags, lineage
 
 
 def _extend_aligned_table_rows(
     rows: Sequence[ReadingRow], start: int, column_x: Sequence[float]
-) -> tuple[list[list[str]], int]:
+) -> tuple[list[list[str]], _LineLineage, int]:
     """Row-align rows from ``start`` onward while column occupancy stays safe.
 
     Shared by the keyword-header table renderer and the OCR/Text L13 generic geometric table
     detector below. A lone single-cell row landing in an already-used column is treated as a
     wrapped multiline continuation of the previous row's cell in that column rather than a new
-    row, keeping a multiline table description attached to its owning row.
+    row, keeping a multiline table description attached to its owning row -- its lineage unions
+    with the owning row's the same way a wrapped paragraph line does, and declines if either side
+    is unknown or the merge would go backwards in raw order.
     """
 
     aligned_rows: list[list[str]] = []
+    lineage: _LineLineage = []
     end = start
     while end < len(rows):
         aligned, occupied = _align_table_cells_with_occupied(rows[end], column_x)
         if len(occupied) >= min(_TABLE_MIN_OCCUPIED_COLUMNS, len(column_x)):
             aligned_rows.append(aligned)
+            lineage.append(_single_row_source(rows[end]))
             end += 1
             continue
         if aligned_rows and len(rows[end].cells) == 1 and len(occupied) == 1:
@@ -1112,10 +1710,29 @@ def _extend_aligned_table_rows(
                 aligned_rows[-1][continuation_column] = (
                     f"{aligned_rows[-1][continuation_column]} {continuation}".strip()
                 )
+                lineage[-1] = _merge_line_source(lineage[-1], rows[end].source_range)
                 end += 1
                 continue
         break
-    return aligned_rows, end
+    return aligned_rows, lineage, end
+
+
+def _merge_line_source(
+    previous: _LineSource | None, addition: tuple[int, int] | None
+) -> _LineSource | None:
+    """Extend an already-attributed line's lineage with one more contributing row's range.
+
+    Declines (``None``) if either side is unknown, or the addition would go backwards in raw
+    order -- the same non-decreasing-order discipline ``_union_source_ranges`` applies, since a
+    continuation row is adjacent in *visual* order, not necessarily in *raw* order.
+    """
+    if previous is None or addition is None:
+        return None
+    previous_start, previous_end, _kind = previous
+    addition_start, addition_end = addition
+    if addition_start < previous_end:
+        return None
+    return previous_start, addition_end, "merge"
 
 
 def _table_header_labels(header: ReadingRow) -> list[str]:
@@ -1159,23 +1776,37 @@ def _align_table_cells_with_occupied(
     return cells, occupied
 
 
-def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], list[str]]:
+def _render_post_table(
+    rows: Sequence[ReadingRow],
+) -> tuple[list[list[str]], list[str], list[_LineLineage]]:
+    """Render post-table totals and prose with construction-time row lineage.
+
+    This path does not realign table cells: a total row and an ordinary standalone post-table row
+    are emitted from exactly one pre-attributed ``ReadingRow``. Conservatively joined prose unions
+    its contributing rows' ranges under the same all-known/non-decreasing discipline as the body
+    path's wrap merges. The synthetic ``SUMMEN`` heading deliberately has no source range.
+    """
     lines = [_row_text(row) for row in rows]
     blocks: list[list[str]] = []
     flags: list[str] = []
+    blocks_lineage: list[_LineLineage] = []
     total_lines: list[str] = []
+    total_lineage: _LineLineage = []
     cursor = 0
     while cursor < len(lines) and lines[cursor].casefold().startswith(_TOTAL_PREFIXES):
         total_lines.append(lines[cursor])
+        total_lineage.append(_single_row_source(rows[cursor]))
         cursor += 1
     if total_lines:
         blocks.append(["SUMMEN", *total_lines])
+        blocks_lineage.append([None, *total_lineage])
         flags.append("document_sections")
 
     while cursor < len(lines):
         line = lines[cursor]
         if line.casefold().startswith(_PARAGRAPH_PREFIXES):
             paragraph = line
+            paragraph_rows = [rows[cursor]]
             cursor += 1
             while (
                 cursor < len(lines)
@@ -1184,12 +1815,15 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
                 and not _looks_like_filename_row(lines[cursor])
             ):
                 paragraph = f"{paragraph} {lines[cursor]}"
+                paragraph_rows.append(rows[cursor])
                 cursor += 1
             blocks.append([paragraph])
+            blocks_lineage.append([_union_source_ranges(paragraph_rows)])
             flags.append("conservative_line_joining")
             continue
         if _is_long_prose_line(line):
             paragraph = line
+            paragraph_rows = [rows[cursor]]
             cursor += 1
             while (
                 cursor < len(lines)
@@ -1198,13 +1832,16 @@ def _render_post_table(rows: Sequence[ReadingRow]) -> tuple[list[list[str]], lis
                 and not _looks_like_filename_row(lines[cursor])
             ):
                 paragraph = f"{paragraph} {lines[cursor]}"
+                paragraph_rows.append(rows[cursor])
                 cursor += 1
             blocks.append([paragraph])
+            blocks_lineage.append([_union_source_ranges(paragraph_rows)])
             flags.append("conservative_line_joining")
             continue
         blocks.append([line])
+        blocks_lineage.append([_single_row_source(rows[cursor])])
         cursor += 1
-    return blocks, flags
+    return blocks, flags, blocks_lineage
 
 
 def _is_long_prose_line(line: str) -> bool:
@@ -1302,24 +1939,69 @@ def _render_layout_blocks(blocks: Sequence[LayoutBlock]) -> str:
 
 
 def _render_fallback_text(text: str) -> str:
-    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    blocks, _lineage = _fallback_blocks_with_lineage(text)
+    return _join_blocks(blocks)
+
+
+def _fallback_blocks_with_lineage(text: str) -> tuple[list[list[str]], list[_LineLineage]]:
+    """Render source-order fallback blocks plus each line's own construction-time source span.
+
+    The fallback renders one output line per raw line, so the builder knows every line's raw span
+    while walking the input -- plain cursor arithmetic over the very string being rendered, no
+    matching and no uniqueness requirement, which is why repeated lines keep distinct identities
+    here too. Offsets are computed against the *original* text (line breaks may be ``\\r\\n``/
+    ``\\r``), and a rendered line's span excludes the surrounding whitespace it strips.
+    """
     blocks: list[list[str]] = []
+    blocks_lineage: list[_LineLineage] = []
     current: list[str] = []
-    for raw_line in normalized.split("\n"):
+    current_lineage: _LineLineage = []
+    for line_start, line_end in _line_spans_with_breaks(text):
+        raw_line = text[line_start:line_end]
         stripped = raw_line.strip()
         if not stripped:
             if current:
                 blocks.append(current)
+                blocks_lineage.append(current_lineage)
                 current = []
+                current_lineage = []
             continue
         if "\t" in stripped:
             cells = [_normalize_line(cell) for cell in stripped.split("\t")]
             current.append(" | ".join(cells))
         else:
             current.append(_normalize_line(stripped))
+        current_lineage.append(
+            (*_stripped_line_bounds(raw_line, line_start), "row")
+        )
     if current:
         blocks.append(current)
-    return _join_blocks(blocks)
+        blocks_lineage.append(current_lineage)
+    return blocks, blocks_lineage
+
+
+def _line_spans_with_breaks(text: str) -> list[tuple[int, int]]:
+    """Half-open spans of each line, honoring ``\\n``, ``\\r\\n``, and ``\\r`` breaks."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    index = 0
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if character in ("\n", "\r"):
+            spans.append((start, index))
+            if character == "\r" and index + 1 < length and text[index + 1] == "\n":
+                index += 1
+            start = index + 1
+        index += 1
+    spans.append((start, length))
+    return spans
+
+
+def _stripped_line_bounds(raw_line: str, line_start: int) -> tuple[int, int]:
+    leading = len(raw_line) - len(raw_line.lstrip())
+    stripped_length = len(raw_line.strip())
+    return line_start + leading, line_start + leading + stripped_length
 
 
 def _filter_repeated_page_margins(page_blocks: Sequence[str]) -> tuple[list[str], bool]:
@@ -1433,6 +2115,62 @@ def _split_paired_labels(line: str) -> list[str]:
 
 def _join_blocks(blocks: Sequence[Sequence[str]]) -> str:
     return "\n\n".join("\n".join(line for line in block if line) for block in blocks if block)
+
+
+def _join_blocks_with_lineage(
+    blocks: Sequence[Sequence[str]],
+    blocks_lineage: Sequence[Sequence[_LineSource | None]],
+    page_text: str,
+) -> tuple[str, list[tuple[int, int, int, int, RowLineageStatus]]]:
+    """Join blocks exactly like ``_join_blocks`` while also locating each surviving line's offset.
+
+    Positions are computed purely from line lengths and the same ``"\\n\\n"``/``"\\n"`` separators
+    ``_join_blocks`` uses -- never by searching the joined text -- so the returned string is always
+    byte-identical to ``_join_blocks(blocks)``. The second return value is ``(rendered_start,
+    rendered_end, page_start, page_end, status)`` for every line that both survives the same
+    truthiness filtering ``_join_blocks`` applies and carries a known ``blocks_lineage`` entry.
+    ``status`` is ``"merged"`` when more than one row contributed to this line; otherwise the
+    rendered line is compared byte-for-byte against the raw span it claims (verifying a known
+    correspondence, never searching for one): ``"exact"`` when identical, else ``"split"`` for an
+    in-row cell attribution or ``"normalized"`` for a whole-row one.
+    """
+    rendered_blocks: list[str] = []
+    segments: list[tuple[int, int, int, int, RowLineageStatus]] = []
+    cursor = 0
+    first_block = True
+    for block, block_lineage in zip(blocks, blocks_lineage, strict=True):
+        lines = [
+            (line, source_range)
+            for line, source_range in zip(block, block_lineage, strict=True)
+            if line
+        ]
+        if not lines:
+            continue
+        if not first_block:
+            cursor += 2
+        first_block = False
+        rendered_lines: list[str] = []
+        first_line = True
+        for line, source_range in lines:
+            if not first_line:
+                cursor += 1
+            first_line = False
+            start = cursor
+            cursor += len(line)
+            if source_range is not None:
+                page_start, page_end, kind = source_range
+                if kind == "merge":
+                    status: RowLineageStatus = "merged"
+                elif line == page_text[page_start:page_end]:
+                    status = "exact"
+                elif kind == "cells":
+                    status = "split"
+                else:
+                    status = "normalized"
+                segments.append((start, cursor, page_start, page_end, status))
+            rendered_lines.append(line)
+        rendered_blocks.append("\n".join(rendered_lines))
+    return "\n\n".join(rendered_blocks), segments
 
 
 def _normalize_line(text: str) -> str:

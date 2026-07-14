@@ -61,10 +61,14 @@ ADDRESS_CONTACT_TYPES: tuple[str, ...] = (
     "CUSTOMER_LINE",
 )
 
+# LOCATION is deliberately NOT in any named profile. A bare city/location over-tags heavily
+# (0 true positives / many false positives on the benchmark); residence location is already
+# captured by ADDRESS and birthplace by a context-gated BIRTH_PLACE recognizer. It stays a known,
+# validatable type (recognizer + candidate-validation rules exist) selectable only via an explicit
+# custom PII_ENTITY_TYPES allowlist — see docs/engine/pii-detection-quality-plan.md.
 NER_TYPES: tuple[str, ...] = (
     "PERSON",
     "ORGANIZATION",
-    "LOCATION",
 )
 
 LOWER_CONFIDENCE_NER_TYPES: tuple[str, ...] = ("DATE_TIME",)
@@ -100,10 +104,19 @@ PII_PROFILES: dict[PiiProfileName, PiiProfile] = {
     ),
 }
 
+# Known/validatable types that are intentionally not part of any named profile but remain
+# selectable via an explicit custom PII_ENTITY_TYPES allowlist (see NER_TYPES note re LOCATION).
+SUPPORTED_ONLY_TYPES: tuple[str, ...] = ("LOCATION",)
+
 SUPPORTED_PII_ENTITY_TYPES: frozenset[str] = frozenset(
-    entity_type
-    for profile in PII_PROFILES.values()
-    for entity_type in profile.entity_types
+    (
+        *(
+            entity_type
+            for profile in PII_PROFILES.values()
+            for entity_type in profile.entity_types
+        ),
+        *SUPPORTED_ONLY_TYPES,
+    )
 )
 
 

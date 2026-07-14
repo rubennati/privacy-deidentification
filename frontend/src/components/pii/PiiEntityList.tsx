@@ -1,5 +1,9 @@
+import { useEffect } from "react";
+
 import type { PiiEntity } from "../../api/workstations";
 import { entityFeedbackKey, type PiiFeedbackStatus } from "../../api/piiFeedback";
+import type { PiiReviewResult } from "../../api/piiReview";
+import { scrollAndFlash } from "../../lib/scrollAndFlash";
 import { PiiEntityCard } from "./PiiEntityCard";
 
 interface PiiEntityListProps {
@@ -12,6 +16,11 @@ interface PiiEntityListProps {
   feedbackEnabled: boolean;
   /** Latest recorded feedback per entity key (see entityFeedbackKey); empty when none/loading. */
   feedbackStatuses: Record<string, PiiFeedbackStatus>;
+  /** Binding review state for the same detector entities, merged into each Dev View card. */
+  review?: PiiReviewResult | null;
+  onReviewChanged?: (review: PiiReviewResult) => void;
+  /** Highlight selected in the text viewer; focuses the same unified entity card. */
+  selectedOccurrenceId?: string | null;
 }
 
 // A small, non-exhaustive glossary; unknown types fall through to a generic note in the UI.
@@ -34,7 +43,19 @@ export function PiiEntityList({
   artifactId,
   feedbackEnabled,
   feedbackStatuses,
+  review = null,
+  onReviewChanged,
+  selectedOccurrenceId = null,
 }: PiiEntityListProps) {
+  const reviewByOccurrenceId = new Map(
+    (review?.occurrences ?? []).map((occurrence) => [occurrence.occurrence_id, occurrence]),
+  );
+
+  useEffect(() => {
+    if (selectedOccurrenceId && entities.some((entity) => entity.id === selectedOccurrenceId)) {
+      scrollAndFlash(`pii-entity-card-${selectedOccurrenceId}`);
+    }
+  }, [entities, selectedOccurrenceId]);
   return (
     <section aria-labelledby="entity-list-heading">
       <div className="flex items-center justify-between gap-3">
@@ -79,6 +100,8 @@ export function PiiEntityList({
               artifactId={artifactId}
               feedbackEnabled={feedbackEnabled}
               existingStatus={feedbackStatuses[entityFeedbackKey(entity)] ?? null}
+              reviewOccurrence={reviewByOccurrenceId.get(entity.id) ?? null}
+              onReviewChanged={onReviewChanged}
             />
           ))}
         </ul>

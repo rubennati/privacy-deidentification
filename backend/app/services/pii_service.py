@@ -14,19 +14,27 @@ from app.schemas import (
     PiiContent,
     PiiEngineSettings,
     PiiEntity,
+    PiiInputContractSummary,
     PiiRunRequest,
+    PiiStructuralValidationSummary,
     PiiValidationSummary,
-    TextArtifact,
 )
 from app.services.artifact_service import (
     get_latest_pii_artifact,
     get_latest_text_artifact,
+    save_job_pii_artifact,
     save_pii_artifact,
 )
 from app.services.document_service import DocumentNotFoundError, get_document_record
 from app.services.pii_adapters import DetectedEntity, PiiAnalyzer
 from app.services.pii_candidate_validation import ValidatedEntity, validate_candidates
+from app.services.pii_input import PiiInputAdapter, PiiInputDocumentV1
+from app.services.pii_overlap import resolve_pii_overlaps
 from app.services.pii_profiles import PiiProfileName, get_pii_profile
+from app.services.pii_structural_validation import (
+    StructuralValidationResult,
+    validate_structural_context,
+)
 from app.services.reading_text_projection import project_pii_entities_to_reading_text
 
 
@@ -67,6 +75,7 @@ class ResolvedPiiRunSettings:
     pii_language: str
     pii_score_threshold: float
     pii_candidate_validation_enabled: bool
+    pii_structural_validation_enabled: bool
     source: Literal["server-default", "dev-ui-override"]
 
 
@@ -75,6 +84,8 @@ def create_pii_artifact(
     document_id: str,
     analyzer: PiiAnalyzer,
     request: PiiRunRequest | None = None,
+    *,
+    authority_job_id: str | None = None,
 ) -> PiiArtifact:
     """Analyze the latest valid text result and persist an immutable PII result."""
     if get_document_record(settings, document_id) is None:
@@ -84,15 +95,24 @@ def create_pii_artifact(
     if text_artifact is None:
         raise PiiConflictError
 
-    content = _analyze_text(run_settings, text_artifact, analyzer)
+    # Consume the OCR Output Contract v1 Document Text Package via the intake adapter (ADR-0027/28)
+    # rather than reaching into TextContent internals. A structurally invalid package raises a
+    # controlled 422 here, including missing/untrusted raw text. Valid-empty means analysis ran on
+    # trustworthy non-empty text and found no entities; it never means OCR supplied no input.
+    pii_input = PiiInputAdapter.from_text_artifact(text_artifact)
+
+    content = _analyze_text(run_settings, pii_input, analyzer)
     artifact = PiiArtifact(
         id=uuid4().hex,
         document_id=document_id,
-        input_text_artifact_id=text_artifact.id,
+        input_text_artifact_id=pii_input.package_id,
         created_at=_now_utc_iso(),
         content=content,
     )
-    save_pii_artifact(settings, artifact)
+    if authority_job_id is None:
+        save_pii_artifact(settings, artifact)
+    else:
+        save_job_pii_artifact(settings, artifact, authority_job_id=authority_job_id)
     return artifact
 
 
@@ -108,21 +128,21 @@ def get_latest_pii(settings: Settings, document_id: str) -> PiiArtifact:
 
 def _analyze_text(
     run_settings: ResolvedPiiRunSettings,
-    text_artifact: TextArtifact,
+    pii_input: PiiInputDocumentV1,
     analyzer: PiiAnalyzer,
 ) -> PiiContent:
-    text = text_artifact.content.text
+    text = pii_input.primary_source.text or ""
     configured_types = run_settings.pii_entity_types
     flags: list[str] = []
     detected: list[tuple[DetectedEntity, int, int | None]] = []
 
-    if not text.strip():
+    if not pii_input.has_usable_raw_text:
         flags.append("empty_text")
     else:
         try:
-            if text_artifact.content.pages:
+            if pii_input.pages:
                 global_start = 0
-                for page in text_artifact.content.pages:
+                for page in pii_input.pages:
                     page_entities = analyzer.analyze(
                         page.text,
                         run_settings.pii_language,
@@ -148,7 +168,7 @@ def _analyze_text(
         except Exception as exc:
             raise PiiProcessingError from exc
 
-    page_texts = _page_text_map(text_artifact)
+    page_texts = _page_text_map(pii_input)
     validated_detected, validation_summary = validate_candidates(
         detected,
         page_texts,
@@ -158,10 +178,24 @@ def _analyze_text(
 
     try:
         entities = _build_entities(text, validated_detected)
+        # Structural-context validation is a second subtractive stage after candidate validation and
+        # before overlap resolution (config-flagged, default off). It clips/rejects boundary and
+        # structural false positives using the contract's structured_content spans; detection input
+        # stays raw and no entity is expanded, moved, or relabelled.
+        structural = validate_structural_context(
+            entities,
+            pii_input.structural_spans,
+            enabled=run_settings.pii_structural_validation_enabled,
+        )
+        entities = structural.entities
+        entities, overlap_summary = resolve_pii_overlaps(entities)
+        # Overlap resolution rebuilds provenance from scratch, so structural reasons are attached to
+        # the surviving entities afterwards (matched by the ids the structural stage preserved).
+        entities = _apply_structural_provenance(entities, structural)
         entities = project_pii_entities_to_reading_text(
             entities,
-            text_artifact.content.reading_text_map,
-            reading_text=text_artifact.content.reading_text,
+            pii_input.reading_text_map,
+            reading_text=pii_input.reading_text,
         )
     except ApiError:
         raise
@@ -171,16 +205,14 @@ def _analyze_text(
     for entity in entities:
         counts[entity.entity_type] = counts.get(entity.entity_type, 0) + 1
     return PiiContent(
-        document_id=text_artifact.document_id,
-        input_text_artifact_id=text_artifact.id,
+        document_id=pii_input.document_id,
+        input_text_artifact_id=pii_input.package_id,
         profile=run_settings.pii_profile,
         language=run_settings.pii_language,
         score_threshold=run_settings.pii_score_threshold,
         text_char_count=len(text),
         reading_text_char_count=(
-            len(text_artifact.content.reading_text)
-            if text_artifact.content.reading_text is not None
-            else None
+            len(pii_input.reading_text) if pii_input.reading_text is not None else None
         ),
         configured_entity_types=list(configured_types),
         entities=entities,
@@ -201,6 +233,60 @@ def _analyze_text(
             score_threshold=run_settings.pii_score_threshold,
             source=run_settings.source,
         ),
+        input_contract=_build_input_contract_summary(pii_input),
+        overlap_resolution=overlap_summary,
+        structural_validation=_build_structural_summary(structural),
+    )
+
+
+def _apply_structural_provenance(
+    entities: list[PiiEntity], structural: StructuralValidationResult
+) -> list[PiiEntity]:
+    """Record structural reason codes on the surviving entities' (overlap-built) provenance."""
+    reasons_by_id = structural.reasons_by_entity_id
+    if not reasons_by_id:
+        return entities
+    updated: list[PiiEntity] = []
+    for entity in entities:
+        reasons = reasons_by_id.get(entity.id)
+        if not reasons or entity.provenance is None:
+            updated.append(entity)
+            continue
+        provenance = entity.provenance.model_copy(update={"structural_reasons": list(reasons)})
+        updated.append(entity.model_copy(update={"provenance": provenance}))
+    return updated
+
+
+def _build_structural_summary(
+    structural: StructuralValidationResult,
+) -> PiiStructuralValidationSummary | None:
+    """Map the pure stage's summary onto the persisted artifact model; None when it was disabled."""
+    summary = structural.summary
+    if not summary.applied:
+        return None
+    return PiiStructuralValidationSummary(
+        applied=True,
+        input_candidate_count=summary.input_count,
+        output_entity_count=summary.output_count,
+        clipped_count=summary.clipped_count,
+        trimmed_count=summary.trimmed_count,
+        dropped_count=summary.dropped_count,
+        by_reason=dict(sorted(summary.by_reason.items())),
+    )
+
+
+def _build_input_contract_summary(pii_input: PiiInputDocumentV1) -> PiiInputContractSummary:
+    """Record which OCR Output Contract v1 package PII consumed (ADR-0027/0028). Metadata only."""
+    return PiiInputContractSummary(
+        contract_version=pii_input.contract_version,
+        contract_status=pii_input.contract_status,
+        package_id=pii_input.package_id,
+        canonical_available=pii_input.is_available("canonical_reading_text"),
+        layout_available=pii_input.is_available("layout_text"),
+        structured_available=pii_input.is_available("structured_content"),
+        quality_evidence_available=pii_input.is_available("quality_evidence"),
+        warnings=list(pii_input.warnings),
+        missing_optional_layers=list(pii_input.missing_capabilities),
     )
 
 
@@ -214,6 +300,7 @@ def _resolve_run_settings(
             pii_language=settings.pii_language,
             pii_score_threshold=settings.pii_score_threshold,
             pii_candidate_validation_enabled=settings.pii_candidate_validation_enabled,
+            pii_structural_validation_enabled=settings.pii_structural_validation_enabled,
             source="server-default",
         )
     if not settings.enable_dev_engine_settings:
@@ -227,6 +314,7 @@ def _resolve_run_settings(
         pii_language=settings.pii_language,
         pii_score_threshold=settings.pii_score_threshold,
         pii_candidate_validation_enabled=settings.pii_candidate_validation_enabled,
+        pii_structural_validation_enabled=settings.pii_structural_validation_enabled,
         source="dev-ui-override",
     )
 
@@ -235,12 +323,12 @@ def _profile_entity_types(profile: PiiProfileName) -> tuple[str, ...]:
     return get_pii_profile(profile).entity_types
 
 
-def _page_text_map(text_artifact: TextArtifact) -> dict[int | None, str]:
+def _page_text_map(pii_input: PiiInputDocumentV1) -> dict[int | None, str]:
     """Map each page number (``None`` for a non-paged document) to its exact analyzed text, so
     candidate validation can slice a local context window without re-deriving global offsets."""
-    if text_artifact.content.pages:
-        return {page.page_number: page.text for page in text_artifact.content.pages}
-    return {None: text_artifact.content.text}
+    if pii_input.pages:
+        return {page.page_number: page.text for page in pii_input.pages}
+    return {None: pii_input.primary_source.text or ""}
 
 
 def _build_entities(

@@ -10,9 +10,9 @@ documents.
 | Engine | Current level | Delivered | Next |
 | --- | --- | --- | --- |
 | OCR / Text | **L15 (built on the required L10.5 step) + output-contract stabilization** | L10 geometry, versioned canonical `reading_text` with L12 multi-column reconstruction plus L13 table/form reconstruction v2 (legacy `text` remains technical raw/PII offset basis), additive span-backed `structured_content` tables/fields/sections, L14 additive metrics-only `quality_evidence` (provenance, reconstruction, page zones, lineage coverage), L15 additive noise/token artifact evidence in the same list, and Document Text Package v1 (`contract_version = "1.0"`, `valid`/`degraded`/`invalid`) | PII L12 overlap resolution downstream; future OCR capabilities plug into the contract |
-| PII / Sensitive-Data | **L11; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a review-decision overlay | L12 overlap resolution (downstream — after the OCR Output Contract boundary is implemented/stabilized) |
-| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + a lineage-bound decision overlay ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) | formal `review_result` artifact, stale-decision flag, manual add (L10) |
-| Benchmark / Regression | **L8; L10 slice out of order** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, OCR confidence/coverage columns | L9 per-profile metrics |
+| PII / Sensitive-Data | **L14; L10 partial** | profiles, Presidio/spaCy integration, AT/DE and domain recognizers, benchmark, candidate validation plus a Dev View transparency report, context hardening, address/contact-line coverage, reproducible settings; dev-only feedback capture; derived entity grouping + a direct-lineage review decision overlay; **consumes the OCR Output Contract v1 package via the `pii_input` adapter + deterministic overlap resolution** ([ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md)); **anchor-bound entity contract** (Text Anchor Graph binding where available, explicit evidence-only fallback, source observations, display model, and text-free coverage/reason diagnostics for missing canonical/layout ranges) plus frontend highlight rendering from that contract ([ADR-0029](../adr/0029-pii-review-ready-entity-contract.md), [ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md)); **manual add of missed entities** ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) | Re-run the checkpoint loop for the next engine priority |
+| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L10 done** | read-only review and lineage-safe highlights; gated review aids, run settings, per-entity feedback capture; grouped occurrences + direct-lineage immutable `review_result` snapshots and explicit stale-decision state ([ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md), [ADR-0034](../adr/0034-review-l8-review-result-artifact.md)); manual add of missed entities ([ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md)) | Actor/reason metadata (L11) |
+| Benchmark / Regression | **L10** | coverage, routing, PII P/R/F1, privacy guard, determinism, validation counts, per-profile comparison in one read-only invocation, OCR confidence/coverage columns | L11 OCR runtime/memory |
 | Redaction / De-Identification | **L0** | detection-only by design | blocked on stable PII, binding review, and OCR geometry |
 
 ## Delivered foundation
@@ -35,8 +35,9 @@ documents.
   correction — plus the additive OCR Output Contract v1 / Document Text Package boundary. The
   package is built on request from existing `text_result` artifacts, keeps raw text authoritative,
   treats canonical text as derived/contextual, treats `structured_content` as semantic hints, treats
-  quality/noise evidence as trust/uncertainty metadata, and does not migrate PII. PII still uses raw
-  text.
+  quality/noise evidence as trust/uncertainty metadata, and now feeds the derived Text Anchor Graph
+  v1 endpoint (`GET …/text-anchors`) for raw/canonical/layout identity ranges. PII still uses raw
+  text; downstream PII binding consumes the derived anchor graph without changing the active input.
 - PII L0–L9: structured and model-backed detection, named profiles, AT/DE/domain coverage,
   benchmark measurement, candidate validation, context hardening, address/contact-line coverage,
   and reproducible run settings.
@@ -48,6 +49,18 @@ documents.
   scope), covering much of Review L8/L9's practical intent without yet being the formal
   `review_result` artifact model. See
   [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
+- PII L12: PII consumes the OCR Output Contract v1 Document Text Package via the `pii_input` intake
+  adapter and resolves duplicate/nested/overlapping candidates deterministically, with additive
+  optional provenance/summary fields on `pii_result` (no raw text). Technical raw text remains the
+  active detection input. See [ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
+- PII L13 / Review L9: binding confirm/reject with direct PII + text artifact lineage on new decision
+  records and immutable `review_result` snapshots; superseded decisions surface explicitly as stale,
+  never silently reapplied.
+- PII L14 / Review L10: manual add of missed entities. A reviewer adds a span the engine missed,
+  tagged with a type, as a distinct `manual_addition` — canonical-text offsets, a best-effort raw
+  reverse projection via the Text Anchor Graph, `text_artifact_id`-keyed staleness, never merged into
+  `pii_result` or the anchor-bound entity contract. See
+  [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md).
 - Benchmark L0–L8 plus an out-of-order L10 slice: private inputs, artifact matching, routing and PII
   metrics, privacy guarding, deterministic output, validation-stage aggregates, and safe
   lineage-matched OCR confidence/coverage columns.
@@ -267,20 +280,48 @@ derived view (`pii_grouping.group_pii_entities`) recomputed from the latest `pii
 request — `pii_result`'s schema is unchanged. See
 [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 
-### PII L12 — overlap resolution (downstream)
+### PII L12 — overlap resolution (downstream) — delivered
 
-Define and apply auditable engine-level precedence for duplicate, nested, and overlapping candidates.
-The current display-only highlight resolver is not engine-level entity resolution. This is
-**downstream work**, sequenced *after* the OCR Output Contract v1 stabilization above — PII takes it
-up as a consumer once the OCR/Text contract boundary is implemented or at least stabilized, so it is
-not the immediate next step.
+PII now consumes the OCR Output Contract v1 Document Text Package through the `pii_input` intake
+adapter (`PiiInputDocumentV1`) instead of reaching into `TextContent` internals: technical raw text
+stays the primary/only active detection input, canonical reading text is contextual, structured
+content is a hint layer, and quality/noise evidence is trust/uncertainty context. A structurally
+invalid package is rejected with a controlled `422`, empty raw text stays the benign empty-result
+path, and a degraded package with raw text still processes. `pii_overlap.resolve_pii_overlaps` then
+applies auditable engine-level precedence for duplicate, nested, and overlapping candidates: exact
+and same-type/nested spans merge or drop to a single strongest survivor (recording superseded ids),
+while different-type overlaps are preserved and flagged for review rather than dropped. The outcome
+is recorded in additive optional `pii_result` fields (`PiiEntity.provenance`,
+`PiiContent.input_contract`, `PiiContent.overlap_resolution`) — reason codes, counts, and ids only,
+no raw text. The active detection input is unchanged (still technical raw text; the `text_lineage_map`
+separation gate is not bypassed), and existing PII API/frontend behavior is unchanged. A specific
+cross-type auto-suppression precedence table (structured id > generic id, `ADDRESS` > `LOCATION`) is
+deferred in favour of flag-for-review. See
+[ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
+
+### Anchor-bound PII entity contract (additive stabilization) — delivered
+
+On top of L12 and ADR-0031 Phase B, a pure derived view (`pii_anchor_binding.py`,
+`pii_entity_contract.py`, `GET …/pii/entity-contract`) packages the resolved entities review-ready:
+anchor-derived identity where the matching Text Anchor Graph binds, explicit evidence-only fallback
+when binding is missing/ambiguous/not applicable, detector source observations, raw + optional
+canonical/layout display ranges, canonical `mapping_status`, overlap provenance, resolved review
+state, and a text-free display model. The same response includes summary diagnostics and per-entity
+reason codes for missing canonical/layout ranges, degraded/missing anchor graphs, repeated-token
+ambiguity, incomplete reading-text mapping, and intentionally conservative layout mapping.
+Missing/partial/ambiguous anchor or canonical mapping never drops an entity. It mutates nothing,
+adds no detection, and keeps technical raw text as the active PII input.
+This is a cross-cutting stabilization milestone (like the OCR Output Contract), **not** a level bump
+and **not** the formal binding `review_result` — it is the stable review-ready read model that model
+will build on. See [ADR-0029](../adr/0029-pii-review-ready-entity-contract.md) and
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md).
 
 ### Review L6 — grouped occurrences — delivered
 
 Mirrors PII L11: the `PiiReviewGroupList` panel shows one row per entity group (type, occurrence
 count, reading-text projection coverage, current decision) with an expandable per-occurrence list.
 
-### Review L8–L9 — binding review — partially delivered
+### Review L8–L10 — binding review — delivered
 
 A lineage-bound, file-based decision overlay now exists (`GET/POST …/pii/review[/decisions]`,
 append-only JSONL under `document-store/<id>/review/`, scoped to the exact current `pii_result.id` so
@@ -288,16 +329,71 @@ a re-run never silently reapplies a stale decision). Every detected entity defau
 `pseudonymize` (no separate "pending" state, unlike a plain confirm/reject); a reviewer opts one out
 via `keep` or `false_positive`, at group or occurrence scope with occurrence-level override. This is
 a lighter persistence shape than the
-formal single-artifact `review_result` model L8 originally described — that remains open, along
-with an explicit stale-decision indicator (L7), manual add (L10), and reason/comment metadata (L11).
-Dev feedback JSONL remains a separate, dev-gated analysis input. See
+formal single-artifact `review_result` model L8, direct PII/text lineage for new decisions, and an
+explicit stale-decision indicator (L7) are now delivered. **Manual add (L10)** is now delivered
+too: a reviewer adds a span the engine missed as a distinct `manual_addition`, never merged into
+`pii_result` or the anchor-bound entity contract, staleness keyed off `text_artifact_id`, decisions
+on it reusing the same endpoint — see
+[ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md). Reason/comment metadata (L11)
+remains open. Dev feedback JSONL remains a separate, dev-gated analysis input. See
 [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md).
 
-### Benchmark L9–L10
+### Benchmark L9–L10 — delivered
 
-Add per-profile PII metrics in one invocation at L9. The L10 OCR confidence/coverage columns are
-already delivered out of order using L7 `quality_report` with a legacy artifact fallback; cumulative
-benchmark maturity remains L8 until L9 lands.
+L9 compares the newest available immutable PII result for every configured profile in one read-only
+invocation and exposes missing profile artifacts as coverage gaps. L10 OCR confidence/coverage
+columns use L7 `quality_report` with a legacy artifact fallback. Benchmark maturity is now L10.
+
+### Text identity / anchor lineage — Phases B-C delivered, frontend consistency next
+
+[ADR-0031](../adr/0031-text-identity-anchor-lineage-architecture.md) frames the stable **text
+anchor** identity layer: raw/canonical/layout/structured are *views* of one document, married by an
+OCR/Text-owned anchor graph (`text_lineage_map` made concrete). Phase B is now implemented
+additively as Text Anchor Graph v1 (`document_text_anchors.py`, `GET …/text-anchors`): raw anchors
+are primary, canonical ranges attach preferring builder-emitted construction-time lineage
+(`reading_text_row_lineage_map`, the authoritative identity source), then the geometry-backed,
+post-render reading projection, then the post-hoc `reading_text_map` — the latter two are labelled,
+degraded fallbacks (per-anchor and graph `lineage_summary` reporting) — layout ranges
+attach only when safely byte-aligned in v1, and missing/partial/ambiguous
+states are explicit. Phase C is now
+implemented additively as PII anchor binding (`pii_anchor_binding.py`,
+`GET …/pii/entity-contract`): detections bind to anchors where available, otherwise degrade to
+explicit evidence-only identity. Anchor and entity-contract summaries expose text-free counts and
+reason codes for raw/canonical/layout range coverage, missing display ranges, repeated-token
+ambiguity, and conservative layout gaps. Frontend highlights now consume that contract as the source
+of truth for raw/canonical/layout view ranges, making missing/partial/ambiguous mappings visible
+rather than guessed. It stores no copied binding text, adds no DB, and does not change the active PII
+detection input. Pseudonymization and reconstruction remain later phases.
+
+A full feasibility and conformance audit of this approach —
+[`text-anchor-architecture-feasibility-audit.md`](text-anchor-architecture-feasibility-audit.md) —
+classified v1 as a sound **anchor-derived** transitional layer (not yet anchor-first: identity is
+offset-minted, canonical lineage was the post-hoc unique-token map) and recommended
+`anchor-first-text-package-v2` (construction-time lineage from the reading-text builder),
+`pii-binding-quality-suite`, then `review-result-v1` as the next three phases, with anchor-id
+persistence pinned to the graph builder version before any durable state references anchor ids. **A
+first attempt at `anchor-first-text-package-v2` was found by a contradiction audit to be a
+post-render projection, not construction-time lineage** (the reading-text builder itself was
+unchanged; the mechanism searched the already-completed canonical text) and reclassified/hardened as
+**Geometry-backed Reading Projection v1**: `reading_text_geometry_projection_map` (canonical span →
+raw span, offset-only), preferred over the post-hoc map by the package and anchor graph only when it
+resolves a line unambiguously, so repeated-*suffix* multi-token entities keep their canonical range
+while a genuinely duplicated full-line/label value is explicitly declined (never guessed by
+processing order — a reproduced identity defect from the first attempt is now fixed). It stays
+line-level and geometry-gated (text-layer PDFs), verbatim-only, and declines rather than guesses
+elsewhere. **Genuine construction-time lineage is now delivered** in three steps: row-granularity
+lineage on the body path ([ADR-0032](../adr/0032-reading-text-row-construction-lineage-v1.md)),
+row-granularity coverage of party columns/tables/metadata/post-table paths plus explicit `inserted`
+headings ([ADR-0036](../adr/0036-reading-text-row-construction-lineage-v2.md)), and the real
+`anchor-first-text-package-v2` ([ADR-0040](../adr/0040-construction-time-canonical-lineage-v3.md)):
+cell-level identity captured at collection time (pypdf extraction-offset capture, byte-verified; L10
+line offsets per cell), attribution of in-row splits/fused metadata/multi-column cell runs/raw-order
+fallback lines, byte-verified statuses including `split`, a symmetric overlap sweep, and
+`ReadingTextRowLineageMap` map_version "2" — making construction lineage the preferred identity
+boundary, with the post-hoc mechanisms demoted to explicitly flagged fallbacks for the spans it
+declines (fused table headers, layout-block ordering, margin-filtered documents, legacy artifacts).
+Word-level/OCR-page geometry and any measured `text_match` retirement remain later work; the audit's
+follow-up branches `pii-binding-quality-suite` and `review-result-v1` are delivered.
 
 ### Redaction remains blocked
 
@@ -315,6 +411,13 @@ take the API down. The default Compose stack is `frontend`, `api`, `ocr-worker`;
 dev/test fallback. PII stays synchronous. The PII worker split, concurrency/timeout/retry controls,
 an optional Redis/RQ queue, and quality/LLM workers remain proposed and must stay aligned with — not
 ahead of — the OCR/PII engine prerequisites above.
+
+**Runtime Job UX / in-app notifications v1** ([ADR-0030](../adr/0030-runtime-job-ux-notifications-v1.md))
+is the product-facing presentation layer on top of the job contract above: a frontend
+`jobActivityStore` tracks job status, persists active job ids to `localStorage` for reload recovery,
+and polls through a single-owner try-lock; one additive backend `is_terminal` field is the only
+schema change. Polling + `localStorage` is v1 — no Redis/RQ/Celery, no WebSocket/SSE/push
+notifications yet.
 
 ## Legacy work-package cross-reference
 

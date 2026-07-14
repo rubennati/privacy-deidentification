@@ -132,7 +132,10 @@ def test_ocr_execution_mode_defaults_to_worker_and_worker_settings_are_conservat
     assert settings.ocr_execution_mode == "worker"
     assert settings.ocr_worker_poll_interval_seconds == 2.0
     assert settings.ocr_worker_concurrency == 1
-    assert settings.ocr_worker_max_attempts == 1
+    # One automatic retry after an interruption, then explicit `interrupted` failure (ADR-0041).
+    assert settings.ocr_worker_max_attempts == 2
+    assert settings.job_lease_seconds == 3600.0
+    assert settings.ocr_worker_heartbeat_stale_seconds == 60.0
 
 
 def test_ocr_execution_mode_is_normalized_and_empty_stays_worker() -> None:
@@ -338,7 +341,11 @@ def test_broad_and_review_heavy_profiles_keep_ner_explicit() -> None:
     broad = Settings(PII_PROFILE="broad-review")
     review_heavy = Settings(PII_PROFILE="review-heavy")
 
-    assert {"PERSON", "ORGANIZATION", "LOCATION"}.issubset(broad.pii_entity_types)
+    assert {"PERSON", "ORGANIZATION"}.issubset(broad.pii_entity_types)
+    # LOCATION is deliberately excluded from every named profile (it over-tags; residence is
+    # covered by ADDRESS, birthplace by BIRTH_PLACE) — selectable only via a custom allowlist.
+    assert "LOCATION" not in broad.pii_entity_types
+    assert "LOCATION" not in review_heavy.pii_entity_types
     assert "DATE_TIME" not in broad.pii_entity_types
     assert "DATE_TIME" in review_heavy.pii_entity_types
 

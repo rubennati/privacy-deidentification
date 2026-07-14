@@ -31,7 +31,7 @@ def audit_document(
 @router.get(
     "/{document_id}/audit",
     response_model=AuditArtifact,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_audit(
     document_id: str, settings: Settings = Depends(get_settings)

@@ -80,7 +80,7 @@ def test_initialize_sets_wal_mode_and_schema_version(tmp_path: Path) -> None:
         journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
         schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert str(journal_mode).lower() == "wal"
-    assert schema_version == 1
+    assert schema_version == 2
 
 
 def test_create_and_get_job_roundtrips_enums_and_timestamps(tmp_path: Path) -> None:

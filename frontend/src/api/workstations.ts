@@ -1,5 +1,7 @@
 // Typed client for the Audit, OCR/Text, PII, and safe job-status endpoints.
 
+import { jobActivityStore, pollJobUntilTerminal } from "../lib/jobActivity";
+
 export interface AuditPageResult {
   page_number: number;
   text_char_count: number;
@@ -243,6 +245,27 @@ export interface TextArtifact {
   };
 }
 
+// Where one entity came from and how deterministic overlap resolution (PII L12) treated it.
+// Structural only (recognizer names, reason codes, counts, ids) — never raw entity text (ADR-0028).
+export interface PiiEntityProvenance {
+  detection_source:
+    | "raw_text"
+    | "canonical_reading_text"
+    | "structured_hint"
+    | "projected"
+    | "recognizer";
+  source_role: "primary" | "contextual" | "structured_hint" | "quality_hint";
+  recognizers: string[];
+  candidate_count: number;
+  merge_reason?: string | null;
+  overlap_decision?: string | null;
+  review_required: boolean;
+  superseded_candidate_ids: string[];
+  // Structural-context validation outcomes (ADR-0043). Additive/optional: omitted on artifacts
+  // written before the stage, empty unless it clipped or trimmed this entity's span.
+  structural_reasons?: string[];
+}
+
 export interface PiiEntity {
   id: string;
   entity_type: string;
@@ -262,6 +285,43 @@ export interface PiiEntity {
   reading_end_offset?: number | null;
   projection_status?: "exact" | "partial" | "unmapped" | null;
   projection_method?: "offset_map" | "text_match" | null;
+  // Detection source/role and overlap-resolution outcome. Absent on legacy artifacts (ADR-0028).
+  provenance?: PiiEntityProvenance | null;
+}
+
+// Records that PII consumed an OCR Output Contract v1 Document Text Package (ADR-0027/0028).
+export interface PiiInputContractSummary {
+  contract_version: string;
+  contract_status: "valid" | "degraded" | "invalid";
+  package_id: string;
+  primary_source: "technical_raw_text";
+  canonical_available: boolean;
+  layout_available: boolean;
+  structured_available: boolean;
+  quality_evidence_available: boolean;
+  warnings: string[];
+  missing_optional_layers: string[];
+}
+
+// Deterministic overlap-resolution outcome counts (PII L12). Reason codes and counts only.
+export interface PiiOverlapResolutionSummary {
+  applied: boolean;
+  input_candidate_count: number;
+  output_entity_count: number;
+  merged_count: number;
+  dropped_count: number;
+  review_required_count: number;
+  by_reason: Record<string, number>;
+}
+
+export interface PiiStructuralValidationSummary {
+  applied: boolean;
+  input_candidate_count: number;
+  output_entity_count: number;
+  clipped_count: number;
+  trimmed_count: number;
+  dropped_count: number;
+  by_reason: Record<string, number>;
 }
 
 export interface PiiValidationSummary {
@@ -306,6 +366,13 @@ export interface PiiArtifact {
     validation?: PiiValidationSummary | null;
     // Effective non-sensitive settings for this run. Absent on legacy artifacts.
     engine_settings?: PiiArtifactEngineSettings | null;
+    // OCR Output Contract v1 package PII consumed for this run. Absent on legacy artifacts.
+    input_contract?: PiiInputContractSummary | null;
+    // Deterministic overlap-resolution summary (PII L12). Absent on legacy artifacts.
+    overlap_resolution?: PiiOverlapResolutionSummary | null;
+    // Structural-context validation summary (ADR-0043). Absent on legacy artifacts or when the
+    // stage was disabled for this run.
+    structural_validation?: PiiStructuralValidationSummary | null;
   };
 }
 
@@ -329,6 +396,9 @@ export interface JobStatus {
   result_artifact_id: string | null;
   result_artifact_type: string | null;
   metadata: Record<string, string>;
+  // Additive (Runtime Job UX v1). Older cached/mocked responses may omit it; treat as unknown
+  // rather than assuming terminal — callers should tolerate `undefined`.
+  is_terminal?: boolean;
 }
 
 interface ApiError {
@@ -348,9 +418,62 @@ export class WorkstationApiError extends Error {
   }
 }
 
-type Station = "audit" | "ocr" | "pii";
 const OCR_JOB_POLL_INTERVAL_MS = 2000;
 const OCR_JOB_TIMEOUT_MS = 30 * 60 * 1000;
+
+const INCOMPATIBLE_PAYLOAD_DETAIL =
+  "Die Serverantwort hat ein unbekanntes Format. Bitte laden Sie die Anwendung neu.";
+
+/** A payload this build cannot understand. Never retryable: the response arrived fine and will
+ * look exactly the same on the next attempt — polling code gives up immediately on it. */
+export class IncompatibleApiPayloadError extends WorkstationApiError {
+  readonly incompatiblePayload = true;
+
+  constructor() {
+    super(INCOMPATIBLE_PAYLOAD_DETAIL, 502);
+    this.name = "IncompatibleApiPayloadError";
+  }
+}
+
+const KNOWN_JOB_STATUSES: ReadonlySet<string> = new Set([
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "canceled",
+]);
+
+/**
+ * Validate a job-status payload before it drives client behavior (ADR-0041).
+ *
+ * The polling loop's semantics hang off these fields — an unknown `status` could neither be
+ * classified as terminal nor safely waited on, and a missing `job_id` would poll a nonsense URL —
+ * so an incompatible payload fails closed with an explicit error instead of being accepted
+ * through an unchecked cast. Additive unknown fields remain tolerated.
+ */
+function parseJobStatus(value: unknown): JobStatus {
+  if (typeof value !== "object" || value === null) {
+    throw new IncompatibleApiPayloadError();
+  }
+  const candidate = value as Record<string, unknown>;
+  const requiredStrings = ["job_id", "document_id", "kind", "status", "created_at", "updated_at"];
+  for (const field of requiredStrings) {
+    if (typeof candidate[field] !== "string" || candidate[field] === "") {
+      throw new IncompatibleApiPayloadError();
+    }
+  }
+  if (!KNOWN_JOB_STATUSES.has(candidate.status as string)) {
+    throw new IncompatibleApiPayloadError();
+  }
+  return value as JobStatus;
+}
+
+function parseJobStatusList(value: unknown): JobStatus[] {
+  if (!Array.isArray(value)) {
+    throw new IncompatibleApiPayloadError();
+  }
+  return value.map(parseJobStatus);
+}
 
 export function fetchAudit(documentId: string): Promise<AuditArtifact> {
   return requestArtifact<AuditArtifact>(documentId, "audit", "GET");
@@ -360,16 +483,22 @@ export function runAudit(documentId: string): Promise<AuditArtifact> {
   return requestArtifact<AuditArtifact>(documentId, "audit", "POST");
 }
 
-export function fetchOcr(documentId: string): Promise<TextArtifact> {
-  return requestArtifact<TextArtifact>(documentId, "ocr", "GET");
+export function fetchOcr(documentId: string, artifactId?: string): Promise<TextArtifact> {
+  const suffix = artifactId ? `?artifact_id=${encodeURIComponent(artifactId)}` : "";
+  return requestArtifact<TextArtifact>(documentId, `ocr${suffix}`, "GET");
 }
 
 export async function runOcr(documentId: string): Promise<TextArtifact> {
   const response = await requestStation(documentId, "ocr", "POST");
   if (response.status === 202) {
-    const queuedJob = (await response.json()) as JobStatus;
-    await waitForOcrJob(queuedJob.job_id);
-    return fetchOcr(documentId);
+    const queuedJob = parseJobStatus(await response.json());
+    // Recorded immediately so any subscribed UI shows "accepted" before the first poll tick.
+    jobActivityStore.record(queuedJob);
+    const completedJob = await waitForOcrJob(queuedJob.job_id);
+    if (!completedJob.result_artifact_id) {
+      throw new WorkstationApiError("Das OCR-Ergebnis ist nicht verfügbar.", 502);
+    }
+    return fetchOcr(documentId, completedJob.result_artifact_id);
   }
   if (!response.ok) {
     await throwApiError(response);
@@ -381,13 +510,30 @@ export function fetchPii(documentId: string): Promise<PiiArtifact> {
   return requestArtifact<PiiArtifact>(documentId, "pii", "GET");
 }
 
+/** Newest-first job metadata for one document (`GET /api/documents/{id}/jobs`). Used for reload
+ * recovery when a job id was not (or could no longer be) tracked in `localStorage`. */
+export async function fetchDocumentJobs(documentId: string): Promise<JobStatus[]> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/documents/${encodeURIComponent(documentId)}/jobs`, {
+      method: "GET",
+    });
+  } catch {
+    throw new WorkstationApiError("Keine Verbindung zum Server.", 0);
+  }
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+  return parseJobStatusList(await response.json());
+}
+
 export function runPii(documentId: string, request?: PiiRunRequest): Promise<PiiArtifact> {
   return requestArtifact<PiiArtifact>(documentId, "pii", "POST", request);
 }
 
 async function requestArtifact<T>(
   documentId: string,
-  station: Station,
+  station: string,
   method: "GET" | "POST",
   body?: unknown,
 ): Promise<T> {
@@ -400,7 +546,7 @@ async function requestArtifact<T>(
 
 async function requestStation(
   documentId: string,
-  station: Station,
+  station: string,
   method: "GET" | "POST",
   body?: unknown,
 ): Promise<Response> {
@@ -421,7 +567,7 @@ async function requestStation(
   return response;
 }
 
-async function fetchJobStatus(jobId: string): Promise<JobStatus> {
+export async function fetchJobStatus(jobId: string): Promise<JobStatus> {
   let response: Response;
   try {
     response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "GET" });
@@ -431,27 +577,28 @@ async function fetchJobStatus(jobId: string): Promise<JobStatus> {
   if (!response.ok) {
     await throwApiError(response);
   }
-  return (await response.json()) as JobStatus;
+  return parseJobStatus(await response.json());
 }
 
+// Polling itself is owned by jobActivity's shared, de-duplicated poll loop (see
+// `pollJobUntilTerminal`) so a reload-recovery resume can never race a live `runOcr` call into
+// double-polling the same job id.
 async function waitForOcrJob(jobId: string): Promise<JobStatus> {
-  const deadline = Date.now() + OCR_JOB_TIMEOUT_MS;
-  while (true) {
-    const job = await fetchJobStatus(jobId);
-    if (job.status === "succeeded") {
-      return job;
-    }
-    if (job.status === "failed" || job.status === "canceled") {
-      throw jobStatusError(job);
-    }
-    if (Date.now() >= deadline) {
-      throw new WorkstationApiError(
-        "Die OCR-Verarbeitung dauert zu lange. Bitte versuchen Sie es später erneut.",
-        504,
-      );
-    }
-    await sleep(OCR_JOB_POLL_INTERVAL_MS);
+  const job = await pollJobUntilTerminal(jobActivityStore, jobId, fetchJobStatus, {
+    intervalMs: OCR_JOB_POLL_INTERVAL_MS,
+    deadlineAt: Date.now() + OCR_JOB_TIMEOUT_MS,
+  });
+  if (job.status === "succeeded") {
+    return job;
   }
+  if (job.status === "failed" || job.status === "canceled") {
+    throw jobStatusError(job);
+  }
+  // Still pending/running when the deadline was reached.
+  throw new WorkstationApiError(
+    "Die OCR-Verarbeitung dauert zu lange. Bitte versuchen Sie es später erneut.",
+    504,
+  );
 }
 
 function jobStatusError(job: JobStatus): WorkstationApiError {
@@ -469,12 +616,6 @@ function statusFromJobErrorCode(errorCode: string | null): number | null {
     return null;
   }
   return Number(match[1]);
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
 }
 
 async function throwApiError(response: Response): Promise<never> {

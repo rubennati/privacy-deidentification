@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+from tests.artifact_helpers import save_text_artifact
 
 from app.api.pii import provide_pii_analyzer
 from app.config import Settings
@@ -19,11 +20,17 @@ from app.main import app
 from app.schemas import (
     LayoutBlock,
     StructuredContent,
+    StructuredContentSummary,
+    StructuredField,
+    StructuredPageContent,
+    StructuredSection,
+    StructuredSpan,
     TextArtifact,
     TextContent,
     TextPageResult,
 )
-from app.services.artifact_service import save_text_artifact
+from app.services.job_models import JobContext, JobExecutionMode, JobKind, JobRecord
+from app.services.job_store import get_job_store
 from app.services.pii_adapters import DetectedEntity, PiiUnavailableError
 from app.services.pii_profiles import get_pii_profile
 from app.services.structured_content import build_structured_content
@@ -208,7 +215,25 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
         "reading_end_offset": None,
         "projection_status": "unmapped",
         "projection_method": None,
+        "provenance": {
+            "detection_source": "raw_text",
+            "source_role": "primary",
+            "recognizers": ["FakeRecognizer"],
+            "candidate_count": 1,
+            "merge_reason": None,
+            "overlap_decision": None,
+            "review_required": False,
+            "superseded_candidate_ids": [],
+            "structural_reasons": [],
+        },
     }
+    # PII now consumes the OCR Output Contract v1 package via the intake adapter (ADR-0028).
+    contract = artifact["content"]["input_contract"]
+    assert contract["contract_version"] == "1.0"
+    assert contract["contract_status"] in {"valid", "degraded"}
+    assert contract["package_id"] == latest.id
+    assert contract["primary_source"] == "technical_raw_text"
+    assert artifact["content"]["overlap_resolution"]["applied"] is True
     assert pii_fake.calls == ["Max Mustermann"]
     artifact_path = document_data_dir / document_id / "artifacts" / f"{artifact['id']}.json"
     assert artifact_path.is_file()
@@ -221,6 +246,61 @@ def test_post_uses_latest_text_result_and_returns_entity_fields(
     assert job["document_id"] == document_id
     assert job["result_artifact_id"] == artifact["id"]
     assert job["result_artifact_type"] == "pii_result"
+
+
+def test_pii_refuses_text_artifacts_without_current_authority(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    pii_fake: FakePiiAnalyzer,
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    artifact = _save_text(settings, document_id, "Synthetic text")
+    authority = document_data_dir / document_id / "artifacts" / "current-artifacts"
+    authority.unlink()
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 409
+    assert pii_fake.calls == []
+    assert (document_data_dir / document_id / "artifacts" / f"{artifact.id}.json").is_file()
+
+
+def test_pii_refuses_job_bound_text_until_the_job_succeeds(
+    client: TestClient,
+    settings: Settings,
+    document_data_dir: Path,
+    pii_fake: FakePiiAnalyzer,
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    artifact = _save_text(settings, document_id, "Synthetic text")
+    record = JobRecord.from_context(
+        JobContext.create(
+            kind=JobKind.OCR_TEXT,
+            document_id=document_id,
+            execution_mode=JobExecutionMode.SYNCHRONOUS_INLINE,
+        )
+    )
+    store = get_job_store(settings)
+    store.create_job(record)
+    record.mark_running()
+    store.mark_running(record)
+    authority_path = document_data_dir / document_id / "artifacts" / "current-artifacts"
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    authority["text_result"] = {
+        "artifact_id": artifact.id,
+        "job_id": record.job_id,
+        "job_result_artifact_id": artifact.id,
+        "job_result_artifact_type": artifact.artifact_type,
+    }
+    authority_path.write_text(json.dumps(authority), encoding="utf-8")
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 409
+    assert pii_fake.calls == []
 
 
 def test_post_projects_pii_into_reading_text_without_changing_detection_input(
@@ -421,7 +501,7 @@ def test_entities_are_sorted_and_counts_are_derived(
     assert content["entity_counts"] == {"LOCATION": 1, "PERSON": 2}
 
 
-def test_empty_text_creates_empty_result_without_loading_analyzer(
+def test_untrusted_empty_text_is_rejected_without_loading_analyzer(
     client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
 ) -> None:
     upload = _upload_document(client)
@@ -430,12 +510,8 @@ def test_empty_text_creates_empty_result_without_loading_analyzer(
 
     response = client.post(f"/api/documents/{document_id}/pii")
 
-    content = response.json()["content"]
-    assert response.status_code == 201
-    assert content["profile"] == "custom"
-    assert content["entities"] == []
-    assert content["entity_counts"] == {}
-    assert content["flags"] == ["empty_text"]
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Document text package is not valid for PII detection."
     assert pii_fake.calls == []
 
 
@@ -675,6 +751,141 @@ def test_logs_do_not_contain_source_or_entity_text(
     assert all(secret not in record.getMessage() for record in caplog.records)
 
 
+# --- PII intake contract + overlap resolution integration (ADR-0028) -----------------------------
+
+
+def test_input_contract_is_recorded_on_the_pii_result(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    latest = _save_text(settings, document_id, "Max Mustermann", reading_text="Max Mustermann")
+    pii_fake.results["Max Mustermann"] = [_entity("PERSON", 0, 14, 0.86)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    contract = response.json()["content"]["input_contract"]
+    assert contract["contract_version"] == "1.0"
+    assert contract["package_id"] == latest.id
+    assert contract["primary_source"] == "technical_raw_text"
+    assert contract["canonical_available"] is True
+
+
+def test_degraded_package_still_detects_raw_text_entities(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    # No reading_text/structured/quality layers → the package is degraded, but raw text exists.
+    _save_text(settings, document_id, "Max Mustermann")
+    pii_fake.results["Max Mustermann"] = [_entity("PERSON", 0, 14, 0.86)]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["input_contract"]["contract_status"] == "degraded"
+    assert content["input_contract"]["canonical_available"] is False
+    assert [entity["text"] for entity in content["entities"]] == ["Max Mustermann"]
+
+
+def test_overlap_resolution_merges_duplicate_detections(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, "Max Mustermann")
+    # Two recognizers surface the exact same span — resolution merges them into one entity.
+    pii_fake.results["Max Mustermann"] = [
+        _entity("PERSON", 0, 14, 0.8),
+        _entity("PERSON", 0, 14, 0.9),
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert len(content["entities"]) == 1
+    assert content["entity_counts"] == {"PERSON": 1}
+    overlap = content["overlap_resolution"]
+    assert overlap["applied"] is True
+    assert overlap["input_candidate_count"] == 2
+    assert overlap["merged_count"] == 1
+    provenance = content["entities"][0]["provenance"]
+    assert provenance["candidate_count"] == 2
+    assert provenance["merge_reason"] == "exact_duplicate"
+
+
+def test_cross_type_overlap_is_flagged_for_review_not_dropped(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_entity_types = (
+        "EMAIL_ADDRESS", "PHONE_NUMBER", "IBAN_CODE", "CREDIT_CARD", "IP_ADDRESS", "URL",
+    )
+    text = "kontakt max@example.at"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, text)
+    # Two different-type spans overlap with no precedence relation -> flagged, never dropped.
+    pii_fake.results[text] = [
+        _entity("EMAIL_ADDRESS", 8, 22, 0.9),
+        _entity("PHONE_NUMBER", 12, 22, 0.6),
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    types = {entity["entity_type"] for entity in content["entities"]}
+    assert types == {"EMAIL_ADDRESS", "PHONE_NUMBER"}  # neither dropped
+    assert content["overlap_resolution"]["review_required_count"] == 2
+    assert all(
+        entity["provenance"]["review_required"] is True for entity in content["entities"]
+    )
+
+
+def test_email_suppresses_contained_url_end_to_end(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_entity_types = ("EMAIL_ADDRESS", "URL")
+    text = "kontakt max@example.at"
+    document_id = str(_upload_document(client)["id"])
+    _save_text(settings, document_id, text)
+    # The URL recognizer matches the email's domain (contained in the email) -> spurious -> dropped.
+    pii_fake.results[text] = [
+        _entity("EMAIL_ADDRESS", 8, 22, 0.9),
+        _entity("URL", 12, 22, 0.6),
+    ]
+
+    content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
+
+    assert [e["entity_type"] for e in content["entities"]] == ["EMAIL_ADDRESS"]
+    assert content["overlap_resolution"]["by_reason"].get("dropped_cross_type_subordinate") == 1
+
+
+def test_overlap_provenance_never_contains_raw_entity_text(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    secret = "Maximilian Geheimnisvoll"
+    upload = _upload_document(client)
+    document_id = str(upload["id"])
+    _save_text(settings, document_id, secret)
+    pii_fake.results[secret] = [
+        _entity("PERSON", 0, len(secret), 0.8),
+        _entity("PERSON", 0, len(secret), 0.9),
+    ]
+
+    response = client.post(f"/api/documents/{document_id}/pii")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    provenance = content["entities"][0]["provenance"]
+    assert secret not in json.dumps(provenance)
+    assert secret not in json.dumps(content["overlap_resolution"])
+    assert secret not in json.dumps(content["input_contract"])
+
+
 # --- Engine-5 candidate validation integration ---------------------------------------------------
 
 
@@ -857,3 +1068,111 @@ def test_validation_summary_and_reasons_never_contain_the_raw_secret(
     assert set(content["validation"]["score_down_by_reason"]).issubset(known_reason_codes)
     assert secret not in str(content["validation"])
     assert all(secret not in record.getMessage() for record in caplog.records)
+
+
+# --- Structural-context validation wiring (ADR-0043, config-flagged, default off) ----------------
+
+
+def _field_structure(raw: str, label: str, value: str) -> StructuredContent:
+    def _span(sub: str) -> StructuredSpan:
+        start = raw.index(sub)
+        return StructuredSpan(
+            canonical_start=start, canonical_end=start + len(sub),
+            page_start=start, page_end=start + len(sub),
+        )
+
+    field = StructuredField(
+        field_id="field-p1-1", page_number=1, label=label,
+        label_span=_span(label), value_span=_span(value),
+        field_type_hint="person_name", confidence=0.9, source="canonical_text",
+    )
+    return StructuredContent(
+        pages=[StructuredPageContent(page_number=1, fields=[field], source="canonical_text",
+                                     confidence=0.9)],
+        summary=StructuredContentSummary(page_count=1, table_count=0, field_count=1,
+                                         section_count=0),
+        flags=["span_backed"],
+    )
+
+
+def _heading_structure(raw: str) -> StructuredContent:
+    span = StructuredSpan(
+        canonical_start=0, canonical_end=len(raw), page_start=0, page_end=len(raw)
+    )
+    section = StructuredSection(
+        section_id="section-p1-1", page_number=1, heading=raw, heading_span=span, span=span,
+        source="canonical_text", confidence=0.9, flags=["heading_only"],
+    )
+    return StructuredContent(
+        pages=[StructuredPageContent(page_number=1, sections=[section], source="canonical_text",
+                                     confidence=0.9)],
+        summary=StructuredContentSummary(page_count=1, table_count=0, field_count=0,
+                                         section_count=1),
+        flags=["span_backed"],
+    )
+
+
+def test_structural_validation_off_by_default_leaves_entity_untouched(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_candidate_validation_enabled = False
+    document_id = str(_upload_document(client)["id"])
+    raw = "Name: Max Mustermann"
+    _save_text(settings, document_id, raw, pages=[raw], structured_content=_field_structure(
+        raw, "Name", "Max Mustermann"))
+    pii_fake.results[raw] = [_entity("PERSON", 0, 20, 0.9)]  # captured the whole labelled line
+
+    content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
+
+    assert content["structural_validation"] is None
+    (entity,) = content["entities"]
+    assert (entity["start_offset"], entity["end_offset"]) == (0, 20)
+    assert entity["provenance"]["structural_reasons"] == []
+
+
+def test_structural_validation_enabled_trims_label_value(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_candidate_validation_enabled = False
+    settings.pii_structural_validation_enabled = True
+    document_id = str(_upload_document(client)["id"])
+    raw = "Name: Max Mustermann"
+    _save_text(settings, document_id, raw, pages=[raw], structured_content=_field_structure(
+        raw, "Name", "Max Mustermann"))
+    pii_fake.results[raw] = [_entity("PERSON", 0, 20, 0.9)]
+
+    content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
+
+    (entity,) = content["entities"]
+    assert (entity["start_offset"], entity["end_offset"]) == (6, 20)
+    assert entity["text"] == "Max Mustermann"
+    assert entity["page_start_offset"] == 6
+    assert entity["provenance"]["structural_reasons"] == ["structural_label_value_trimmed"]
+    assert content["structural_validation"] == {
+        "applied": True,
+        "input_candidate_count": 1,
+        "output_entity_count": 1,
+        "clipped_count": 0,
+        "trimmed_count": 1,
+        "dropped_count": 0,
+        "by_reason": {"structural_label_value_trimmed": 1},
+    }
+
+
+def test_structural_validation_enabled_drops_heading_false_positive(
+    client: TestClient, settings: Settings, pii_fake: FakePiiAnalyzer
+) -> None:
+    settings.pii_candidate_validation_enabled = False
+    settings.pii_structural_validation_enabled = True
+    document_id = str(_upload_document(client)["id"])
+    raw = "Leistungen und Positionen"
+    _save_text(settings, document_id, raw, pages=[raw], structured_content=_heading_structure(raw))
+    # A labelled-line recognizer misfiring on a section title — the motivating ADDRESS FP. Names and
+    # organizations are intentionally NOT heading-rejectable (they legitimately are headings).
+    pii_fake.results[raw] = [_entity("ADDRESS", 0, len(raw), 0.9)]
+
+    content = client.post(f"/api/documents/{document_id}/pii").json()["content"]
+
+    assert content["entities"] == []
+    assert content["structural_validation"]["dropped_count"] == 1
+    assert content["structural_validation"]["by_reason"] == {"structural_heading_rejected": 1}

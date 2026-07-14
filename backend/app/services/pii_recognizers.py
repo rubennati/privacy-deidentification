@@ -139,6 +139,75 @@ def _labeled_line_patterns(
     )
 
 
+def _labeled_value_patterns(
+    name: str,
+    value_regex: str,
+    labels: tuple[str, ...],
+    lead: str = "",
+    score: float = 0.6,
+) -> tuple[PatternSpec, ...]:
+    """Match a labelled value that may sit on the same line *or the next line* as its label.
+
+    German forms routinely place a value on the line after its label
+    ("SV-Nummer (AT):\\n2233 170390"), after a short qualifier before the colon ("(AT)", " AT"), or
+    after one intervening token ("Kreditkarte: Mastercard <number>"). This helper builds a
+    lookbehind that tolerates all three, while the ``value_regex`` keeps its own strict shape — so
+    cross-line matching adds layout robustness without loosening what counts as a value. It is
+    generic form behaviour, not corpus-specific tuning.
+
+    - ``[^\\n:]{0,14}`` after the label absorbs a short qualifier before the colon.
+    - ``:[ \\t]*\\n?[ \\t]*`` allows the value on the same line or the immediately following line.
+    - an optional ``lead`` alternation (e.g. a card-network word) absorbs one intervening token.
+
+    The variable-width lookbehind is supported by the ``regex`` engine Presidio uses (the stdlib
+    ``re`` module would reject it), consistent with :func:`_labeled_line_patterns`.
+    """
+    body = value_regex.removeprefix("(?i)")
+    lead_group = rf"(?:{lead}[ \t]+)?" if lead else ""
+    return tuple(
+        PatternSpec(
+            name=f"{name}_labeled_{index}",
+            regex=(
+                rf"(?i)(?<=\b{re.escape(label)}[^\n:]{{0,14}}:[ \t]*\n?[ \t]*{lead_group}){body}"
+            ),
+            score=score,
+        )
+        for index, label in enumerate(labels)
+    )
+
+
+# Label vocabularies shared by the same-line and cross-line pattern builders for the labelled-value
+# ID recognizers. Kept broad so common German label variants are covered; the strict value shapes
+# in each recognizer keep precision. A trailing qualifier (e.g. " (AT)") is absorbed by the builder.
+_SVNR_LABELS = (
+    "svnr",
+    "sv-nummer",
+    "sv nummer",
+    "sv-nr",
+    "sv nr",
+    "sozialversicherungsnummer",
+    "versicherungsnummer",
+)
+_PASSPORT_LABELS = ("reisepass", "reisepassnummer", "passnummer", "pass-nr", "pass nr", "passport")
+_ID_CARD_LABELS = (
+    "personalausweis",
+    "ausweisnummer",
+    "ausweis-nr",
+    "ausweis nr",
+    "identitätskarte",
+)
+_LICENSE_PLATE_LABELS = (
+    "kennzeichen",
+    "kfz-kennzeichen",
+    "kfz kennzeichen",
+    "amtliches kennzeichen",
+    "kfz",
+)
+_CREDIT_CARD_LABELS = ("kreditkarte", "kartennummer", "kreditkartennummer", "creditcard")
+# Optional card-network word that can sit between the label and the number ("Kreditkarte: Visa …").
+_CARD_NETWORKS = r"(?:master\s?card|visa|amex|american express|maestro|diners|discover|jcb)"
+
+
 # AT/DE street shape: compound street word ("Mariengasse", OCR-safe "strasse"), a house number
 # with optional stair/door parts ("12", "12a", "18/10/44"), and an optional ", PLZ Ort" tail.
 # A unit lookahead keeps distance phrases ("Anfahrtsweg 12 km") from matching as an address.
@@ -207,15 +276,16 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
     RecognizerSpec(
         name="AustrianSocialSecurityRecognizer",
         entity_type="SVNR_AT",
-        patterns=_contextual_patterns(
-            "austrian_social_security",
-            r"(?<!\d)\d{4}[ -]\d{6}(?!\d)",
-            (
-                "svnr",
-                "sv-nummer",
-                "sv nummer",
-                "sozialversicherungsnummer",
-                "versicherungsnummer",
+        patterns=(
+            *_contextual_patterns(
+                "austrian_social_security",
+                r"(?<!\d)\d{4}[ -]\d{6}(?!\d)",
+                _SVNR_LABELS,
+            ),
+            *_labeled_value_patterns(
+                "austrian_social_security",
+                r"(?<!\d)\d{4}[ -]\d{6}(?!\d)",
+                _SVNR_LABELS,
             ),
         ),
         context=(
@@ -273,10 +343,20 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
     RecognizerSpec(
         name="ContextualCreditCardRecognizer",
         entity_type="CREDIT_CARD",
-        patterns=_contextual_patterns(
-            "contextual_credit_card",
-            r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)",
-            ("kreditkarte", "kartennummer", "kreditkartennummer", "creditcard"),
+        patterns=(
+            *_contextual_patterns(
+                "contextual_credit_card",
+                r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)",
+                _CREDIT_CARD_LABELS,
+            ),
+            # Cross-line value, plus an optional intervening card-network word
+            # ("Kreditkarte: Mastercard 5412 7534 1122 3344").
+            *_labeled_value_patterns(
+                "contextual_credit_card",
+                r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)",
+                _CREDIT_CARD_LABELS,
+                lead=_CARD_NETWORKS,
+            ),
         ),
         context=("kreditkarte", "kartennummer", "creditcard"),
     ),
@@ -303,10 +383,18 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
     RecognizerSpec(
         name="AtDeLicensePlateRecognizer",
         entity_type="LICENSE_PLATE_AT",
-        patterns=_contextual_patterns(
-            "at_de_license_plate",
-            r"(?i)\b[A-ZÄÖÜ]{1,3}(?:-| )[A-Z]{0,2}[ -]?\d{1,5}(?:[ -]?[A-Z])?\b",
-            ("kennzeichen", "kfz-kennzeichen", "kfz kennzeichen", "amtliches kennzeichen"),
+        patterns=(
+            *_contextual_patterns(
+                "at_de_license_plate",
+                r"(?i)\b[A-ZÄÖÜ]{1,3}(?:-| )[A-Z]{0,2}[ -]?\d{1,5}(?:[ -]?[A-Z])?\b",
+                _LICENSE_PLATE_LABELS,
+            ),
+            # Cross-line / next-line plate value ("Kfz-Kennzeichen:\nW-AW 7823").
+            *_labeled_value_patterns(
+                "at_de_license_plate",
+                r"[A-ZÄÖÜ]{1,3}(?:-| )[A-Z]{0,2}[ -]?\d{1,5}(?:[ -]?[A-Z])?\b",
+                _LICENSE_PLATE_LABELS,
+            ),
         ),
         context=("kennzeichen", "kfzkennzeichen", "amtliches", "fahrzeug"),
     ),
@@ -317,12 +405,18 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
             *_contextual_patterns(
                 "at_passport",
                 r"(?i)\b[A-Z]\d{7,8}\b",
-                ("reisepass", "passnummer", "pass-nr", "pass nr", "passport"),
+                _PASSPORT_LABELS,
             ),
             *_contextual_patterns(
                 "de_passport",
                 r"(?i)\b[CFGHJKLMNPRTVWXYZ0-9]{9}\b",
-                ("reisepass", "passnummer", "pass-nr", "pass nr", "passport"),
+                _PASSPORT_LABELS,
+            ),
+            # Cross-line / next-line value; a one- or two-letter series prefix ("DK 7394821").
+            *_labeled_value_patterns(
+                "passport_labeled",
+                r"[A-Z]{1,2}[ ]?\d{7,8}\b",
+                _PASSPORT_LABELS,
             ),
         ),
         context=("reisepass", "passnummer", "passnr", "passport"),
@@ -334,24 +428,19 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
             *_contextual_patterns(
                 "at_id_card",
                 r"(?i)\b[A-Z]{2}\d{7}\b",
-                (
-                    "personalausweis",
-                    "ausweisnummer",
-                    "ausweis-nr",
-                    "ausweis nr",
-                    "identitätskarte",
-                ),
+                _ID_CARD_LABELS,
             ),
             *_contextual_patterns(
                 "de_id_card",
                 r"(?i)\b[CFGHJKLMNPRTVWXYZ0-9]{9}\b",
-                (
-                    "personalausweis",
-                    "ausweisnummer",
-                    "ausweis-nr",
-                    "ausweis nr",
-                    "identitätskarte",
-                ),
+                _ID_CARD_LABELS,
+            ),
+            # Cross-line / next-line value with an optional series letter and country prefix
+            # ("N AT-1234567", "AT 1234567").
+            *_labeled_value_patterns(
+                "id_card_labeled",
+                r"(?:[A-Z][ ])?[A-Z]{1,2}[- ]?\d{6,7}\b",
+                _ID_CARD_LABELS,
             ),
         ),
         context=("personalausweis", "ausweisnummer", "ausweisnr", "identitätskarte"),

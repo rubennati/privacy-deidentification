@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.errors import ApiError
 from app.logging import configure_logging, set_correlation_id
 from app.schemas import ErrorResponse
+from app.services.offline_ml_runtime import configure_offline_ml_runtime
 from app.services.runtime_capabilities import warn_if_ocr_memory_limit_is_low
 
 logger = logging.getLogger("app")
@@ -31,6 +32,9 @@ def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
     settings = get_settings()
     configure_logging(settings.log_level)
+    # Pin the ML stack (HuggingFace/transformers, tldextract) to local-only resolution before any
+    # analyzer runs, so runtime stays provably offline on the no-egress backend network.
+    configure_offline_ml_runtime()
     warn_if_ocr_memory_limit_is_low(settings, logger)
 
     app = FastAPI(

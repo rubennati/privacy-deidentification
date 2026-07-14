@@ -76,6 +76,7 @@ def test_job_status_endpoint_returns_safe_metadata(
         "result_artifact_id": "a" * 32,
         "result_artifact_type": "text_result",
         "metadata": {"source": "synthetic"},
+        "is_terminal": True,
     }
     assert "text" not in body
 
@@ -85,6 +86,47 @@ def test_unknown_job_returns_404(client: TestClient) -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Job not found."
+
+
+def test_pending_job_status_reports_not_terminal(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    store = get_job_store(settings)
+    record = _record(document_id)
+    store.create_job(record)
+
+    response = client.get(f"/api/jobs/{record.job_id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+    assert response.json()["is_terminal"] is False
+
+
+def test_failed_job_status_reports_terminal_with_controlled_error(
+    client: TestClient, settings: Settings
+) -> None:
+    document_id = _upload_document(client)
+    store = get_job_store(settings)
+    record = _record(document_id)
+    store.create_job(record)
+    record.mark_running()
+    store.mark_running(record)
+    record.mark_failed(
+        error_code="internal_error",
+        error_message="Job execution failed unexpectedly.",
+    )
+    store.mark_failed(record)
+
+    response = client.get(f"/api/jobs/{record.job_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["is_terminal"] is True
+    assert body["error_code"] == "internal_error"
+    assert body["error_message"] == "Job execution failed unexpectedly."
+    assert body["result_artifact_id"] is None
 
 
 def test_document_jobs_endpoint_returns_newest_jobs(

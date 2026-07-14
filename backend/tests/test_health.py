@@ -24,7 +24,12 @@ def test_ready_returns_ok_when_both_storage_directories_are_writable(
     response = client.get("/api/health/ready")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["components"]["storage"] == "ok"
+    assert body["components"]["job_store"] == "ok"
+    # Tests run in sync OCR mode, where no worker process is expected to exist.
+    assert body["components"]["ocr_worker"] == "not_applicable"
 
 
 def test_ready_returns_unavailable_when_document_data_is_not_writable(
@@ -44,4 +49,6 @@ def test_ready_returns_unavailable_when_document_data_is_not_writable(
     response = client.get("/api/health/ready")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "unavailable"}
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert body["components"]["storage"] == "unavailable"

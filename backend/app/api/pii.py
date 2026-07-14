@@ -8,19 +8,29 @@ from app.config import Settings, get_settings
 from app.schemas import (
     ErrorResponse,
     PiiArtifact,
+    PiiEntityContractV1,
     PiiFeedbackAck,
     PiiFeedbackRequest,
     PiiFeedbackSummary,
+    PiiManualAdditionAck,
+    PiiManualAdditionRequest,
     PiiReviewDecisionAck,
     PiiReviewDecisionRequest,
     PiiReviewResult,
+    PiiReviewResultArtifact,
     PiiRunRequest,
 )
 from app.services.feedback_service import record_pii_feedback, summarize_pii_feedback
 from app.services.job_models import JobContext, JobKind
 from app.services.job_runner import SyncJobRunner, provide_job_runner
 from app.services.pii_adapters import PiiAnalyzer, get_pii_analyzer
-from app.services.pii_review_service import get_pii_review_result, set_pii_review_decision
+from app.services.pii_entity_contract import build_pii_entity_contract
+from app.services.pii_review_service import (
+    add_pii_manual_entity,
+    get_pii_review_result,
+    get_pii_review_result_artifact,
+    set_pii_review_decision,
+)
 from app.services.pii_service import create_pii_artifact, get_latest_pii
 
 router = APIRouter(prefix="/documents", tags=["pii"])
@@ -28,8 +38,14 @@ _JOB_ID_HEADER = "X-Job-Id"
 
 
 def provide_pii_analyzer(settings: Settings = Depends(get_settings)) -> PiiAnalyzer:
-    """Bind the configured single language and local spaCy package to the adapter."""
-    return get_pii_analyzer(settings.pii_language, settings.pii_spacy_model)
+    """Bind the configured language, spaCy package, and NER backend to the adapter."""
+    return get_pii_analyzer(
+        settings.pii_language,
+        settings.pii_spacy_model,
+        settings.pii_ner_backend,
+        str(settings.gliner_model_dir),
+        settings.gliner_model_name,
+    )
 
 
 @router.post(
@@ -65,7 +81,13 @@ def analyze_document_pii(
     )
     result = runner.run(
         context,
-        lambda: create_pii_artifact(settings, document_id, analyzer, request),
+        lambda: create_pii_artifact(
+            settings,
+            document_id,
+            analyzer,
+            request,
+            authority_job_id=context.job_id,
+        ),
     )
     response.headers[_JOB_ID_HEADER] = result.record.job_id
     return result.unwrap()
@@ -74,7 +96,7 @@ def analyze_document_pii(
 @router.get(
     "/{document_id}/pii",
     response_model=PiiArtifact,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_pii(
     document_id: str, settings: Settings = Depends(get_settings)
@@ -122,13 +144,56 @@ def get_pii_feedback_summary(
 @router.get(
     "/{document_id}/pii/review",
     response_model=PiiReviewResult,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_pii_review(
     document_id: str, settings: Settings = Depends(get_settings)
 ) -> PiiReviewResult:
     """Return reviewable entity groups and occurrences for the document's latest PII result."""
     return get_pii_review_result(settings, document_id)
+
+
+@router.get(
+    "/{document_id}/pii/review-result",
+    response_model=PiiReviewResultArtifact,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def get_document_pii_review_result_artifact(
+    document_id: str, settings: Settings = Depends(get_settings)
+) -> PiiReviewResultArtifact:
+    """Return the newest persisted review-result snapshot artifact (Review L8, ADR-0034).
+
+    Additive alongside ``GET …/pii/review``: that endpoint recomputes the reviewable view fresh on
+    every call, while this one returns the durable, immutable-per-run artifact written after each
+    recorded decision — the same file-based artifact model as ``original``/``audit``/``text``/
+    ``pii``. Raises a clean 404 when no decision has ever been recorded for this document yet
+    (distinct from "no PII result exists").
+    """
+    return get_pii_review_result_artifact(settings, document_id)
+
+
+@router.get(
+    "/{document_id}/pii/entity-contract",
+    response_model=PiiEntityContractV1,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def get_document_pii_entity_contract(
+    document_id: str,
+    pii_artifact_id: str = Query(..., pattern=r"^[0-9a-f]{32}$"),
+    text_artifact_id: str = Query(..., pattern=r"^[0-9a-f]{32}$"),
+    settings: Settings = Depends(get_settings),
+) -> PiiEntityContractV1:
+    """Return the exact requested review-ready PII entity contract (ADR-0029/0037).
+
+    Additive alongside ``GET …/pii`` and ``GET …/pii/review``: a derived, review-facing view that
+    connects each detected entity to the technical raw text and canonical reading text with an
+    explicit mapping status, a stable entity id, deterministic overlap provenance, the resolved
+    review state, and a text-free display model. It never mutates the immutable ``pii_result``;
+    missing exact artifacts return 404 and mixed PII/text lineage returns 409.
+    """
+    return build_pii_entity_contract(
+        settings, document_id, pii_artifact_id, text_artifact_id
+    )
 
 
 @router.post(
@@ -145,5 +210,23 @@ def submit_pii_review_decision(
     request: PiiReviewDecisionRequest = Body(...),
     settings: Settings = Depends(get_settings),
 ) -> PiiReviewDecisionAck:
-    """Record a group- or occurrence-level review decision."""
+    """Record a group-, occurrence-, or manual-addition-level review decision."""
     return set_pii_review_decision(settings, document_id, request)
+
+
+@router.post(
+    "/{document_id}/pii/review/manual-additions",
+    response_model=PiiManualAdditionAck,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
+)
+def submit_pii_manual_addition(
+    document_id: str,
+    request: PiiManualAdditionRequest = Body(...),
+    settings: Settings = Depends(get_settings),
+) -> PiiManualAdditionAck:
+    """Record a reviewer-added span the engine missed (PII L14 / Review L10, ADR-0035)."""
+    return add_pii_manual_entity(settings, document_id, request)

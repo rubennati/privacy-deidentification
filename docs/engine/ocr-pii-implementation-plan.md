@@ -41,10 +41,10 @@ Copied from the per-engine docs and [`roadmap.md`](roadmap.md) — not re-derive
 
 | Engine | Current level | Next |
 | --- | --- | --- |
-| OCR / Text | **L12 done (built on the L10.5 contract step)** | PII L12 overlap resolution |
-| PII / Sensitive-Data | **L11 done; L10 partial** (dev-only feedback capture) | L12 overlap resolution |
-| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6 done; L7–L9 partial** | formal `review_result` artifact |
-| Benchmark / Regression | **L8 done; L10 slice out of order** | L9 per-profile metrics |
+| OCR / Text | **L15 done (built on the L10.5 contract step)** | scoped construction-lineage coverage |
+| PII / Sensitive-Data | **L14 done; L10 partial** (dev-only feedback capture) | Re-run the checkpoint loop for the next engine priority |
+| Review / Human-Feedback | **L2 production; L3–L5 dev-only; L6–L9 done** | L10 manual add |
+| Benchmark / Regression | **L10 done** | L11 OCR runtime/memory |
 | Redaction / De-Identification | **L0 by design** | blocked (see core principle) |
 
 OCR/Text (L12, built on the L10.5 contract step) is currently ahead of the *binding* PII/review
@@ -137,7 +137,7 @@ Priority order, authoritative levels from [`pii-engine-levels.md`](pii-engine-le
    practical intent (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)).
 3. **PII L12 — overlap / entity resolution.** Deterministic, auditable engine-level precedence for
    duplicate/nested/overlapping candidates (not the display-only highlight resolver).
-4. **PII validation transparency report.** Surface the *already-stored* candidate-validation summary
+4. **PII validation transparency report — delivered.** Surface the *already-stored* candidate-validation summary
    (kept/dropped/score_down + reason codes from `pii_result`) as a readable transparency view. No new
    detection, no benchmark-logic change.
 5. **PII L13 — review confirm / reject.** Binding confirm/reject persisted in a `review_result`
@@ -213,10 +213,10 @@ hardening + OCR L6/L7 here).
 | 5 | PII entity grouping + occurrences (delivered) | PII | **PII L11** | group repeated same-type occurrences with clickable offsets | detection changes, overlap resolution, review persistence | repeated mentions render as one group with correct per-occurrence offsets; no detection dropped/invented |
 | 6 | OCR layout-aware blocks (delivered) | OCR/Text | **OCR L9** | layout-aware reading order + typed blocks; coarse normalized bounds; page boundaries/headers/footers | precise line/word geometry (L10), tables (L11), lineage map, redaction | multi-column/header-footer pages produce deterministic review blocks; canonical text remains the PII input |
 | 7 | PII overlap / entity resolution | PII | **PII L12** | deterministic engine-level precedence (ADDRESS>LOCATION, EMAIL>URL-fragment, structured>NER) | new detection, NER retuning, AI | overlapping candidates resolve deterministically without dropping distinct entities; decisions are auditable |
-| 8 | PII validation transparency report | PII | none (surfaces L6 data) | readable view of stored validation counts/reason codes | new detection, benchmark-logic change, DB | a transparency view reflects `pii_result` validation summary; no raw candidate text; no new metrics computed |
+| 8 | PII validation transparency report (delivered) | PII | none (surfaces L6 data) | readable Dev View of stored validation counts/reason codes | new detection, benchmark-logic change, DB | the view reflects `pii_result.validation`; legacy/disabled states are explicit; no raw candidate text; no new metrics computed |
 | 9 | OCR span geometry (delivered) | OCR/Text | **OCR L10** | additive `text_geometry` mapping canonical line spans to page-local line boxes + `resolve_span_geometry` lookup | word-level geometry, tables, lineage map, pseudonymization/placeholder mapping/export | line geometry maps to canonical coordinates; per-page lineage and canonical text remain unchanged |
 | 9a | OCR canonical reading text (delivered prerequisite) | OCR/Text | **L10.5 intermediate** | versioned block-aware `reading_text`; relabel legacy `text` as technical raw; exact synthetic quote fixture | PII input switch, lineage map, structured content, pseudonymization/export | User View defaults to useful reading text; raw/page text and PII behavior remain unchanged |
-| 10 | Review result artifact (partially delivered as a JSONL decision overlay) | Review / PII | **Review L8 (→ PII L13)** | immutable, lineage-bound `review_result` overlay | confirm/reject UI actions (next), rules, DB migration | a `review_result` persists bound to `pii_result`+`text_result` and re-renders; `pii_result` immutable; re-extraction marks it stale — delivered: bound to `pii_result.id` (not yet `text_result.id`), persists/re-renders, `pii_result` immutable; not yet delivered: an explicit stale flag and the formal single-artifact model (see [ADR-0021](../adr/0021-pii-entity-grouping-and-review-decisions.md)) |
+| 10 | Review result artifact (delivered) | Review / PII | **Review L8 (→ PII L13 partial)** | immutable, lineage-bound `review_result` overlay | new decision semantics, rules, DB migration | immutable snapshots persist after decisions, `pii_result` stays immutable, and superseded decisions surface explicitly as stale (ADR-0034) |
 | 11 | OCR table/form reconstruction (delivered) | OCR/Text | **OCR L11** | additive span-backed tables, fields, and sections with conservative confidence/flags | PII-input switch, pseudonymization/placeholder mapping/export, UI | representative PDF/OCR/DOCX structures resolve to raw/reading spans; raw text and PII input remain unchanged |
 | 12 | OCR multi-column layout reconstruction (delivered) | OCR/Text | **OCR L12** | safe multi-column reading order, fused table headers, label/value pairing | PII-input switch, new dependency, pseudonymization/export, API/UI | complex dense layouts render more readably; raw text and PII input remain unchanged |
 | 13 | Feedback-to-regression workflow | PII / Review | **PII L15 / Review L14** | promote reviewed corrections into private benchmark ground truth | exporting PII outside `volumes/`, benchmark scoring changes | corrections become private benchmark data without leaving `volumes/`; ground truth improves |
@@ -272,6 +272,44 @@ Redaction L0 again; before advancing PII beyond L12, re-run the checkpoint loop 
 lineage or geometry prerequisite is missing. The next documented engine steps remain **PII L12
 overlap resolution**, formal **Review L8 `review_result`**, and **PII validation transparency
 report**, unless benchmark/private-corpus evidence reprioritizes OCR L13 document understanding.
+
+**Latest checkpoint (PII L14 / Review L10 — manual add scope, docs-only):** PII L12/L13, Review
+L6–L9, and the anchor-bound entity contract (Phase C) are all now delivered — see `.ai/state.md`'s
+"Latest checkpoint" entries for the full sequence between the OCR L12 checkpoint above and this one.
+This entry scopes, without implementing, the next step named at the top of this document:
+[ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md) audits why letting a reviewer add a
+missed span cannot reuse `pii_result` (strictly immutable/detector-only) or
+`AnchorBoundPiiEntityV1` (`source_observations` structurally requires a detector observation), and
+scopes a new `manual_addition` record layered on the existing `pii_review_decisions.jsonl`
+log/`PiiReviewResult`, with canonical-text offsets, a best-effort raw-span reverse projection reused
+from `reading_text_map`/anchor projection, `text_artifact_id`-keyed staleness, and reuse of the
+existing decision endpoint for an addition's own accept/keep/reject. No dependency, detection,
+`pii_result` schema, anchor-graph, active-PII-input, pseudonymization, redaction, export, or code
+change is introduced. Next: implement this design as `pii-l14-manual-add-v1`.
+
+**Latest checkpoint (PII L14 / Review L10 — manual add v1, implemented):** PII advances from L13 to
+**L14 done**; Review advances from L9 to **L10 done**. Implements the design scoped above: new
+`PiiManualAddition`/`PiiManualAdditionRecord` schemas, `pii_manual_addition.py`'s
+`resolve_canonical_span_to_raw` (a filter over the Text Anchor Graph's existing raw↔canonical
+pairing — never a new matching heuristic), and `add_pii_manual_entity`/
+`POST …/pii/review/manual-additions` in `pii_review_service.py`/`api/pii.py`. Manual additions are
+never merged into `pii_result` or `AnchorBoundPiiEntityV1`; they surface only via the additive
+`PiiReviewResult.manual_additions` list. `_load_latest_decisions`/`_count_stale_decisions`/
+`_target_exists` became target-type-aware: entity-group/occurrence items stay scoped to the exact
+current `pii_result` artifact id (unchanged), while manual-addition items scope to
+`text_artifact_id` instead, since a manual addition has no detector origin to key on — a PII re-run
+alone never makes one stale, only a new text artifact does. Frontend: `getCharacterOffsetsFromSelection`
+(`textSelection.ts`, reading-mode only), `buildManualAdditionHighlights` (a display-only merge into
+the existing highlight pipeline, never touching the backend contract), a distinguishing highlight
+ring + tooltip for `origin: "human"` spans, a "Manuelle Ergänzungen" list reusing the existing
+decision `<select>` pattern, and the `AddPiiManualEntity` add panel (entity-type picker sourced from
+the run's own `configured_entity_types`). Verified end to end in a live browser session
+(`make up`): creation → exact reverse projection → distinct highlight/tooltip → review-list entry →
+`false_positive` decision → highlight removal → confirmed `pii_result`/`GET …/pii/entity-contract`
+stay byte-identical (7/7 entities, manual addition absent from both). No dependency, recognizer,
+detection, `pii_result` schema, anchor-graph, active-PII-input, pseudonymization, redaction, or
+export change. See [ADR-0035](../adr/0035-pii-l14-review-l10-manual-add-scope.md). Next: re-run the
+checkpoint loop against `.ai/state.md`'s current-sequence priorities.
 
 ## References
 

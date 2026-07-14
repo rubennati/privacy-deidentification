@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import JSONResponse
 
 from app.api.jobs import to_job_status_response
 from app.config import Settings, get_settings
-from app.schemas import DocumentTextPackageV1, ErrorResponse, JobStatusResponse, TextArtifact
+from app.schemas import (
+    DocumentTextAnchorGraphV1,
+    DocumentTextPackageV1,
+    ErrorResponse,
+    JobStatusResponse,
+    TextArtifact,
+)
+from app.services.artifact_service import get_committed_text_artifact
 from app.services.document_service import DocumentNotFoundError, get_document_record
+from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.job_models import (
     JobContext,
@@ -19,7 +27,11 @@ from app.services.job_models import (
 from app.services.job_runner import SyncJobRunner, provide_job_runner
 from app.services.job_store import JobStore, get_job_store
 from app.services.ocr_adapters import OcrAdapter, get_ocr_adapter
-from app.services.ocr_service import create_text_artifact, get_latest_text
+from app.services.ocr_service import (
+    TextArtifactNotFoundError,
+    create_text_artifact,
+    get_latest_text,
+)
 from app.services.pdf_renderer import PdfRenderer, get_pdf_renderer
 
 router = APIRouter(prefix="/documents", tags=["ocr"])
@@ -79,7 +91,13 @@ def ocr_document(
     )
     result = runner.run(
         context,
-        lambda: create_text_artifact(settings, document_id, ocr_adapter, pdf_renderer),
+        lambda: create_text_artifact(
+            settings,
+            document_id,
+            ocr_adapter,
+            pdf_renderer,
+            authority_job_id=context.job_id,
+        ),
     )
     response.headers[_JOB_ID_HEADER] = result.record.job_id
     return result.unwrap()
@@ -102,6 +120,10 @@ def _enqueue_ocr_job(settings: Settings, document_id: str) -> JSONResponse:
     )
     record = JobRecord.from_context(context)
     store: JobStore = get_job_store(settings)
+    # Recovery is lazy as well as worker-driven (ADR-0041): enqueueing new work first resolves any
+    # abandoned `running` row whose lease expired, so a dead worker's leftovers can never sit in
+    # front of fresh jobs as if they were still being processed.
+    store.recover_abandoned_jobs(max_attempts=settings.ocr_worker_max_attempts)
     store.create_job(record)
     status_response = to_job_status_response(record)
     return JSONResponse(
@@ -114,19 +136,26 @@ def _enqueue_ocr_job(settings: Settings, document_id: str) -> JSONResponse:
 @router.get(
     "/{document_id}/ocr",
     response_model=TextArtifact,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_ocr(
-    document_id: str, settings: Settings = Depends(get_settings)
+    document_id: str,
+    artifact_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
+    settings: Settings = Depends(get_settings),
 ) -> TextArtifact:
-    """Return the newest text result for a document."""
+    """Return an exact text result when requested; otherwise return the newest."""
+    if artifact_id is not None:
+        artifact = get_committed_text_artifact(settings, document_id, artifact_id)
+        if artifact is None:
+            raise TextArtifactNotFoundError
+        return artifact
     return get_latest_text(settings, document_id)
 
 
 @router.get(
     "/{document_id}/text-package",
     response_model=DocumentTextPackageV1,
-    responses={404: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def get_document_text_package(
     document_id: str, settings: Settings = Depends(get_settings)
@@ -140,3 +169,22 @@ def get_document_text_package(
     """
     artifact = get_latest_text(settings, document_id)
     return build_document_text_package(artifact)
+
+
+@router.get(
+    "/{document_id}/text-anchors",
+    response_model=DocumentTextAnchorGraphV1,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def get_document_text_anchors(
+    document_id: str, settings: Settings = Depends(get_settings)
+) -> DocumentTextAnchorGraphV1:
+    """Return Text Anchor Graph v1 (ADR-0031 Phase B) for the newest text result.
+
+    Additive alongside ``GET …/text-package``: the graph is derived from the Document Text Package
+    and carries only anchor ids, source ranges, statuses, counts, and warning codes. It is not
+    persisted, does not mutate OCR/Text artifacts, and does not bind PII entities yet.
+    """
+    artifact = get_latest_text(settings, document_id)
+    package = build_document_text_package(artifact)
+    return build_document_text_anchor_graph(package)

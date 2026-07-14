@@ -7,8 +7,13 @@ derived, read-only package built on demand from existing immutable `text_result`
 `DocumentTextPackageV1`, `DocumentTextSourceV1`, `DocumentTextPackageValidationSummary`, a
 builder/validator service, and `GET /api/documents/{document_id}/text-package` with
 `contract_version = "1.0"`. Existing OCR endpoints remain backward-compatible, the package is not
-persisted as its own artifact, and PII is **not migrated yet**: PII still uses technical raw text
-from `text_result.text`.
+persisted as its own artifact, and PII is **not migrated yet** at the time of this ADR: PII still
+uses technical raw text from `text_result.text`.
+
+**Update (2026-07-09):** PII is now the first migrated consumer — it intakes this package through a
+dedicated adapter and resolves overlapping candidates deterministically (PII L12). Technical raw
+text remains PII's primary and only active detection input. See
+[ADR-0028](0028-pii-intake-document-text-package-v1.md).
 
 This builds on
 [ADR-0016](0016-engine-maturity-levels-0-19.md) (0–19 maturity scale),

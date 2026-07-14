@@ -4,7 +4,7 @@
 
 import { WorkstationApiError } from "./workstations";
 
-export type PiiReviewDecisionScope = "entity_group" | "occurrence";
+export type PiiReviewDecisionScope = "entity_group" | "occurrence" | "manual_addition";
 // A freshly detected entity is assumed "pseudonymize" by default — there is no separate "pending"
 // value. A reviewer only has to act to opt an entity *out* of pseudonymization: "keep" it as-is,
 // or mark it a "false_positive" (not PII at all).
@@ -50,6 +50,12 @@ export interface PiiEntityGroupReview {
   review_status: PiiReviewStatus;
   review_decision: PiiReviewDecisionValue | null;
   updated_at: string | null;
+  // A previous decision recorded against a superseded PII run that named this same (deterministic)
+  // group id. Never applied — `review_status`/`review_decision` above reflect only the current
+  // run — but surfaced so the card can say "previous decision no longer applies" explicitly.
+  // Optional for legacy/cached responses.
+  stale_decision?: PiiReviewDecisionValue | null;
+  stale_decision_recorded_at?: string | null;
 }
 
 export interface PiiReviewOccurrence {
@@ -67,13 +73,97 @@ export interface PiiReviewOccurrence {
   review_status: PiiReviewStatus;
   review_decision: PiiReviewDecisionValue | null;
   decision_scope: PiiReviewDecisionScope | null;
+  // Timestamp of the effective decision record; absent while no explicit decision was recorded.
+  updated_at?: string | null;
+}
+
+// PII L14 / Review L10 (ADR-0035): a reviewer-added span the engine missed. Parallel to, and never
+// merged into, `groups`/`occurrences` (both detector-origin only) — see `manual_additions` below.
+export interface PiiManualAddition {
+  addition_id: string;
+  entity_type: string;
+  canonical_start: number;
+  canonical_end: number;
+  text_artifact_id: string;
+  raw_start: number | null;
+  raw_end: number | null;
+  raw_projection_status: "exact" | "partial" | "unmapped";
+  origin: "human";
+  note: string | null;
+  created_at: string;
+  review_status: PiiReviewStatus;
+  review_decision: PiiReviewDecisionValue | null;
+  // Whether this addition's canonical offsets still refer to the current text artifact. A "stale"
+  // addition stays listed for audit/history, but must never render as a highlight into, or an
+  // active decision against, the current text. Optional for legacy/cached responses (= "current").
+  artifact_currency?: PiiReviewArtifactCurrency;
+}
+
+// Review Result v1: one stable, unified entry per detected occurrence or manual addition, so a
+// future consumer (e.g. a Replacement Plan) can read decisions without distinguishing origin-
+// specific shapes or the review overlay's own decision-log internals. Additive and optional here —
+// existing UI keeps reading `occurrences`/`manual_additions`/`groups` directly; nothing renders
+// `entries` yet.
+export type PiiReviewEntryOrigin = "detected" | "manual";
+export type PiiReviewArtifactCurrency = "current" | "stale";
+export type PiiReviewIdentityStatus = "resolved" | "unresolved" | "incompatible";
+
+export interface PiiReviewResultEntry {
+  entry_id: string;
+  origin: PiiReviewEntryOrigin;
+  entity_type: string;
+  entity_group_id: string | null;
+  pii_artifact_id: string | null;
+  text_artifact_id: string;
+  artifact_currency: PiiReviewArtifactCurrency;
+  identity_status: PiiReviewIdentityStatus;
+  identity_reason_codes: string[];
+  anchor_entity_id: string | null;
+  mapping_status: "exact" | "projected" | "partial" | "missing" | "ambiguous" | "not_applicable";
+  review_status: PiiReviewStatus;
+  review_decision: PiiReviewDecisionValue | null;
+  decision_scope: PiiReviewDecisionScope | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface PiiReviewResult {
   document_id: string;
   artifact_id: string;
+  // Additive direct lineage to the text_result consumed by this PII run. Legacy review responses
+  // may omit it, but newly written Review L9 decisions and snapshots always provide it.
+  input_text_artifact_id?: string | null;
   groups: PiiEntityGroupReview[];
   occurrences: PiiReviewOccurrence[];
+  manual_additions: PiiManualAddition[];
+  // Review Result v1: the unified view over `occurrences`/`manual_additions` above. Optional here
+  // for older cached responses; always present on newly written reads/snapshots.
+  entries?: PiiReviewResultEntry[];
+  // Review L8 (ADR-0034): decisions recorded against a since-superseded PII result were already
+  // never silently reapplied; these additive fields make that explicit instead of looking
+  // identical to "no decision recorded". Also covers manual additions whose text_artifact_id no
+  // longer matches the current text result (PII L14 / Review L10, ADR-0035).
+  stale_decision_count: number;
+  has_stale_decisions: boolean;
+  // Itemization of exactly the set `stale_decision_count` counts (audit/history, never applied).
+  // Optional for legacy/cached responses.
+  stale_decisions?: PiiStaleReviewDecision[];
+}
+
+// One recorded review item that no longer applies to the current result — the per-item view of
+// `stale_decision_count`, so warning, cards, and effective state can describe the same set.
+export interface PiiStaleReviewDecision {
+  target_type: PiiReviewDecisionScope;
+  target_id: string;
+  // Null for a stale manual addition that was never explicitly decided.
+  decision: PiiReviewDecisionValue | null;
+  // Known for manual additions; decision records do not carry one.
+  entity_type: string | null;
+  recorded_at: string;
+  // The superseded pii_result the decision was recorded against; null for manual additions.
+  artifact_id: string | null;
+  // The superseded text_result a manual addition was captured against; null for decisions.
+  text_artifact_id: string | null;
 }
 
 export interface PiiReviewDecisionRequest {
@@ -90,6 +180,23 @@ export interface PiiReviewDecisionAck {
   decision: PiiReviewDecisionValue;
   review_status: PiiReviewStatus;
   updated_at: string;
+}
+
+export interface PiiManualAdditionRequest {
+  entity_type: string;
+  canonical_start: number;
+  canonical_end: number;
+  note?: string;
+}
+
+export interface PiiManualAdditionAck {
+  recorded: boolean;
+  addition_id: string;
+  entity_type: string;
+  canonical_start: number;
+  canonical_end: number;
+  raw_projection_status: "exact" | "partial" | "unmapped";
+  created_at: string;
 }
 
 /** Stable per-occurrence key → review status lookup, e.g. for highlight suppression. */
@@ -145,4 +252,38 @@ export async function submitPiiReviewDecision(
     throw new WorkstationApiError(detail, response.status, correlationId);
   }
   return (await response.json()) as PiiReviewDecisionAck;
+}
+
+/** Add a span the engine missed (PII L14 / Review L10, ADR-0035). Offsets are canonical-text
+ *  offsets into the currently rendered `reading_text` — never raw offsets. */
+export async function addPiiManualEntity(
+  documentId: string,
+  request: PiiManualAdditionRequest,
+): Promise<PiiManualAdditionAck> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `/api/documents/${encodeURIComponent(documentId)}/pii/review/manual-additions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+  } catch {
+    throw new WorkstationApiError("Keine Verbindung zum Server.", 0);
+  }
+  if (!response.ok) {
+    let detail = "Ergänzung konnte nicht gespeichert werden.";
+    let correlationId: string | null = null;
+    try {
+      const data = (await response.json()) as { detail?: string; correlation_id?: string | null };
+      detail = data.detail ?? detail;
+      correlationId = data.correlation_id ?? null;
+    } catch {
+      // Keep the safe fallback; error bodies must not be assumed to be JSON.
+    }
+    throw new WorkstationApiError(detail, response.status, correlationId);
+  }
+  return (await response.json()) as PiiManualAdditionAck;
 }
