@@ -5,6 +5,8 @@
 - Windows 11 mit PowerShell
 - Git for Windows
 - Docker Desktop mit Linux-Containern (wsl: <https://learn.microsoft.com/en-us/windows/wsl/install>)
+- Docker Desktop mit **mindestens 4 GB RAM** (Settings → Resources), damit das GLiNER-PII-Modell passt
+- Einmalig etwa **1,3 GB Download** und einige Minuten fuer die lokalen Modelle beim ersten Setup
 
 Der Installer installiert keine Systemsoftware ohne Zustimmung. Fehlt Git oder Docker Desktop,
 zeigt er den offiziellen Download und, falls vorhanden, einen optionalen `winget`-Befehl an.
@@ -64,8 +66,12 @@ Der Status zeigt Installation, aktiven Git-Branch, Docker-Zustand, Container und
 
 Das Repository wird nach `$HOME\PrivacyDeID\app` geklont. Der Launcher liegt unter
 `$HOME\PrivacyDeID\deid.ps1`. Fehlt `.env`, wird sie einmalig aus `.env.example` erstellt. Danach
-startet Docker Compose die lokale App. Bestehende `.env`-Dateien und lokale Daten werden nicht
-ersetzt oder geloescht.
+werden die lokalen Modelle bereitgestellt — die PaddleOCR-Modelle (fuer gescannte Seiten) und das
+GLiNER-PII-Modell samt Backbone — und Docker Compose startet die lokale App. Die Modelle werden nur
+beim ersten Mal heruntergeladen; danach laeuft alles vollstaendig offline (`start` provisioniert nur
+nach, wenn Modelle fehlen). Bestehende `.env`-Dateien und lokale Daten werden nicht ersetzt oder
+geloescht. Ist die Maschine zu schwach oder ohne Internet beim ersten Setup, bricht die
+Bereitstellung mit einer klaren Meldung ab.
 
 ## Git fehlt
 

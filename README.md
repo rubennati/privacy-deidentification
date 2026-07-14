@@ -17,8 +17,10 @@ The following commands are then available:
 & "$HOME\PrivacyDeID\deid.ps1" status
 ```
 
-The app runs at <http://localhost:8080>. See [Windows Local App](docs/windows-local-app.md) for
-details.
+The app runs at <http://localhost:8080>. The installer provisions the local OCR and GLiNER models
+automatically, so the **first** setup downloads ~1.3 GB and takes a while; later starts are fast and
+fully offline. Give Docker Desktop **≥ 4 GB RAM** (Settings → Resources) so the GLiNER model fits.
+See [Windows Local App](docs/windows-local-app.md) for details.
 
 ## Branch workflow
 
@@ -33,9 +35,11 @@ only the original bytes under `./volumes/uploads`, and keeps metadata and proces
 separately under `./volumes/document-store`. All host storage lives under a single `DATA_ROOT`
 (default `./volumes`).
 
-> **Step 5:** This version provides upload/document management, structural Audit v1, the
-> synchronous OCR/Text and detection-only PII workstations, plus a manual document review UI.
-> Anonymization and redaction remain separate later steps.
+> **Scope:** This version provides upload/document management, structural Audit v1, worker-based
+> OCR/Text, detection-only PII (default local GLiNER NER) with an anchor-bound review entity
+> contract, and a manual review workflow — grouped per-entity decisions (pseudonymize / keep / false
+> positive) plus manual add of missed entities, recorded in an immutable review result.
+> Pseudonymization, redaction, and export remain separate later steps.
 
 ## Approach: tool-first / adapter-bound
 
@@ -53,8 +57,8 @@ central engine should do on a **0–19 maturity scale**, the artifacts and metri
 settings, the tool strategy, the target architecture (including the database and optional-local-AI
 questions), and the roadmap. See [ADR-0011](docs/adr/0011-engine-capability-model.md) and
 [ADR-0016](docs/adr/0016-engine-maturity-levels-0-19.md). Current standing (summary): OCR/Text
-**L14**, PII **L11** (L10 partial), Review **L2 production / L6 done / L7-L9 partial**,
-Benchmark **L8**, Redaction **L0**.
+**L15**, PII **L14** (L10 partial), Review **L2 production / L10 done**, Benchmark **L10**,
+Redaction **L0**.
 
 ## Architecture
 
@@ -94,7 +98,7 @@ No local Python or Node.js installation is required for normal development comma
 
 ```bash
 cp .env.example .env        # optional; defaults are built in
-make ocr-models             # once, for image/scanned-page OCR
+make models                 # once: OCR + GLiNER models (~1.3 GB backbone download)
 make up                     # start frontend + api + ocr-worker → http://127.0.0.1:8080
 ```
 
@@ -102,8 +106,8 @@ make up                     # start frontend + api + ocr-worker → http://127.0
 
 | Command | What it does |
 | --- | --- |
-| `make up` | Run the stack, production-local. **Does not build** — fast start on the existing images. |
-| `make dev` | Same, in **developer mode** (dev feedback UI + GLiNER NER + more memory). Also no build. |
+| `make up` | Run the stack (default GLiNER PII, 4g), production-local. **Does not build.** Run `make models` once first. |
+| `make dev` | Same, plus the dev feedback + per-run engine-settings UI. Also no build. |
 | `make update` | You changed code → rebuild only the **changed** layers and restart what changed. |
 | `make rebuild` | Force a full **no-cache** rebuild, restart, then drop the old layers. |
 | `make stop` | Stop the stack; containers kept, all data on disk. |
@@ -115,12 +119,13 @@ make up                     # start frontend + api + ocr-worker → http://127.0
 
 ### Developer vs production-local
 
-- **`make up`** — the handover/production-local mode: dev-only settings **off**, lean.
-- **`make dev`** — developer mode via `docker-compose.dev.yml`: `ENABLE_DEV_ENGINE_SETTINGS=true`
-  (review feedback + per-run engine settings), the stronger GLiNER NER, and more memory (4g API).
-  GLiNER needs its offline model **and** backbone — provision both once with `make ner-models`. It
-  runs fully offline (no runtime download); leave `API_MEMORY_LIMIT` unset in `.env` so `make dev`
-  gets its 4g default (the backbone peaks ~3 GiB while loading).
+- **`make up`** — production-local: the default **GLiNER** NER (best person/organization detection),
+  a 4g API limit, dev-only settings **off**. Provision models once with `make models`. GLiNER runs
+  fully offline (no runtime download); its mdeberta-v3-base backbone peaks ~3 GiB while loading, so
+  keep `API_MEMORY_LIMIT` at its 4g default (only lower it together with `PII_NER_BACKEND=spacy` on a
+  constrained host).
+- **`make dev`** — same runtime plus developer conveniences via `docker-compose.dev.yml`
+  (`ENABLE_DEV_ENGINE_SETTINGS=true`: review feedback + per-run engine settings).
 
 ### Runs fully local
 

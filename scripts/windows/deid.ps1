@@ -131,6 +131,10 @@ function Start-App {
     Ensure-DockerRunning
     Initialize-EnvironmentFile
 
+    # Make sure the local OCR + GLiNER models exist (self-healing; only downloads if missing).
+    . (Join-Path $AppPath "scripts\windows\provision-models.ps1")
+    Confirm-ModelsProvisioned -AppPath $AppPath
+
     Push-Location $AppPath
     try {
         & docker compose up -d
@@ -167,6 +171,11 @@ function Update-App {
 
     Ensure-DockerRunning
     Initialize-EnvironmentFile
+
+    # Make sure the local OCR + GLiNER models exist (self-healing; only downloads if missing).
+    . (Join-Path $AppPath "scripts\windows\provision-models.ps1")
+    Confirm-ModelsProvisioned -AppPath $AppPath
+
     Push-Location $AppPath
     try {
         & docker compose up -d --build

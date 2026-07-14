@@ -17,7 +17,7 @@ FRONTEND_RUN := docker run --rm -v "$(CURDIR)/frontend":/app -v privacy-deidenti
 RUNTIME_RUN := docker run --rm -v "$(CURDIR)":/repo -w /repo python:3.12-slim sh -lc
 BENCHMARK_RUN := docker run --rm -v "$(CURDIR)":/repo -w /repo python:3.12-slim sh -lc
 
-.PHONY: help runtime-dirs up dev update rebuild stop down prune ocr-models ner-models ocr-smoke pii-smoke \
+.PHONY: help runtime-dirs up dev update rebuild stop down prune models ocr-models ner-models ocr-smoke pii-smoke \
 	logs ps shell-api lint typecheck test lock benchmark-private benchmark-private-json \
 	benchmark-test docker-df
 
@@ -41,10 +41,10 @@ define _build_retry
 	[ $$n -le 3 ] || { echo "  build failed 3x — Colima containerd race; see README"; exit 1; }
 endef
 
-up: runtime-dirs ## Run the stack, production-local (http://localhost:8080); no build
+up: runtime-dirs ## Run the stack (default GLiNER PII, 4g), production-local; no build. Run `make models` once first.
 	$(COMPOSE) up -d
 
-dev: runtime-dirs ## Run in developer mode (dev feedback UI + GLiNER + more memory); no build
+dev: runtime-dirs ## Same as up plus the dev feedback + per-run engine-settings UI; no build
 	$(COMPOSE) $(DEV) up -d
 
 update: runtime-dirs ## Apply code changes: rebuild only the changed layers, then restart
@@ -66,10 +66,12 @@ prune: ## Reclaim this project's rebuild leftovers (dangling images + build cach
 	docker image prune -f
 	docker builder prune -f
 
+models: ocr-models ner-models ## Provision all local models (OCR + GLiNER); run once before make up
+
 ocr-models: ## Download PaddleOCR models into volumes/ocr-models (idempotent)
 	./scripts/fetch-ocr-models.sh
 
-ner-models: ## Download the GLiNER NER model + backbone into volumes/ner-models (idempotent; needed for make dev)
+ner-models: ## Download the GLiNER NER model + backbone into volumes/ner-models (idempotent; needed for the default GLiNER backend)
 	./scripts/fetch-ner-models.sh
 
 ocr-smoke: ## Smoke-test the real OCR runtime (needs provisioned models)
