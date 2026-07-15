@@ -9,6 +9,7 @@ import {
   buildHighlightSegments,
   buildManualAdditionHighlights,
   invalidAnchorBoundHighlights,
+  orderedNavigableHighlightIds,
   type AnchorBoundPiiHighlight,
 } from "./piiHighlights";
 
@@ -551,6 +552,61 @@ describe("buildManualAdditionHighlights", () => {
     ]);
 
     expect(canonical).toHaveLength(1);
+  });
+});
+
+describe("orderedNavigableHighlightIds", () => {
+  it("excludes a highlight fully shadowed by an overlapping higher-priority one", () => {
+    // The wide highlight leads every segment it shares (longer = higher priority), so the entity
+    // nested inside it never leads a mark and must not become a jump target ("jumps into nothing").
+    const text = "0123456789ABCDEFGHIJ";
+    const wide = anchorHighlight({
+      start: 0,
+      end: 20,
+      entity_id: "1".repeat(32),
+      primary_source_entity_id: "1".repeat(32),
+      source_entity_ids: ["1".repeat(32)],
+    });
+    const shadowed = anchorHighlight({
+      start: 5,
+      end: 10,
+      entity_type: "PERSON",
+      entity_id: "2".repeat(32),
+      primary_source_entity_id: "2".repeat(32),
+      source_entity_ids: ["2".repeat(32)],
+    });
+
+    expect(orderedNavigableHighlightIds(text, [wide, shadowed])).toEqual(["1".repeat(32)]);
+  });
+
+  it("excludes an out-of-range highlight and orders the rest by position", () => {
+    const text = "0123456789";
+    const later = anchorHighlight({
+      start: 6,
+      end: 9,
+      entity_id: "b".repeat(32),
+      primary_source_entity_id: "b".repeat(32),
+      source_entity_ids: ["b".repeat(32)],
+    });
+    const earlier = anchorHighlight({
+      start: 0,
+      end: 3,
+      entity_id: "a".repeat(32),
+      primary_source_entity_id: "a".repeat(32),
+      source_entity_ids: ["a".repeat(32)],
+    });
+    const outOfRange = anchorHighlight({
+      start: 8,
+      end: 40,
+      entity_id: "c".repeat(32),
+      primary_source_entity_id: "c".repeat(32),
+      source_entity_ids: ["c".repeat(32)],
+    });
+
+    expect(orderedNavigableHighlightIds(text, [later, earlier, outOfRange])).toEqual([
+      "a".repeat(32),
+      "b".repeat(32),
+    ]);
   });
 });
 

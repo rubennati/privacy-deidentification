@@ -63,7 +63,11 @@ import {
 } from "../lib/documentAnalysis";
 import { toStationError, type StationName } from "../lib/stationErrors";
 import { buildRuntimeNotice, buildStationRuntimeNotice } from "../lib/runtimeNotice";
-import { buildAnchorBoundPiiHighlights, buildManualAdditionHighlights } from "../lib/piiHighlights";
+import {
+  buildAnchorBoundPiiHighlights,
+  buildManualAdditionHighlights,
+  orderedNavigableHighlightIds,
+} from "../lib/piiHighlights";
 import { scrollAndFlash } from "../lib/scrollAndFlash";
 import { formatBytes, formatTimestamp } from "../lib/format";
 
@@ -356,19 +360,35 @@ export default function DocumentDetailPage() {
       ? piiEntityContractState.contract
       : null;
   const highlightModel = buildAnchorBoundPiiHighlights(currentPiiEntityContract);
-  // Ordered ↑/↓ jump targets: exactly the marks visible in the active text view, by position.
+  // Ordered ↑/↓ jump targets: exactly the marks the active view renders with a DOM id — derived
+  // from the same segment logic as the rendering, so a shadowed or out-of-range highlight (which
+  // leads no mark) is never a jump target. The active view is resolved the same way ReviewTextViewer
+  // resolves it, so the jump set always matches what is on screen.
   const manualHighlightViews = buildManualAdditionHighlights(reviewResult?.manual_additions ?? []);
-  const visibleHighlights =
-    reviewTextMode === "reading" && text?.content.reading_text != null
-      ? [...highlightModel.byView.canonical_reading_text, ...manualHighlightViews.canonical]
-      : [...highlightModel.byView.technical_raw_text, ...manualHighlightViews.raw];
-  const highlightNavIds = [
-    ...new Set(
-      [...visibleHighlights]
-        .sort((left, right) => left.start - right.start)
-        .map((highlight) => highlight.primary_source_entity_id),
-    ),
-  ];
+  const hasReadingText = text?.content.reading_text != null;
+  const hasLayoutText = text?.content.layout_text_result != null;
+  const activeTextMode: ReviewTextMode =
+    reviewTextMode === "layout" && hasLayoutText
+      ? "layout"
+      : reviewTextMode === "reading" && hasReadingText
+        ? "reading"
+        : "raw";
+  const activeViewText =
+    activeTextMode === "layout"
+      ? text?.content.layout_text_result
+      : activeTextMode === "reading"
+        ? text?.content.reading_text
+        : text?.content.text;
+  const activeViewHighlights =
+    activeTextMode === "layout"
+      ? highlightModel.byView.layout_text
+      : activeTextMode === "reading"
+        ? [...highlightModel.byView.canonical_reading_text, ...manualHighlightViews.canonical]
+        : [...highlightModel.byView.technical_raw_text, ...manualHighlightViews.raw];
+  const highlightNavIds =
+    activeViewText != null
+      ? orderedNavigableHighlightIds(activeViewText, activeViewHighlights)
+      : [];
   const navigateHighlights = (direction: "prev" | "next") => {
     const length = highlightNavIds.length;
     if (length === 0) {
