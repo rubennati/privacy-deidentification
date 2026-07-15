@@ -242,7 +242,13 @@ _STREET_SUFFIX = r"(?:straße|strasse|gasse|platz|weg|allee)"
 # The trailing lookahead rejects a following digit (so backtracking cannot shorten the number
 # to dodge the unit check) and a following measurement unit or percent/currency sign.
 _HOUSE_NUMBER = r"\d{1,4}[a-z]?(?:\s*/\s*\d{1,4}[a-z]?){0,3}(?!\d|\s*(?:km|cm|mm|kg|m)\b|\s*[%€])"
-_POSTAL_CITY = r"\d{4,5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+)?"
+# PLZ + Ort stay on one physical line: the inter-word gaps are horizontal whitespace only
+# ([^\S\r\n]), so a two-word-city allowance ("1070 Wien" + optional second word) can never bleed
+# across a line break into the next line's first word ("… 1070 Wien\nSchadenursache").
+_POSTAL_CITY = (
+    r"\d{4,5}[^\S\r\n]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+"
+    r"(?:[^\S\r\n]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+)?"
+)
 
 
 def _domain_identifier(

@@ -340,6 +340,31 @@ def test_contact_line_next_line_capture_excludes_the_label() -> None:
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "Mariengasse 12, 1070 Wien\nSchadenursache: Rohrbruch",
+        "Objektadresse: Mariengasse 12, 1070 Wien\nBesichtigung am 3.5.",
+        "Mariahilfer Strasse 88, 1060 Wien\nSchadenursache",
+    ],
+)
+def test_address_shape_capture_never_crosses_a_line_break(text: str) -> None:
+    # The ", PLZ Ort" tail allows a two-word city ("1070 Wien Neustadt") but must stay on one
+    # physical line: it must never bleed across a newline into the next line's first word
+    # ("… 1070 Wien\nSchadenursache") — a display over-marking regression.
+    matches = [
+        match
+        for pattern in _SPECS_BY_TYPE["ADDRESS"].patterns
+        for match in [re.search(pattern.regex, text)]
+        if match
+    ]
+
+    assert matches  # the address itself is still detected
+    assert any("Wien" in match.group(0) for match in matches)  # the city is still captured
+    for match in matches:
+        assert "\n" not in match.group(0)
+
+
+@pytest.mark.parametrize(
     ("entity_type", "text"),
     [
         # Value on the line after the label, with an optional qualifier before the colon.
