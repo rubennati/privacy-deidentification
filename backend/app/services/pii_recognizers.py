@@ -207,6 +207,33 @@ _CREDIT_CARD_LABELS = ("kreditkarte", "kartennummer", "kreditkartennummer", "cre
 # Optional card-network word that can sit between the label and the number ("Kreditkarte: Visa …").
 _CARD_NETWORKS = r"(?:master\s?card|visa|amex|american express|maestro|diners|discover|jcb)"
 
+# Birth date/place are context-gated: only a date/place *following* an explicit birth label is
+# emitted, so a plain invoice date or a residence city never over-tags. "geb." also introduces a
+# maiden name ("Müller geb. Schmidt"), but the strict date value shape below never matches a name.
+_BIRTH_DATE_LABELS = (
+    "geboren am",
+    "geboren",
+    "geburtsdatum",
+    "geburtstag",
+    "geb. am",
+    "geb am",
+    "geb.-datum",
+    "geb.",
+)
+_BIRTH_PLACE_LABELS = (
+    "geboren in",
+    "geburtsort",
+    "geb. in",
+    "geb in",
+    "gebürtig aus",
+    "geboren zu",
+)
+# German numeric date (dd.mm.yyyy / dd.mm.yy, optional spaces after the dots).
+_BIRTH_DATE_VALUE = r"\d{1,2}\.[ ]?\d{1,2}\.[ ]?\d{2,4}\b"
+# A capitalized place name of up to three words. ``(?-i:…)`` keeps the leading-capital requirement
+# even though the builder wraps the whole pattern in ``(?i)`` — so a lowercased word never matches.
+_BIRTH_PLACE_VALUE = r"(?-i:[A-ZÄÖÜ][A-Za-zäöüß.-]+(?:[ -][A-ZÄÖÜ][A-Za-zäöüß.-]+){0,2})"
+
 
 # AT/DE street shape: compound street word ("Mariengasse", OCR-safe "strasse"), a house number
 # with optional stair/door parts ("12", "12a", "18/10/44"), and an optional ", PLZ Ort" tail.
@@ -215,7 +242,13 @@ _STREET_SUFFIX = r"(?:straße|strasse|gasse|platz|weg|allee)"
 # The trailing lookahead rejects a following digit (so backtracking cannot shorten the number
 # to dodge the unit check) and a following measurement unit or percent/currency sign.
 _HOUSE_NUMBER = r"\d{1,4}[a-z]?(?:\s*/\s*\d{1,4}[a-z]?){0,3}(?!\d|\s*(?:km|cm|mm|kg|m)\b|\s*[%€])"
-_POSTAL_CITY = r"\d{4,5}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+)?"
+# PLZ + Ort stay on one physical line: the inter-word gaps are horizontal whitespace only
+# ([^\S\r\n]), so a two-word-city allowance ("1070 Wien" + optional second word) can never bleed
+# across a line break into the next line's first word ("… 1070 Wien\nSchadenursache").
+_POSTAL_CITY = (
+    r"\d{4,5}[^\S\r\n]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+"
+    r"(?:[^\S\r\n]+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.-]+)?"
+)
 
 
 def _domain_identifier(
@@ -612,6 +645,32 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
             ("kunde", "kundin", "kundendaten", "rechnung an"),
         ),
         context=("kunde", "kundendaten", "rechnung"),
+    ),
+    RecognizerSpec(
+        name="BirthDateRecognizer",
+        entity_type="BIRTH_DATE",
+        patterns=(
+            *_contextual_patterns(
+                "birth_date", _BIRTH_DATE_VALUE, _BIRTH_DATE_LABELS, 0.7
+            ),
+            *_labeled_value_patterns(
+                "birth_date", _BIRTH_DATE_VALUE, _BIRTH_DATE_LABELS, score=0.7
+            ),
+        ),
+        context=("geboren", "geburtsdatum", "geburtstag"),
+    ),
+    RecognizerSpec(
+        name="BirthPlaceRecognizer",
+        entity_type="BIRTH_PLACE",
+        patterns=(
+            *_contextual_patterns(
+                "birth_place", _BIRTH_PLACE_VALUE, _BIRTH_PLACE_LABELS, 0.6
+            ),
+            *_labeled_value_patterns(
+                "birth_place", _BIRTH_PLACE_VALUE, _BIRTH_PLACE_LABELS, score=0.6
+            ),
+        ),
+        context=("geboren", "geburtsort"),
     ),
 )
 

@@ -44,7 +44,11 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-COPY --from=builder --chown=app:app /app/.venv /app/.venv
+# The venv (~2.6 GB, ~54k files: torch, paddle, transformers) is copied without --chown on purpose:
+# it stays root-owned but is world-readable/executable, so the unprivileged `app` user runs it fine.
+# Rewriting ownership on every file made this the slowest build step (and stalled Colima's overlay
+# commit); the app never writes into the venv (bytecode is precompiled, PYTHONDONTWRITEBYTECODE=1).
+COPY --from=builder /app/.venv /app/.venv
 
 LABEL org.opencontainers.image.source="privacy-deidentification" \
       org.opencontainers.image.title="privacy-deidentification-backend"

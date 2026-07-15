@@ -49,6 +49,7 @@ from app.services.reading_text import (
     build_reading_text,
     collect_pdf_reading_rows,
 )
+from app.services.reading_text_projection import project_pii_entities_to_reading_text
 from app.services.reading_text_row_lineage import build_reading_text_row_lineage_map
 
 _DOC = "a" * 32
@@ -801,6 +802,10 @@ def test_split_line_multi_token_value_reaches_entity_contract(
         score=0.9,
         recognizer="SyntheticRecognizer",
     )
+    # Project reading offsets the way a real PII run does before persisting.
+    entity = project_pii_entities_to_reading_text(
+        [entity], [], reading_text=reading, raw_text=raw
+    )[0]
     save_pii_artifact(
         settings,
         PiiArtifact(

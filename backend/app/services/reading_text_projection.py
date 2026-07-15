@@ -125,13 +125,20 @@ def project_pii_entities_to_reading_text(
     segments: Sequence[ReadingTextMapSegment],
     *,
     reading_text: str | None = None,
+    raw_text: str | None = None,
 ) -> list[PiiEntity]:
     """Return copies with safe reading offsets; raw offsets and text remain untouched."""
     projected: list[PiiEntity] = []
     for entity in entities:
         map_projection = _project_entity(entity, segments)
-        if map_projection.projection_status == "unmapped" and reading_text:
-            projected.append(_project_entity_by_unique_text_match(entity, reading_text))
+        # The token offset-map is authoritative only when it resolves the whole span exactly. For
+        # anything less (``unmapped`` OR ``partial`` — the reflowed regions it skips), fall back to
+        # matching the entity's own value in the reading text; keep the map result if that fails.
+        if map_projection.projection_status != "exact" and reading_text:
+            text_match = _project_entity_by_text_match(entity, reading_text, raw_text or "")
+            projected.append(
+                text_match if text_match.projection_status == "exact" else map_projection
+            )
         else:
             projected.append(map_projection)
     return projected
@@ -179,14 +186,36 @@ def _project_entity(entity: PiiEntity, segments: Sequence[ReadingTextMapSegment]
     )
 
 
-def _project_entity_by_unique_text_match(entity: PiiEntity, reading_text: str) -> PiiEntity:
+def _project_entity_by_text_match(
+    entity: PiiEntity, reading_text: str, raw_text: str
+) -> PiiEntity:
+    """Place the entity in the reading text by matching its own value (whitespace-tolerant).
+
+    A single match is used directly. Repeated values (a name/address that occurs several times) are
+    disambiguated by occurrence order: the k-th match of this value in the raw text maps to the k-th
+    match in the reading text, since the reading text is derived from the raw text and preserves
+    order. When the reading text has fewer matches (deduplicated repeats, e.g. a multi-page footer)
+    or the raw occurrence cannot be located, the entity stays ``unmapped`` — never guessed. Any
+    matched span is by construction a valid occurrence of the same value, so even a misordered pick
+    highlights correct PII (decisions and redaction are per value/group, not per position).
+    """
     pattern = _fallback_pattern(entity)
     if pattern is None:
         return entity.model_copy(update={"projection_status": "unmapped"})
-    matches = list(pattern.finditer(reading_text))
-    if len(matches) != 1:
+    reading_matches = list(pattern.finditer(reading_text))
+    if not reading_matches:
         return entity.model_copy(update={"projection_status": "unmapped"})
-    match = matches[0]
+    if len(reading_matches) == 1:
+        match = reading_matches[0]
+    else:
+        raw_matches = list(pattern.finditer(raw_text)) if raw_text else []
+        if not raw_matches:
+            # No raw context to disambiguate which of several reading occurrences this is.
+            return entity.model_copy(update={"projection_status": "unmapped"})
+        occurrence = sum(1 for m in raw_matches if m.start() < entity.start_offset)
+        if occurrence >= len(reading_matches):
+            return entity.model_copy(update={"projection_status": "unmapped"})
+        match = reading_matches[occurrence]
     return entity.model_copy(
         update={
             "reading_start_offset": match.start(),

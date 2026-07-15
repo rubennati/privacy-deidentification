@@ -1,14 +1,19 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { fetchAppConfig, type AppConfig } from "../api/config";
-import { DocumentsApiError, fetchDocument, type DocumentSummary } from "../api/documents";
+import { useAppConfig } from "../hooks/useAppConfig";
 import {
-  fetchAudit,
+  documentDetailKeys,
+  toDocumentError,
+  useDocument,
+  useDocumentArtifacts,
+  type UiError,
+} from "../hooks/useDocumentDetail";
+import {
   fetchDocumentJobs,
   fetchJobStatus,
   fetchOcr,
-  fetchPii,
   runAudit,
   runOcr,
   runPii,
@@ -17,15 +22,10 @@ import {
   type PiiArtifact,
   type PiiRunRequest,
   type TextArtifact,
-  WorkstationApiError,
 } from "../api/workstations";
 import { jobActivityStore, resumeActiveJobs } from "../lib/jobActivity";
 import { JobStatusBanner } from "../components/JobStatusBanner";
-import {
-  buildFeedbackStatusMap,
-  fetchPiiFeedbackSummary,
-  type PiiFeedbackStatus,
-} from "../api/piiFeedback";
+import { usePiiFeedbackStatuses } from "../hooks/usePiiFeedback";
 import {
   fetchPiiReview,
   reviewDecisionLabel,
@@ -33,10 +33,7 @@ import {
   type PiiReviewDecisionValue,
   type PiiReviewResult,
 } from "../api/piiReview";
-import {
-  fetchPiiEntityContract,
-  type PiiEntityContractV1,
-} from "../api/piiEntityContract";
+import { usePiiReviewAndContract, usePiiReviewInvalidation } from "../hooks/usePiiReview";
 import { AddPiiManualEntity } from "../components/pii/AddPiiManualEntity";
 import {
   PiiDecisionPopover,
@@ -66,14 +63,13 @@ import {
 } from "../lib/documentAnalysis";
 import { toStationError, type StationName } from "../lib/stationErrors";
 import { buildRuntimeNotice, buildStationRuntimeNotice } from "../lib/runtimeNotice";
-import { buildAnchorBoundPiiHighlights, buildManualAdditionHighlights } from "../lib/piiHighlights";
+import {
+  buildAnchorBoundPiiHighlights,
+  buildManualAdditionHighlights,
+  orderedNavigableHighlightIds,
+} from "../lib/piiHighlights";
 import { scrollAndFlash } from "../lib/scrollAndFlash";
 import { formatBytes, formatTimestamp } from "../lib/format";
-
-interface UiError {
-  message: string;
-  correlationId: string | null;
-}
 
 // A new run never deletes existing artifacts — it appends a new immutable one — so
 // "erneut erstellen" (create again) is the correct verb, not "Reset".
@@ -86,17 +82,18 @@ export default function DocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
-  const [document, setDocument] = useState<DocumentSummary | null>(null);
-  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
-  const [audit, setAudit] = useState<AuditArtifact | null>(null);
-  const [text, setText] = useState<TextArtifact | null>(null);
-  const [pii, setPii] = useState<PiiArtifact | null>(null);
-  const [feedbackStatuses, setFeedbackStatuses] = useState<Record<string, PiiFeedbackStatus>>({});
-  const [reviewResult, setReviewResult] = useState<PiiReviewResult | null>(null);
-  const [piiEntityContractState, setPiiEntityContractState] = useState<
-    | { status: "idle" | "loading" | "not_found" | "incompatible" | "error" }
-    | { status: "ok"; contract: PiiEntityContractV1 }
-  >({ status: "idle" });
+  const queryClient = useQueryClient();
+  const documentQuery = useDocument(documentId);
+  const document = documentQuery.data ?? null;
+  // Server config comes from the shared query cache (app-wide), not per-mount fetch state.
+  const appConfig = useAppConfig().data ?? null;
+  const {
+    audit,
+    text,
+    pii,
+    stationErrors: artifactStationErrors,
+    isPending: artifactsPending,
+  } = useDocumentArtifacts(documentId);
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   // User-view in-place decision: which highlight was clicked and where its mark sits on screen.
   // The decidable target itself is re-resolved from the current review result on every render, so
@@ -118,13 +115,25 @@ export default function DocumentDetailPage() {
   const [analysisError, setAnalysisError] = useState<UiError | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("user");
   const [selectedPiiProfile, setSelectedPiiProfile] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [pageError, setPageError] = useState<UiError | null>(null);
-  const [stationErrors, setStationErrors] = useState<Record<StationName, UiError | null>>({
+  // Station errors from an in-page action (dev-view station run) or from OCR job recovery. These
+  // are not artifact-fetch failures, so they live in local state and take precedence over the
+  // artifact queries' own fetch errors for the same station.
+  const [runStationErrors, setRunStationErrors] = useState<Record<StationName, UiError | null>>({
     audit: null,
     ocr: null,
     pii: null,
   });
+  const loading = Boolean(documentId) && (documentQuery.isPending || artifactsPending);
+  const pageError: UiError | null = !documentId
+    ? { message: "Dokument nicht gefunden.", correlationId: null }
+    : documentQuery.isError
+      ? toDocumentError(documentQuery.error)
+      : null;
+  const stationErrors: Record<StationName, UiError | null> = {
+    audit: runStationErrors.audit ?? artifactStationErrors.audit,
+    ocr: runStationErrors.ocr ?? artifactStationErrors.ocr,
+    pii: runStationErrors.pii ?? artifactStationErrors.pii,
+  };
   const [pending, setPending] = useState<Record<StationName, boolean>>({
     audit: false,
     ocr: false,
@@ -139,132 +148,46 @@ export default function DocumentDetailPage() {
   const [ocrResultLoadError, setOcrResultLoadError] = useState(false);
   const handledOcrJobIds = useRef(new Set<string>());
 
+  // Reset per-document UI state on navigation. The document, its artifacts, and the review overlay
+  // are fail-closed by their query keys (a new documentId has no cached data until it loads), so the
+  // former identity-transition dance of nulling private state before refetch is no longer needed.
   useEffect(() => {
-    let active = true;
-    if (!documentId) {
-      setPageError({ message: "Dokument nicht gefunden.", correlationId: null });
-      setLoading(false);
-      return () => {
-        active = false;
-      };
-    }
     setSelectedPiiProfile("");
-    // Identity transition fail-closed: private text and all derived state leave the DOM before the
-    // next document request starts, never after it happens to finish.
-    setDocument(null);
-    setAudit(null);
-    setText(null);
-    setPii(null);
-    setReviewResult(null);
     setDecisionAnchor(null);
     setToast(null);
     navPosition.current = -1;
-    setPiiEntityContractState({ status: "idle" });
-    setLoading(true);
     setReviewTextMode("reading");
     setSelectedTextRange(null);
     setAnalysisStep("idle");
     setAnalysisError(null);
-
-    void (async () => {
-      try {
-        const [loadedDocument, loadedConfig] = await Promise.all([
-          fetchDocument(documentId),
-          fetchAppConfig(),
-        ]);
-        if (!active) return;
-        setDocument(loadedDocument);
-        setAppConfig(loadedConfig);
-
-        const [auditResult, textResult, piiResult] = await Promise.all([
-          loadOptional(() => fetchAudit(documentId), "audit"),
-          loadOptional(() => fetchOcr(documentId), "ocr"),
-          loadOptional(() => fetchPii(documentId), "pii"),
-        ]);
-        if (!active) return;
-        setAudit(auditResult.data);
-        setText(textResult.data);
-        setPii(piiResult.data);
-        setStationErrors({
-          audit: auditResult.error,
-          ocr: textResult.error,
-          pii: piiResult.error,
-        });
-      } catch (error) {
-        if (active) setPageError(toDocumentError(error));
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
+    setRunStationErrors({ audit: null, ocr: null, pii: null });
   }, [documentId]);
 
   // Restore per-entity feedback state for the current PII artifact when the dev gate is on.
   const devGateEnabled = appConfig?.devEngineSettingsEnabled ?? false;
   const piiArtifactId = pii?.id ?? null;
   const piiTextArtifactId = pii?.input_text_artifact_id ?? null;
-  useEffect(() => {
-    if (!documentId || !piiArtifactId || !devGateEnabled) {
-      setFeedbackStatuses({});
-      return;
-    }
-    let active = true;
-    void fetchPiiFeedbackSummary(documentId, piiArtifactId).then((summary) => {
-      if (active) setFeedbackStatuses(buildFeedbackStatusMap(summary));
-    });
-    return () => {
-      active = false;
-    };
-  }, [documentId, piiArtifactId, devGateEnabled]);
+  // Dev-only per-entity feedback status for the current PII result (query hook: gated + cached).
+  const feedbackStatuses = usePiiFeedbackStatuses(documentId, piiArtifactId, devGateEnabled);
 
-  // The review-entity overlay (groups + decisions) is not dev-gated; restore it whenever the
-  // current PII artifact changes so highlight suppression stays correct after a re-run.
+  // The review overlay + entity contract now come from a query hook: same shapes, same lineage gate
+  // (contract stays `idle` unless the PII result's input text matches the current OCR text), but
+  // declarative and race-free instead of a hand-coordinated effect.
+  const { reviewResult, piiEntityContractState } = usePiiReviewAndContract(
+    documentId,
+    piiArtifactId,
+    text?.id ?? null,
+    piiTextArtifactId,
+  );
+  const applyReviewUpdate = usePiiReviewInvalidation();
+
+  // Clear any selected occurrence whenever the current PII result changes.
   useEffect(() => {
     setSelectedOccurrenceId(null);
-    if (!documentId || !piiArtifactId) {
-      setReviewResult(null);
-      setPiiEntityContractState({ status: "idle" });
-      return;
-    }
-    if (!text || piiTextArtifactId !== text.id) {
-      setPiiEntityContractState({ status: "idle" });
-      return;
-    }
-    let active = true;
-    setPiiEntityContractState({ status: "loading" });
-    void Promise.all([
-      fetchPiiReview(documentId),
-      fetchPiiEntityContract(documentId, piiArtifactId, text.id),
-    ])
-      .then(([review, contractResult]) => {
-        if (!active) return;
-        setReviewResult(review);
-        setPiiEntityContractState(contractResult);
-      })
-      .catch(() => {
-        if (active) setPiiEntityContractState({ status: "error" });
-      });
-    return () => {
-      active = false;
-    };
-  }, [documentId, piiArtifactId, piiTextArtifactId, text]);
+  }, [piiArtifactId]);
 
   const refreshPiiReviewAndContract = async (review: PiiReviewResult) => {
-    setReviewResult(review);
-    if (!documentId || !piiArtifactId) {
-      setPiiEntityContractState({ status: "idle" });
-      return;
-    }
-    if (!text || pii?.input_text_artifact_id !== text.id) {
-      setPiiEntityContractState({ status: "idle" });
-      return;
-    }
-    setPiiEntityContractState({ status: "loading" });
-    const contractResult = await fetchPiiEntityContract(documentId, piiArtifactId, text.id);
-    setPiiEntityContractState(contractResult);
+    await applyReviewUpdate(documentId, piiArtifactId, text?.id ?? null, review);
   };
 
   // Reload recovery: rehydrate any tracked OCR job for this document and resume polling it (a
@@ -310,13 +233,13 @@ export default function DocumentDetailPage() {
       }
       void fetchOcr(documentId, trackedOcrJob.result_artifact_id)
         .then((result) => {
-          setText(result);
+          queryClient.setQueryData(documentDetailKeys.ocr(documentId), result);
           setReviewTextMode("reading");
         })
         .catch(() => setOcrResultLoadError(true));
     } else if (trackedOcrJob.status === "failed" || trackedOcrJob.status === "canceled") {
       handledOcrJobIds.current.add(trackedOcrJob.job_id);
-      setStationErrors((current) => ({
+      setRunStationErrors((current) => ({
         ...current,
         ocr: {
           message:
@@ -327,7 +250,7 @@ export default function DocumentDetailPage() {
         },
       }));
     }
-  }, [documentId, trackedOcrJob, noLocalOcrRunInFlight]);
+  }, [documentId, trackedOcrJob, noLocalOcrRunInFlight, queryClient]);
 
   // Auto-dismiss the decision toast after a few seconds; closing keeps the applied decision.
   useEffect(() => {
@@ -356,12 +279,12 @@ export default function DocumentDetailPage() {
             activeStation = step;
           }
         },
-        onAudit: setAudit,
+        onAudit: (result) => queryClient.setQueryData(documentDetailKeys.audit(documentId), result),
         onText: (result) => {
-          setText(result);
+          queryClient.setQueryData(documentDetailKeys.ocr(documentId), result);
           setReviewTextMode("reading");
         },
-        onPii: setPii,
+        onPii: (result) => queryClient.setQueryData(documentDetailKeys.pii(documentId), result),
       });
     } catch (error) {
       setAnalysisStep("idle");
@@ -437,19 +360,24 @@ export default function DocumentDetailPage() {
       ? piiEntityContractState.contract
       : null;
   const highlightModel = buildAnchorBoundPiiHighlights(currentPiiEntityContract);
-  // Ordered ↑/↓ jump targets: exactly the marks visible in the active text view, by position.
+  // Ordered ↑/↓ jump targets: exactly the marks the active view renders with a DOM id — derived
+  // from the same segment logic as the rendering, so a shadowed or out-of-range highlight (which
+  // leads no mark) is never a jump target. The active view is resolved the same way ReviewTextViewer
+  // resolves it, so the jump set always matches what is on screen.
   const manualHighlightViews = buildManualAdditionHighlights(reviewResult?.manual_additions ?? []);
-  const visibleHighlights =
-    reviewTextMode === "reading" && text?.content.reading_text != null
+  const hasReadingText = text?.content.reading_text != null;
+  const activeTextMode: ReviewTextMode =
+    reviewTextMode === "reading" && hasReadingText ? "reading" : "raw";
+  const activeViewText =
+    activeTextMode === "reading" ? text?.content.reading_text : text?.content.text;
+  const activeViewHighlights =
+    activeTextMode === "reading"
       ? [...highlightModel.byView.canonical_reading_text, ...manualHighlightViews.canonical]
       : [...highlightModel.byView.technical_raw_text, ...manualHighlightViews.raw];
-  const highlightNavIds = [
-    ...new Set(
-      [...visibleHighlights]
-        .sort((left, right) => left.start - right.start)
-        .map((highlight) => highlight.primary_source_entity_id),
-    ),
-  ];
+  const highlightNavIds =
+    activeViewText != null
+      ? orderedNavigableHighlightIds(activeViewText, activeViewHighlights)
+      : [];
   const navigateHighlights = (direction: "prev" | "next") => {
     const length = highlightNavIds.length;
     if (length === 0) {
@@ -488,6 +416,14 @@ export default function DocumentDetailPage() {
   const reviewInteractive = piiStatus === "current";
   const showSecondColumn = isDevView;
 
+  // The detected value shown in the decision popover, whitespace-normalized so a line-wrapped span
+  // reads on one line. A detector occurrence reads the raw text at its own raw span (the
+  // authoritative detection); a manual addition reads the reader-selected span from the reading text.
+  const rawTextValue = text?.content.text ?? "";
+  const readingTextValue = text?.content.reading_text ?? "";
+  const sliceValue = (source: string, start: number, end: number): string =>
+    Array.from(source).slice(start, end).join("").replace(/\s+/g, " ").trim();
+
   // Resolve the clicked highlight against the *current* review result: a manual addition decides
   // itself; an occurrence with an individual override decides that occurrence; everything else
   // decides its whole entity group (same value everywhere in the document).
@@ -506,6 +442,7 @@ export default function DocumentDetailPage() {
         scope: "manual_addition",
         targetId: addition.addition_id,
         entityType: addition.entity_type,
+        text: sliceValue(readingTextValue, addition.canonical_start, addition.canonical_end),
         occurrenceCount: 1,
         reviewStatus: addition.review_status,
         currentDecision: addition.review_decision ?? "pseudonymize",
@@ -522,6 +459,7 @@ export default function DocumentDetailPage() {
         scope: "occurrence",
         targetId: occurrence.occurrence_id,
         entityType: occurrence.entity_type,
+        text: sliceValue(rawTextValue, occurrence.raw_start, occurrence.raw_end),
         occurrenceCount: 1,
         reviewStatus: occurrence.review_status,
         currentDecision: occurrence.review_decision ?? "pseudonymize",
@@ -537,6 +475,7 @@ export default function DocumentDetailPage() {
       scope: "entity_group",
       targetId: group.entity_group_id,
       entityType: group.entity_type,
+      text: sliceValue(rawTextValue, occurrence.raw_start, occurrence.raw_end),
       occurrenceCount: group.occurrence_count,
       reviewStatus: group.review_status,
       currentDecision: group.review_decision ?? "pseudonymize",
@@ -578,11 +517,11 @@ export default function DocumentDetailPage() {
     apply: (result: T) => void,
   ) => {
     setPending((current) => ({ ...current, [station]: true }));
-    setStationErrors((current) => ({ ...current, [station]: null }));
+    setRunStationErrors((current) => ({ ...current, [station]: null }));
     try {
       apply(await action());
     } catch (error) {
-      setStationErrors((current) => ({
+      setRunStationErrors((current) => ({
         ...current,
         [station]: toStationError(error, station),
       }));
@@ -646,7 +585,11 @@ export default function DocumentDetailPage() {
             pending={pending.audit}
             disabled={pending.audit || pending.ocr}
             error={stationErrors.audit}
-            onAction={() => void execute("audit", () => runAudit(documentId), setAudit)}
+            onAction={() =>
+              void execute("audit", () => runAudit(documentId), (result) =>
+                queryClient.setQueryData(documentDetailKeys.audit(documentId), result),
+              )
+            }
           >
             {audit ? <AuditSummary artifact={audit} /> : <p>Original wurde noch nicht analysiert.</p>}
           </StationPanel>
@@ -664,7 +607,7 @@ export default function DocumentDetailPage() {
             error={stationErrors.ocr}
             onAction={() =>
               void execute("ocr", () => runOcr(documentId), (result) => {
-                setText(result);
+                queryClient.setQueryData(documentDetailKeys.ocr(documentId), result);
                 setReviewTextMode("reading");
               })
             }
@@ -689,7 +632,11 @@ export default function DocumentDetailPage() {
             disabledReason={!text ? "Zuerst OCR/Text erzeugen." : undefined}
             runtimeNotice={piiRuntimeNotice}
             error={stationErrors.pii}
-            onAction={() => void execute("pii", () => runPii(documentId, piiRunRequest), setPii)}
+            onAction={() =>
+              void execute("pii", () => runPii(documentId, piiRunRequest), (result) =>
+                queryClient.setQueryData(documentDetailKeys.pii(documentId), result),
+              )
+            }
           >
             {pii ? <PiiSummary artifact={pii} /> : <p>PII-Erkennung noch nicht ausgeführt.</p>}
             <PiiEngineSettingsPanel
@@ -801,7 +748,6 @@ export default function DocumentDetailPage() {
                 <ReviewTextViewer
                   rawText={text.content.text}
                   readingText={text.content.reading_text}
-                  layoutText={text.content.layout_text_result}
                   highlightModel={highlightModel}
                   mode={reviewTextMode}
                   onModeChange={(mode) => {
@@ -970,28 +916,4 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
       <dd className="break-all text-right font-medium text-ink">{value}</dd>
     </div>
   );
-}
-
-async function loadOptional<T>(
-  load: () => Promise<T>,
-  station: StationName,
-): Promise<{ data: T | null; error: UiError | null }> {
-  try {
-    return { data: await load(), error: null };
-  } catch (error) {
-    if (error instanceof WorkstationApiError && error.status === 404) {
-      return { data: null, error: null };
-    }
-    return { data: null, error: toStationError(error, station) };
-  }
-}
-
-function toDocumentError(error: unknown): UiError {
-  if (error instanceof DocumentsApiError) {
-    return {
-      message: error.status === 404 ? "Dokument nicht gefunden." : error.message,
-      correlationId: error.correlationId,
-    };
-  }
-  return { message: "Dokument konnte nicht geladen werden.", correlationId: null };
 }

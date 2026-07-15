@@ -55,6 +55,7 @@ from app.services.pii_review_result import (
     build_manual_addition_entries,
 )
 from app.services.pii_review_service import get_pii_review_result
+from app.services.reading_text_projection import project_pii_entities_to_reading_text
 
 _REVIEW_URL = "/api/documents/{document_id}/pii/review"
 _REVIEW_RESULT_URL = "/api/documents/{document_id}/pii/review-result"
@@ -144,11 +145,19 @@ def _save_pii_over_text(
 ) -> tuple[str, str]:
     """Persist a coherent text + PII artifact pair with real reading-text lineage.
 
-    ``raw == reading_text`` here, so every entity's raw span binds ``anchor_exact`` with an
-    ``exact`` canonical display range -- a clean, deterministic "fully resolved" fixture.
+    ``raw == reading_text`` here, so the per-entity projection resolves every raw span to an
+    ``exact`` reading offset (offset-map), giving a clean, deterministic "fully resolved" fixture --
+    the same way the real PII run populates reading offsets before persisting.
     """
     text_id = uuid4().hex
-    save_text_artifact(settings, _text_artifact(document_id, text_id, raw))
+    text_artifact = _text_artifact(document_id, text_id, raw)
+    save_text_artifact(settings, text_artifact)
+    entities = project_pii_entities_to_reading_text(
+        entities,
+        text_artifact.content.reading_text_map,
+        reading_text=text_artifact.content.reading_text,
+        raw_text=raw,
+    )
 
     counts: dict[str, int] = {}
     for entity in entities:

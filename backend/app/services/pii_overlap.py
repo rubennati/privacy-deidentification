@@ -176,6 +176,9 @@ def _resolve_same_type_overlaps(
 # separate overlapping entity is still preserved and flagged by ``_flag_cross_type_overlaps``.
 _CROSS_TYPE_PRECEDENCE: dict[str, frozenset[str]] = {
     "EMAIL_ADDRESS": frozenset({"URL"}),
+    # A birth date detected in context is the same span the generic NER emits as DATE_TIME; the
+    # specific birth role wins so the value is not double-counted.
+    "BIRTH_DATE": frozenset({"DATE_TIME"}),
 }
 
 

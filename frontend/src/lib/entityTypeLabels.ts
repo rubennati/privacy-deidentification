@@ -3,6 +3,8 @@
 // An unknown type falls back to its identifier so a new backend type is never hidden or mislabeled.
 const ENTITY_TYPE_LABELS: Record<string, string> = {
   PERSON: "Person",
+  BIRTH_DATE: "Geburtsdatum",
+  BIRTH_PLACE: "Geburtsort",
   EMAIL_ADDRESS: "E-Mail-Adresse",
   PHONE_NUMBER: "Telefonnummer",
   LOCATION: "Ort",

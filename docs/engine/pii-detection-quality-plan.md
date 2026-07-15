@@ -19,7 +19,7 @@ error is highly concentrated. Per-type, grouped by problem:
 | 🔴 Precision (over-tagging) | **LOCATION 0 exp / 69 FP**, PERSON P0.27 (27 FP), URL P0.31 (9 FP), ORG P0.43 → NER group **120 FP** | weak `de_core_news_sm` over-tags; LOCATION is not a ground-truth target; missing cross-type precedence |
 | 🟠 Critical-ID recall holes (R=0) | **SVNR_AT 0/3**, ID_CARD 0/2, PASSPORT 0/1, LICENSE_PLATE 0/2, CREDIT_CARD 0/1, PROJECT_ID/USER_ID 0/1, TAX_ID R0.33 | context/label-gated recognizers too strict |
 | 🟠 NER recall | ORG **R0.28** (23 FN), PERSON 5 FN | model weakness |
-| ⚫ Unsupported (structural FN) | BIRTH_DATE 0/4, BIRTH_PLACE 0/2, FAMILY_NAME 0/1, GIVEN_NAME 0/1 | no recognizer exists |
+| ⚫ Unsupported (structural FN) | ~~BIRTH_DATE, BIRTH_PLACE~~ now context-gated recognizers (ADR-0044); FAMILY_NAME 0/1, GIVEN_NAME 0/1 remain | recognizer built for birth types; names still need NER sub-typing |
 
 This baseline maps 1:1 onto the reviewer-observed defects: names missed while their email is found
 (PERSON/ORG recall), an email substring also tagged as a domain/URL (URL 9 FP + no cross-type
@@ -55,8 +55,9 @@ tested, and benchmarkable (per [`AGENTS.md`](../../AGENTS.md)). No cloud/externa
    `franzhubermeier@…`, confirm by presence in the text). *(tool + deterministic enrichment)*
 4. **Cross-type precedence** in `pii_overlap.py` — email > inner URL/domain; ADDRESS > LOCATION.
    The precedence table deferred in [ADR-0028](../adr/0028-pii-intake-document-text-package-v1.md).
-5. **Close the 4 unsupported types** — `BIRTH_PLACE`/`BIRTH_DATE` via context rules on the
-   place/date candidate; `GIVEN_NAME`/`FAMILY_NAME` via PERSON sub-typing or the NER model.
+5. **Close the 4 unsupported types** — `BIRTH_PLACE`/`BIRTH_DATE` **done** via context-gated
+   recognizers ([ADR-0044](../adr/0044-pii-birth-date-place-recognizers.md)); `GIVEN_NAME`/
+   `FAMILY_NAME` still pending via PERSON sub-typing or the NER model.
 6. **Re-tune candidate validation** — only after the NER upgrade, so the aggressive NER score-downs
    (`ORG_WITHOUT_ORG_SIGNAL`, `LOCATION_WITHOUT_LOCATION_SIGNAL`) do not eat the recall gain.
 7. **Display parity (L17 lineage)** — raise raw↔canonical highlight parity to the gate threshold;
