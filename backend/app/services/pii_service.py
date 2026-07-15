@@ -196,6 +196,7 @@ def _analyze_text(
             entities,
             pii_input.reading_text_map,
             reading_text=pii_input.reading_text,
+            raw_text=text,
         )
     except ApiError:
         raise

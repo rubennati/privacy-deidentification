@@ -48,7 +48,6 @@ from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.pii_anchor_binding import bind_pii_entities_to_anchors
 from app.services.pii_entity_display import (
-    anchor_display_range,
     canonical_display_range,
     classify_mapping_status,
     identity_reason_codes,
@@ -154,19 +153,10 @@ def _to_review_ready(
     representative = review_by_occurrence[occurrence_ids[0]]
     representative_entity = entity_by_id[occurrence_ids[0]]
 
-    anchor_canonical = anchor_display_range(bound, "canonical_reading_text")
-    anchor_canonical_range = anchor_canonical[0] if anchor_canonical is not None else None
-    anchor_canonical_exact = anchor_canonical[1] if anchor_canonical is not None else True
     mapping_status = classify_mapping_status(
-        representative_entity,
-        canonical_available,
-        reading_text,
-        anchor_canonical_range=anchor_canonical_range,
-        anchor_canonical_exact=anchor_canonical_exact,
+        representative_entity, canonical_available, reading_text
     )
-    canonical_range = canonical_display_range(
-        representative_entity, mapping_status, anchor_canonical_range=anchor_canonical_range
-    )
+    canonical_range = canonical_display_range(representative_entity, mapping_status)
     review_reason_codes = _review_reason_codes(
         bound.binding_status, mapping_status, bound.provenance
     )
