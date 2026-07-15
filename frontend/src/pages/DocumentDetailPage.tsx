@@ -366,25 +366,14 @@ export default function DocumentDetailPage() {
   // resolves it, so the jump set always matches what is on screen.
   const manualHighlightViews = buildManualAdditionHighlights(reviewResult?.manual_additions ?? []);
   const hasReadingText = text?.content.reading_text != null;
-  const hasLayoutText = text?.content.layout_text_result != null;
   const activeTextMode: ReviewTextMode =
-    reviewTextMode === "layout" && hasLayoutText
-      ? "layout"
-      : reviewTextMode === "reading" && hasReadingText
-        ? "reading"
-        : "raw";
+    reviewTextMode === "reading" && hasReadingText ? "reading" : "raw";
   const activeViewText =
-    activeTextMode === "layout"
-      ? text?.content.layout_text_result
-      : activeTextMode === "reading"
-        ? text?.content.reading_text
-        : text?.content.text;
+    activeTextMode === "reading" ? text?.content.reading_text : text?.content.text;
   const activeViewHighlights =
-    activeTextMode === "layout"
-      ? highlightModel.byView.layout_text
-      : activeTextMode === "reading"
-        ? [...highlightModel.byView.canonical_reading_text, ...manualHighlightViews.canonical]
-        : [...highlightModel.byView.technical_raw_text, ...manualHighlightViews.raw];
+    activeTextMode === "reading"
+      ? [...highlightModel.byView.canonical_reading_text, ...manualHighlightViews.canonical]
+      : [...highlightModel.byView.technical_raw_text, ...manualHighlightViews.raw];
   const highlightNavIds =
     activeViewText != null
       ? orderedNavigableHighlightIds(activeViewText, activeViewHighlights)
@@ -748,7 +737,6 @@ export default function DocumentDetailPage() {
                 <ReviewTextViewer
                   rawText={text.content.text}
                   readingText={text.content.reading_text}
-                  layoutText={text.content.layout_text_result}
                   highlightModel={highlightModel}
                   mode={reviewTextMode}
                   onModeChange={(mode) => {

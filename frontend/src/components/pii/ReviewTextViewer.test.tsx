@@ -127,26 +127,10 @@ const rejectedHighlightModel: AnchorBoundPiiHighlightModel = {
   },
 };
 
-const layoutHighlightModel: AnchorBoundPiiHighlightModel = {
-  ...highlightModel,
-  byView: {
-    ...highlightModel.byView,
-    layout_text: [
-      {
-        ...highlightModel.byView.technical_raw_text[0],
-        source_name: "layout_text",
-        start: 0,
-        end: 4,
-      },
-    ],
-  },
-};
-
 const LEGACY_READING_TEXT = Symbol("legacy-reading-text");
 
 function render(
-  mode: "reading" | "raw" | "layout",
-  layoutText: string | null | undefined,
+  mode: "reading" | "raw",
   showEntityMeta?: boolean,
   readingText: string | null | typeof LEGACY_READING_TEXT = "Lesefreundliches Wien",
   devMode = true,
@@ -157,7 +141,6 @@ function render(
     <ReviewTextViewer
       rawText="Hallo Wien"
       readingText={readingText === LEGACY_READING_TEXT ? undefined : readingText}
-      layoutText={layoutText}
       highlightModel={model}
       mode={mode}
       onModeChange={vi.fn()}
@@ -190,18 +173,18 @@ function manualAddition(overrides: Partial<PiiManualAddition> = {}): PiiManualAd
 }
 
 describe("ReviewTextViewer", () => {
-  it("offers reading, raw, and layout modes in the dev view", () => {
-    const html = render("reading", "Wien      Graz");
+  it("offers reading and raw modes in the dev view (layout deactivated)", () => {
+    const html = render("reading");
 
     expect(html).toContain("Kanonischer Lesetext");
     expect(html).toContain("Technischer Rohtext");
-    expect(html).toContain("Layout-Text");
+    expect(html).not.toContain("Layout-Text");
     expect(html).not.toContain("Canonical text");
     expect(html).toContain('aria-pressed="true"');
   });
 
   it("shows technical raw text with the existing PII highlights", () => {
-    const html = render("raw", "Wien      Graz");
+    const html = render("raw");
 
     expect(html).toContain("Hallo ");
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
@@ -210,7 +193,7 @@ describe("ReviewTextViewer", () => {
   });
 
   it("shows canonical reading text with projected PII highlights", () => {
-    const html = render("reading", "Wien      Graz");
+    const html = render("reading");
 
     expect(html).toContain("Lesefreundliches ");
     expect(html).toContain(">Wien</mark>");
@@ -220,14 +203,14 @@ describe("ReviewTextViewer", () => {
   });
 
   it("does not globally highlight repeated words without a contract range", () => {
-    const html = render("reading", null, undefined, "Lesefreundliches Wien und Wien", true);
+    const html = render("reading", undefined, "Lesefreundliches Wien und Wien", true);
 
     expect(html.match(/<mark/g) ?? []).toHaveLength(1);
     expect(html).toContain(">Wien</mark>");
   });
 
   it("renders the extracted text inside a centered A4 paper sheet", () => {
-    const html = render("reading", null);
+    const html = render("reading");
 
     // The A4-width, centered paper container is the review's primary document surface.
     expect(html).toContain("max-w-[210mm]");
@@ -235,13 +218,13 @@ describe("ReviewTextViewer", () => {
   });
 
   it("exposes entity type/score as a hover title by default (dev view)", () => {
-    const html = render("raw", null);
+    const html = render("raw");
 
     expect(html).toContain('title="LOCATION');
   });
 
   it("replaces the technical hover title with a plain-language one when meta is hidden (user view)", () => {
-    const html = render("raw", null, false);
+    const html = render("raw", false);
 
     // The highlight itself remains; the technical enum/score tooltip becomes a readable label.
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
@@ -249,39 +232,22 @@ describe("ReviewTextViewer", () => {
     expect(html).toContain('title="Ort · Wird pseudonymisiert"');
   });
 
-  it("shows layout text as plain text with an explicit missing-layout notice", () => {
-    const html = render("layout", "Wien      Graz");
-
-    expect(html).toContain("Wien      Graz");
-    expect(html).toContain("Layout-Text dient der Orientierung");
-    expect(html).toContain("keine Layout-Ranges");
-    expect(html).toContain("Layout-Ranges fehlen");
-    expect(html).not.toContain("<mark");
-  });
-
-  it("renders layout highlights when the contract provides layout ranges", () => {
-    const html = render("layout", "Wien      Graz", undefined, "Lesefreundliches Wien", true, layoutHighlightModel);
-
-    expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
-    expect(html).toContain('data-source-name="layout_text"');
-  });
-
   it("falls back cleanly to technical raw text for null reading text", () => {
-    const html = render("reading", null, undefined, null);
+    const html = render("reading", undefined, null);
 
     expect(html).toContain("Hallo ");
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
   });
 
   it("falls back cleanly for a legacy artifact without reading text", () => {
-    const html = render("reading", null, undefined, LEGACY_READING_TEXT);
+    const html = render("reading", undefined, LEGACY_READING_TEXT);
 
     expect(html).toContain("Hallo ");
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
   });
 
   it("defaults the user view to reading text and keeps raw-highlight access", () => {
-    const html = render("reading", "Wien      Graz", false, "Lesefreundliches Wien", false);
+    const html = render("reading", false, "Lesefreundliches Wien", false);
 
     expect(html).toContain("Lesefreundliches ");
     expect(html).toContain(">Wien</mark>");
@@ -290,13 +256,11 @@ describe("ReviewTextViewer", () => {
     expect(html).toContain("Technische Ansicht");
     expect(html).not.toContain("Kanonischer Lesetext");
     expect(html).not.toContain("Technischer Rohtext");
-    expect(html).not.toContain("Layout-Text</button>");
   });
 
   it("hides the technical diagnostics hints in user view", () => {
     const html = render(
       "reading",
-      null,
       false,
       "Lesefreundliches Wien",
       false,
@@ -315,7 +279,6 @@ describe("ReviewTextViewer", () => {
   it("does not highlight unmapped entities and shows the raw-only notice", () => {
     const html = render(
       "reading",
-      null,
       undefined,
       "Lesefreundliches Wien",
       true,
@@ -331,7 +294,7 @@ describe("ReviewTextViewer", () => {
       ...highlightModel,
       summary: { ...highlightModel.summary, missing_canonical_count: 1 },
     };
-    const html = render("reading", null, undefined, "Lesefreundliches Wien", true, mixed);
+    const html = render("reading", undefined, "Lesefreundliches Wien", true, mixed);
 
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
     expect(html).toContain("Fehlende Lesetext-Markierungen");
@@ -347,12 +310,12 @@ describe("ReviewTextViewer", () => {
         ],
       },
     };
-    const html = render("reading", null, undefined, "Lesefreundliches Wien", true, malformed);
+    const html = render("reading", undefined, "Lesefreundliches Wien", true, malformed);
     expect(html).not.toContain("<mark");
   });
 
   it("shows evidence-only fallback state without crashing", () => {
-    const html = render("raw", null, undefined, "Lesefreundliches Wien", true, evidenceOnlyHighlightModel);
+    const html = render("raw", undefined, "Lesefreundliches Wien", true, evidenceOnlyHighlightModel);
 
     expect(html).toContain(`<mark id="pii-mark-${occurrenceId}"`);
     expect(html).toContain("Evidence-only Fallback");
@@ -370,7 +333,6 @@ describe("ReviewTextViewer review-decision awareness", () => {
       <ReviewTextViewer
         rawText="Hallo Wien"
         readingText="Lesefreundliches Wien"
-        layoutText={null}
         highlightModel={model}
         mode={mode}
         onModeChange={vi.fn()}
@@ -467,7 +429,6 @@ describe("ReviewTextViewer review-decision awareness", () => {
   it("highlights a manual addition in the canonical reading-text view (PII L14, ADR-0035)", () => {
     const html = render(
       "reading",
-      "Wien      Graz",
       undefined,
       "Lesefreundliches Wien",
       true,
@@ -482,7 +443,6 @@ describe("ReviewTextViewer review-decision awareness", () => {
   it("highlights a manual addition in raw view only when the reverse projection is exact", () => {
     const exact = render(
       "raw",
-      null,
       undefined,
       "Lesefreundliches Wien",
       true,
@@ -493,7 +453,6 @@ describe("ReviewTextViewer review-decision awareness", () => {
 
     const unmapped = render(
       "raw",
-      null,
       undefined,
       "Lesefreundliches Wien",
       true,
@@ -506,7 +465,6 @@ describe("ReviewTextViewer review-decision awareness", () => {
   it("shows a rejected manual addition as a dismissed ghost, not a colored highlight", () => {
     const html = render(
       "reading",
-      null,
       undefined,
       "Lesefreundliches Wien",
       true,
