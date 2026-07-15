@@ -319,6 +319,37 @@ export function buildAnchorBoundHighlightSegments(
   return segments;
 }
 
+/**
+ * The ordered jump-navigation targets for a text view: the `primary_source_entity_id` of every
+ * highlight that actually leads a rendered mark, in document order, deduplicated.
+ *
+ * This must mirror exactly how `PiiTextViewer` assigns a DOM id — a mark id is placed on the first
+ * segment a highlight leads, and a highlight leads a segment only when it is valid for the text
+ * buffer and is the top-priority member of that segment. An entity fully shadowed by an overlapping
+ * higher-priority one (e.g. a PERSON inside a CONTACT_LINE) never becomes primary and so renders no
+ * id; a highlight out of range for the text is dropped entirely. Navigation must use this list, not
+ * the raw highlight set, or ↑/↓ would step onto ids that were never rendered ("jumps into nothing").
+ */
+export function orderedNavigableHighlightIds(
+  text: string,
+  highlights: readonly AnchorBoundPiiHighlight[],
+): string[] {
+  const segments = buildAnchorBoundHighlightSegments(text, highlights);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const segment of segments) {
+    if (segment.kind !== "entity") {
+      continue;
+    }
+    const id = segment.highlight.primary_source_entity_id;
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
 /** Highlights whose range does not fit the given text buffer. They are never rendered (the text
  *  must stay uncorrupted), but callers can surface the drop explicitly instead of silently. */
 export function invalidAnchorBoundHighlights(
