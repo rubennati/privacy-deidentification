@@ -37,6 +37,29 @@ powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://raw.githubus
 powershell -ExecutionPolicy Bypass -File "$HOME\PrivacyDeID\deid.ps1" start
 ```
 
+### Privates Repository (Anmeldung)
+
+Der Installer erkennt selbst, ob das Repository oeffentlich oder privat ist, und waehlt den passenden
+Weg. Solange es **oeffentlich** ist, gilt der Einzeiler oben unveraendert.
+
+Ist das Repository **privat**, braucht es eine einmalige GitHub-Anmeldung. Man muss dazu als
+Collaborator eingeladen sein (und die Einladung angenommen haben). Zwei Dinge aendern sich:
+
+1. **Der erste Abruf** kann nicht mehr anonym von `raw.githubusercontent.com` laden (private Dateien
+   liefert GitHub dort nicht aus). Stattdessen zuerst anmelden und `install.ps1` ueber die
+   angemeldete GitHub-CLI holen:
+
+   ```powershell
+   winget install --id GitHub.cli -e   # nur falls 'gh' fehlt
+   gh auth login --hostname github.com --git-protocol https --web
+   gh api -H "Accept: application/vnd.github.raw" /repos/rubennati/privacy-deidentification/contents/scripts/windows/install.ps1 | iex
+   ```
+
+   Beim `gh auth login` oeffnet sich ein Browserfenster zum Bestaetigen.
+
+2. **Danach laeuft alles gleich weiter.** Der Installer klont mit deiner Anmeldung, richtet Git so
+   ein, dass auch `deid.ps1 update` spaeter zieht, und startet die App wie gewohnt.
+
 ## Start
 
 ```powershell
