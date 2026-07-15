@@ -20,7 +20,9 @@ The following commands are then available:
 The app runs at <http://localhost:8080>. The installer provisions the local OCR and GLiNER models
 automatically, so the **first** setup downloads ~1.3 GB and takes a while; later starts are fast and
 fully offline. Give Docker Desktop **≥ 4 GB RAM** (Settings → Resources) so the GLiNER model fits.
-See [Windows Local App](docs/windows-local-app.md) for details.
+It also enables local script execution for your user (`RemoteSigned`, no admin needed) so the
+commands above work. See [Windows Local App](docs/windows-local-app.md) for details, including the
+Group-Policy fallback.
 
 ## Branch workflow
 

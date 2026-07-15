@@ -1,6 +1,24 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Windows blocks running local .ps1 files by default (ExecutionPolicy "Restricted"), which stops this
+# installer's helper scripts (provision-models.ps1) and the deid.ps1 launcher from loading. Relax it
+# safely, without admin rights:
+#   - CurrentUser -> RemoteSigned so the deid.ps1 launcher keeps working in future sessions
+#     (locally created / git-cloned scripts run; scripts downloaded-and-marked still need a signature).
+#   - Process    -> Bypass so THIS session can load the helper scripts even where the CurrentUser
+#     change is blocked (e.g. corporate Group Policy).
+try {
+    if ((Get-ExecutionPolicy) -in @("Restricted", "AllSigned")) {
+        Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+        Write-Host "Skriptausfuehrung fuer diesen Benutzer auf 'RemoteSigned' gesetzt (noetig fuer die App-Befehle)."
+    }
+}
+catch {
+    Write-Host "Hinweis: Die dauerhafte Skriptausfuehrung konnte nicht gesetzt werden (evtl. Firmenrichtlinie)."
+}
+try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force } catch { }
+
 $RepositoryUrl = "https://github.com/rubennati/privacy-deidentification.git"
 $RootPath = Join-Path $HOME "PrivacyDeID"
 $AppPath = Join-Path $RootPath "app"
