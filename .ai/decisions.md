@@ -273,3 +273,48 @@ Architecture decisions are recorded as ADRs under `docs/adr/`.
   unacknowledged torn tail is ignored) rather than silently reactivating an older decision.
   Delivers ADR-0023's Phase-4 stale-claim reclaim + bounded retry; no queue broker, cancel API,
   PII worker split, or engine-level change.
+- [ADR-0042](../docs/adr/0042-pii-gliner-ner-backend.md) — **Local GLiNER NER backend for
+  PERSON/ORGANIZATION.** GLiNER (mdeberta-v3-base backbone) becomes the default NER for names/orgs,
+  behind the adapter; runs fully offline once the head **and** backbone are provisioned (`make
+  ner-models`), ~4 GB API memory while loading. spaCy stays available as a constrained-host fallback.
+- [ADR-0043](../docs/adr/0043-pii-structural-context-validation.md) — **PII structural-context
+  validation.** Subtractive false-positive suppression using `structured_content` views (KEEP /
+  SCORE_DOWN / DROP). **Default-off** on the thin corpus (no measured FP reduction yet, and a first
+  version violated no-TP-loss before it was fixed); additive when enabled.
+- [ADR-0044](../docs/adr/0044-pii-birth-date-place-recognizers.md) — **Context-gated BIRTH_DATE and
+  BIRTH_PLACE recognizers.** Emit birth-specific types only under explicit birth context, to avoid
+  mislabelling generic dates/places.
+
+## Recent decisions & rejected paths (2026-07-15)
+
+Not all ADR-backed yet; recorded so a new session does not re-tread a discarded path. See `state.md`
+for the current snapshot.
+
+- **Precise per-entity reading-view projection; anchor display envelope retired (#95).** The
+  anchor-bound model bound detections to stable anchors so raw/canonical/layout ranges stayed coherent
+  — legitimate for identity/lineage (ADR-0031/0040) and correct when it was built. The **display** used
+  a block-granular anchor "envelope" as the reading-view range, which over-marked (one ~390-char block
+  range shared by 5 entities). Fix: precise per-entity reading offsets (`reading_start/end_offset`,
+  `projection_status`, offset-map + ordinal-disambiguated text-match); browser-verified 100 % precise on
+  prose, 0 over-wide. **Still present (open cleanup, not done):** Text Anchor Graph,
+  `pii_anchor_binding.py`, and the `…/pii/entity-contract` endpoint. Do not describe the anchor model as
+  fully retired.
+- **Detection stays on RAW text (rejected: "detect on the reading text only").** A scan experiment
+  showed the reading text is deliberately lossy (dedups repeated footers, drops table noise), so
+  detecting on it would miss real occurrences. Two-text model kept: detect on raw, project precisely to
+  reading for display/redaction.
+- **recall ≫ precision; do NOT tune PERSON "FP" down.** For de-identification a missed PII is dangerous;
+  an over-mark is one review click. The benchmark's 11 PERSON "false positives" were verified to be real
+  names (independent references / title-inclusive spans) — tuning them would only cut real recall.
+- **Windows private-repo install: NO separate public installer repo (rejected).** The customer is a
+  collaborator on the same repo; the installer auto-detects public vs private and signs in via
+  `gh auth login --web` for a private repo. Only the very first fetch differs when private (raw URL 404s
+  → an authenticated `gh api … raw | iex` line in the README). #100/#101/#102.
+- **Redaction next = L0 → L1 as a design/threat-model doc, Track A text-first.** The landing page sells
+  context-preserving pseudonymization + a reversible mapping (typed placeholders), which is unbuilt
+  (Redaction L0). Build the text-first copy + mapping + export (Track A, buildable on today's review
+  decisions + precise projection) before pixel-perfect visual PDF redaction (Track B, parked — needs
+  OCR/PII geometry L15/L18). Roadmap wording must name pseudonymization, not "Schwärzung".
+- **Infra/build.** Dropped `COPY --chown` on the 2.6 GB venv (it stalled the image build ~16 min under
+  Colima; now ~4 min, #94). The old slim/pii/ocr/full build toggles were removed earlier — the default
+  image carries all OCR + PII dependencies (no slimming path to misconfigure).

@@ -22,6 +22,44 @@ irm https://raw.githubusercontent.com/rubennati/privacy-deidentification/main/sc
 Der Installer verwendet immer den freigegebenen Stand auf `main`. Ein erneuter Lauf aktualisiert
 eine bestehende, unveraenderte Installation und startet die App erneut.
 
+### Skriptausfuehrung
+
+Windows blockiert das Ausfuehren lokaler Skripte standardmaessig (`ExecutionPolicy Restricted`). Der
+Installer setzt die Richtlinie fuer den aktuellen Benutzer einmalig auf `RemoteSigned` (ohne
+Admin-Rechte), damit die Modell-Bereitstellung und die `deid.ps1`-Befehle laufen. Es ist also kein
+manueller Schritt noetig.
+
+Ist die Richtlinie per Firmen-Gruppenrichtlinie gesperrt, den Installer und den Launcher jeweils mit
+Bypass starten:
+
+```powershell
+powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://raw.githubusercontent.com/rubennati/privacy-deidentification/main/scripts/windows/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -File "$HOME\PrivacyDeID\deid.ps1" start
+```
+
+### Privates Repository (Anmeldung)
+
+Der Installer erkennt selbst, ob das Repository oeffentlich oder privat ist, und waehlt den passenden
+Weg. Solange es **oeffentlich** ist, gilt der Einzeiler oben unveraendert.
+
+Ist das Repository **privat**, braucht es eine einmalige GitHub-Anmeldung. Man muss dazu als
+Collaborator eingeladen sein (und die Einladung angenommen haben). Zwei Dinge aendern sich:
+
+1. **Der erste Abruf** kann nicht mehr anonym von `raw.githubusercontent.com` laden (private Dateien
+   liefert GitHub dort nicht aus). Stattdessen zuerst anmelden und `install.ps1` ueber die
+   angemeldete GitHub-CLI holen:
+
+   ```powershell
+   winget install --id GitHub.cli -e   # nur falls 'gh' fehlt
+   gh auth login --hostname github.com --git-protocol https --web
+   gh api -H "Accept: application/vnd.github.raw" /repos/rubennati/privacy-deidentification/contents/scripts/windows/install.ps1 | iex
+   ```
+
+   Beim `gh auth login` oeffnet sich ein Browserfenster zum Bestaetigen.
+
+2. **Danach laeuft alles gleich weiter.** Der Installer klont mit deiner Anmeldung, richtet Git so
+   ein, dass auch `deid.ps1 update` spaeter zieht, und startet die App wie gewohnt.
+
 ## Start
 
 ```powershell
@@ -53,6 +91,28 @@ ungenutzte Images, niemals Volumes oder lokale Daten.
 Dies stoppt nur die App-Container. Lokale Daten und Docker Desktop bleiben erhalten. Optional kann
 `-QuitDocker` angehaengt werden; Docker Desktop wird dann nur beendet, wenn keine anderen Container
 laufen.
+
+## Alte Version vollstaendig entfernen
+
+Um eine bestehende Installation vollstaendig zu entfernen — etwa vor einer sauberen Neuinstallation
+einer aelteren Version — zuerst die App stoppen und dann den Installationsordner loeschen. **Achtung:**
+Schritt 3 loescht auch alle lokalen Daten: hochgeladene Dokumente, Ergebnisse und die
+heruntergeladenen Modelle unter `volumes/`.
+
+```powershell
+# 1) App stoppen und Container entfernen (Daten bleiben zunaechst erhalten):
+& "$HOME\PrivacyDeID\deid.ps1" stop
+
+# 2) Optional: auch die gebauten Images dieses Projekts entfernen:
+Set-Location "$HOME\PrivacyDeID\app"; docker compose down --rmi local
+
+# 3) Installation inklusive aller lokalen Daten (Uploads, Ergebnisse, Modelle, .env) loeschen:
+Remove-Item -Recurse -Force "$HOME\PrivacyDeID"
+```
+
+Docker Desktop selbst bleibt dabei installiert. Nach einer vollstaendigen Entfernung ist ein
+erneutes Setup jederzeit ueber den `irm ... | iex`-Befehl aus dem Abschnitt **Setup** moeglich; die
+Modelle werden dann wieder heruntergeladen (einmalig ~1,3 GB).
 
 ## Status
 
