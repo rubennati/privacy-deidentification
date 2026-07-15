@@ -54,6 +54,28 @@ Dies stoppt nur die App-Container. Lokale Daten und Docker Desktop bleiben erhal
 `-QuitDocker` angehaengt werden; Docker Desktop wird dann nur beendet, wenn keine anderen Container
 laufen.
 
+## Alte Version vollstaendig entfernen
+
+Um eine bestehende Installation vollstaendig zu entfernen — etwa vor einer sauberen Neuinstallation
+einer aelteren Version — zuerst die App stoppen und dann den Installationsordner loeschen. **Achtung:**
+Schritt 3 loescht auch alle lokalen Daten: hochgeladene Dokumente, Ergebnisse und die
+heruntergeladenen Modelle unter `volumes/`.
+
+```powershell
+# 1) App stoppen und Container entfernen (Daten bleiben zunaechst erhalten):
+& "$HOME\PrivacyDeID\deid.ps1" stop
+
+# 2) Optional: auch die gebauten Images dieses Projekts entfernen:
+Set-Location "$HOME\PrivacyDeID\app"; docker compose down --rmi local
+
+# 3) Installation inklusive aller lokalen Daten (Uploads, Ergebnisse, Modelle, .env) loeschen:
+Remove-Item -Recurse -Force "$HOME\PrivacyDeID"
+```
+
+Docker Desktop selbst bleibt dabei installiert. Nach einer vollstaendigen Entfernung ist ein
+erneutes Setup jederzeit ueber den `irm ... | iex`-Befehl aus dem Abschnitt **Setup** moeglich; die
+Modelle werden dann wieder heruntergeladen (einmalig ~1,3 GB).
+
 ## Status
 
 ```powershell
