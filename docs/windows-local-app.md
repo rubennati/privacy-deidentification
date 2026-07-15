@@ -22,6 +22,21 @@ irm https://raw.githubusercontent.com/rubennati/privacy-deidentification/main/sc
 Der Installer verwendet immer den freigegebenen Stand auf `main`. Ein erneuter Lauf aktualisiert
 eine bestehende, unveraenderte Installation und startet die App erneut.
 
+### Skriptausfuehrung
+
+Windows blockiert das Ausfuehren lokaler Skripte standardmaessig (`ExecutionPolicy Restricted`). Der
+Installer setzt die Richtlinie fuer den aktuellen Benutzer einmalig auf `RemoteSigned` (ohne
+Admin-Rechte), damit die Modell-Bereitstellung und die `deid.ps1`-Befehle laufen. Es ist also kein
+manueller Schritt noetig.
+
+Ist die Richtlinie per Firmen-Gruppenrichtlinie gesperrt, den Installer und den Launcher jeweils mit
+Bypass starten:
+
+```powershell
+powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://raw.githubusercontent.com/rubennati/privacy-deidentification/main/scripts/windows/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -File "$HOME\PrivacyDeID\deid.ps1" start
+```
+
 ## Start
 
 ```powershell
