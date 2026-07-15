@@ -1,99 +1,53 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 
-import { deleteDocument, DocumentsApiError, fetchDocuments } from "../api/documents";
-import type { DocumentSummary } from "../api/documents";
-import { fetchDocumentJobs } from "../api/workstations";
+import { DocumentsApiError } from "../api/documents";
 import { DocumentCard } from "../components/documents/DocumentCard";
 import { EmptyState } from "../components/documents/EmptyState";
 import { StatusNotice, type UploadStatus } from "../components/StatusNotice";
-import { deriveAnalysisState, type DocumentAnalysisState } from "../lib/documentListStatus";
+import {
+  useDeleteDocument,
+  useDocumentAnalysisStates,
+  useDocuments,
+} from "../hooks/useDocuments";
+
+interface Notice {
+  status: UploadStatus;
+  message: string;
+  correlationId: string | null;
+}
+
+function errorNotice(error: unknown, fallback: string): Notice {
+  return {
+    status: "error",
+    message: error instanceof DocumentsApiError ? error.message : fallback,
+    correlationId: error instanceof DocumentsApiError ? error.correlationId : null,
+  };
+}
 
 export default function DocumentsPage() {
-  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  // Metadata-only analysis state per document id; a document missing here stays without a badge
-  // (its jobs request failed) instead of guessing.
-  const [analysisById, setAnalysisById] = useState<Record<string, DocumentAnalysisState>>({});
-  const [notice, setNotice] = useState<{
-    status: UploadStatus;
-    message: string;
-    correlationId: string | null;
-  }>({ status: "idle", message: "", correlationId: null });
+  const documentsQuery = useDocuments();
+  const documents = documentsQuery.data ?? [];
+  const analysisById = useDocumentAnalysisStates(documents);
+  const deleteMutation = useDeleteDocument();
+  // Transient toast for a delete outcome; the list/loading/error come from the query itself.
+  const [deleteNotice, setDeleteNotice] = useState<Notice>({
+    status: "idle",
+    message: "",
+    correlationId: null,
+  });
 
-  const loadAnalysisStates = useCallback(async (docs: readonly DocumentSummary[]) => {
-    const entries = await Promise.all(
-      docs.map(async (document) => {
-        try {
-          return [document.id, deriveAnalysisState(await fetchDocumentJobs(document.id))] as const;
-        } catch {
-          return null;
-        }
-      }),
-    );
-    setAnalysisById(
-      Object.fromEntries(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)),
-    );
-  }, []);
+  const handleDelete = (id: string) => {
+    deleteMutation.mutate(id, {
+      onSuccess: () =>
+        setDeleteNotice({ status: "success", message: "Dokument wurde gelöscht.", correlationId: null }),
+      onError: (error) => setDeleteNotice(errorNotice(error, "Dokument konnte nicht gelöscht werden.")),
+    });
+  };
 
-  const loadDocuments = useCallback(async () => {
-    try {
-      const loaded = await fetchDocuments();
-      setDocuments(loaded);
-      void loadAnalysisStates(loaded);
-    } catch (error) {
-      setNotice({
-        status: "error",
-        message:
-          error instanceof DocumentsApiError
-            ? error.message
-            : "Dokumente konnten nicht geladen werden.",
-        correlationId: error instanceof DocumentsApiError ? error.correlationId : null,
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [loadAnalysisStates]);
-
-  useEffect(() => {
-    void loadDocuments();
-  }, [loadDocuments]);
-
-  // While any document is being analyzed, refresh the badges on a slow poll so "Analyse läuft"
-  // resolves without a manual reload. No polling once everything is settled.
-  useEffect(() => {
-    if (!Object.values(analysisById).includes("running")) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      void loadAnalysisStates(documents);
-    }, 8000);
-    return () => clearTimeout(timer);
-  }, [analysisById, documents, loadAnalysisStates]);
-
-  const handleDelete = useCallback(
-    async (id: string) => {
-      setPendingDeleteId(id);
-      try {
-        await deleteDocument(id);
-        setNotice({ status: "success", message: "Dokument wurde gelöscht.", correlationId: null });
-        await loadDocuments();
-      } catch (error) {
-        setNotice({
-          status: "error",
-          message:
-            error instanceof DocumentsApiError
-              ? error.message
-              : "Dokument konnte nicht gelöscht werden.",
-          correlationId: error instanceof DocumentsApiError ? error.correlationId : null,
-        });
-      } finally {
-        setPendingDeleteId(null);
-      }
-    },
-    [loadDocuments],
-  );
+  const notice: Notice = documentsQuery.isError
+    ? errorNotice(documentsQuery.error, "Dokumente konnten nicht geladen werden.")
+    : deleteNotice;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-12">
@@ -118,11 +72,11 @@ export default function DocumentsPage() {
         correlationId={notice.correlationId}
       />
 
-      {loading && documents.length === 0 && (
+      {documentsQuery.isPending && (
         <p className="mt-6 text-sm text-muted">Dokumente werden geladen …</p>
       )}
 
-      {!loading && documents.length === 0 && <EmptyState />}
+      {documentsQuery.isSuccess && documents.length === 0 && <EmptyState />}
 
       {documents.length > 0 && (
         <ul className="mt-6 flex flex-col gap-3">
@@ -134,8 +88,8 @@ export default function DocumentsPage() {
               size={document.size}
               uploadedAt={document.uploaded_at}
               analysis={analysisById[document.id]}
-              onDelete={(id) => void handleDelete(id)}
-              deleting={pendingDeleteId === document.id}
+              onDelete={(id) => handleDelete(id)}
+              deleting={deleteMutation.isPending && deleteMutation.variables === document.id}
             />
           ))}
         </ul>
