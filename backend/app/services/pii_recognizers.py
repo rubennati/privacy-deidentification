@@ -206,6 +206,14 @@ _LICENSE_PLATE_LABELS = (
 _CREDIT_CARD_LABELS = ("kreditkarte", "kartennummer", "kreditkartennummer", "creditcard")
 # Optional card-network word that can sit between the label and the number ("Kreditkarte: Visa …").
 _CARD_NETWORKS = r"(?:master\s?card|visa|amex|american express|maestro|diners|discover|jcb)"
+_TAX_ID_LABELS = (
+    "steuernummer",
+    "steuernr",
+    "steuer-nr",
+    "steuerkonto",
+    "abgabenkonto",
+    "finanzamtsnummer",
+)
 
 # Birth date/place are context-gated: only a date/place *following* an explicit birth label is
 # emitted, so a plain invoice date or a residence city never over-tags. "geb." also introduces a
@@ -333,24 +341,34 @@ INSURANCE_AT_DE_RECOGNIZER_SPECS: tuple[RecognizerSpec, ...] = (
     RecognizerSpec(
         name="AustrianTaxIdRecognizer",
         entity_type="TAX_ID_AT",
+        # Labelled-value (not just immediate-adjacency) so the number is still found after a short
+        # qualifier before the colon ("Steuernummer (privat):") and on the next line, and after the
+        # common abbreviation "Steuernr.". The last group allows 4-5 digits (some forms carry an
+        # extra check digit). The value shape stays strict; the label gate keeps precision.
         patterns=(
-            *_contextual_patterns(
+            *_labeled_value_patterns(
                 "austrian_tax_id_separated",
-                r"(?<!\d)\d{2,3}[ /-]\d{3,4}[ /-]\d{4}(?!\d)",
-                ("steuernummer", "steuerkonto", "abgabenkonto", "finanzamtsnummer"),
+                r"\d{2,3}[ /-]\d{3,4}[ /-]\d{4,5}(?!\d)",
+                _TAX_ID_LABELS,
+            ),
+            *_labeled_value_patterns(
+                "austrian_tax_id_compact",
+                r"\d{9,10}(?!\d)",
+                _TAX_ID_LABELS,
+            ),
+            # Also the label-adjacent form with no colon ("Steuerkonto 123456789").
+            *_contextual_patterns(
+                "austrian_tax_id_separated_adjacent",
+                r"(?<!\d)\d{2,3}[ /-]\d{3,4}[ /-]\d{4,5}(?!\d)",
+                _TAX_ID_LABELS,
             ),
             *_contextual_patterns(
-                "austrian_tax_id_compact",
-                r"(?<!\d)\d{9}(?!\d)",
-                ("steuernummer", "steuerkonto", "abgabenkonto", "finanzamtsnummer"),
+                "austrian_tax_id_compact_adjacent",
+                r"(?<!\d)\d{9,10}(?!\d)",
+                _TAX_ID_LABELS,
             ),
         ),
-        context=(
-            "steuernummer",
-            "steuerkonto",
-            "abgabenkonto",
-            "finanzamtsnummer",
-        ),
+        context=_TAX_ID_LABELS,
     ),
     RecognizerSpec(
         name="AtDeBicRecognizer",
