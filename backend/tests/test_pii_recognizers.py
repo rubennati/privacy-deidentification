@@ -9,7 +9,11 @@ from __future__ import annotations
 import pytest
 import regex as re
 
-from app.services.pii_profiles import ADDRESS_CONTACT_TYPES, DOMAIN_SENSITIVE_TYPES
+from app.services.pii_profiles import (
+    ADDRESS_CONTACT_TYPES,
+    BIRTH_TYPES,
+    DOMAIN_SENSITIVE_TYPES,
+)
 from app.services.pii_recognizers import (
     INSURANCE_AT_DE_RECOGNIZER_SPECS,
     PatternSpec,
@@ -309,6 +313,7 @@ def test_every_profile_domain_type_has_a_registered_recognizer() -> None:
 
     assert set(DOMAIN_SENSITIVE_TYPES).issubset(registered_types)
     assert set(ADDRESS_CONTACT_TYPES).issubset(registered_types)
+    assert set(BIRTH_TYPES).issubset(registered_types)
 
 
 def test_labelled_line_types_never_match_without_an_adjacent_label() -> None:
@@ -383,3 +388,57 @@ def test_labelled_id_capture_excludes_the_label() -> None:
 )
 def test_next_line_value_without_its_label_does_not_match(entity_type: str, text: str) -> None:
     assert _matching_patterns(entity_type, text) == []
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "text"),
+    [
+        ("BIRTH_DATE", "geboren am 12.03.1985"),
+        ("BIRTH_DATE", "Geburtsdatum: 01.01.1970"),
+        ("BIRTH_DATE", "geb. 15.06.1992"),
+        ("BIRTH_DATE", "geb. am 7. 9. 1963"),
+        ("BIRTH_DATE", "Geburtsdatum:\n03.04.1988"),
+        ("BIRTH_PLACE", "geboren in Wien"),
+        ("BIRTH_PLACE", "Geburtsort: Salzburg"),
+        ("BIRTH_PLACE", "geb. in Graz"),
+        ("BIRTH_PLACE", "geboren in Bad Ischl"),
+        ("BIRTH_PLACE", "Geburtsort:\nInnsbruck"),
+    ],
+)
+def test_birth_context_values_match(entity_type: str, text: str) -> None:
+    # Birth date/place are emitted only after an explicit birth label. Synthetic examples only.
+    assert _matching_patterns(entity_type, text), text
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "text"),
+    [
+        # A plain date without birth context stays DATE_TIME, never BIRTH_DATE.
+        ("BIRTH_DATE", "Rechnungsdatum: 12.03.2024"),
+        ("BIRTH_DATE", "12.03.2024"),
+        # "geb." introducing a maiden name is not a birth date (the value is not a date).
+        ("BIRTH_DATE", "Maria Müller geb. Schmidt"),
+        # A city under a non-birth label, or a lowercased word, is not a BIRTH_PLACE.
+        ("BIRTH_PLACE", "wohnhaft in Wien"),
+        ("BIRTH_PLACE", "Lieferort: Salzburg"),
+        ("BIRTH_PLACE", "geboren in wien"),
+    ],
+)
+def test_birth_recognizers_do_not_over_match(entity_type: str, text: str) -> None:
+    assert _matching_patterns(entity_type, text) == []
+
+
+def test_birth_capture_excludes_the_label_and_line_break() -> None:
+    for text, entity_type, expected in (
+        ("Geburtsdatum:\n03.04.1988", "BIRTH_DATE", "03.04.1988"),
+        ("Geburtsort:\nInnsbruck", "BIRTH_PLACE", "Innsbruck"),
+    ):
+        matches = [
+            match
+            for pattern in _SPECS_BY_TYPE[entity_type].patterns
+            for match in [re.search(pattern.regex, text)]
+            if match
+        ]
+        assert any(match.group(0) == expected for match in matches), text
+        for match in matches:
+            assert "\n" not in match.group(0)

@@ -61,6 +61,14 @@ ADDRESS_CONTACT_TYPES: tuple[str, ...] = (
     "CUSTOMER_LINE",
 )
 
+# Context-gated birth date/place: deterministic pattern recognizers that only fire on a date/place
+# following an explicit birth label ("geboren am", "Geburtsort:"), so a plain invoice date or a
+# residence city never over-tags. See docs/adr/0044-pii-birth-date-place-recognizers.md.
+BIRTH_TYPES: tuple[str, ...] = (
+    "BIRTH_DATE",
+    "BIRTH_PLACE",
+)
+
 # LOCATION is deliberately NOT in any named profile. A bare city/location over-tags heavily
 # (0 true positives / many false positives on the benchmark); residence location is already
 # captured by ADDRESS and birthplace by a context-gated BIRTH_PLACE recognizer. It stays a known,
@@ -86,11 +94,17 @@ PII_PROFILES: dict[PiiProfileName, PiiProfile] = {
     "structured-only": PiiProfile("structured-only", STRUCTURED_TYPES),
     "insurance-at-de": PiiProfile(
         "insurance-at-de",
-        (*STRUCTURED_TYPES, *DOMAIN_SENSITIVE_TYPES, *ADDRESS_CONTACT_TYPES),
+        (*STRUCTURED_TYPES, *DOMAIN_SENSITIVE_TYPES, *ADDRESS_CONTACT_TYPES, *BIRTH_TYPES),
     ),
     "broad-review": PiiProfile(
         "broad-review",
-        (*STRUCTURED_TYPES, *DOMAIN_SENSITIVE_TYPES, *ADDRESS_CONTACT_TYPES, *NER_TYPES),
+        (
+            *STRUCTURED_TYPES,
+            *DOMAIN_SENSITIVE_TYPES,
+            *ADDRESS_CONTACT_TYPES,
+            *NER_TYPES,
+            *BIRTH_TYPES,
+        ),
     ),
     "review-heavy": PiiProfile(
         "review-heavy",
@@ -100,6 +114,7 @@ PII_PROFILES: dict[PiiProfileName, PiiProfile] = {
             *ADDRESS_CONTACT_TYPES,
             *NER_TYPES,
             *LOWER_CONFIDENCE_NER_TYPES,
+            *BIRTH_TYPES,
         ),
     ),
 }
