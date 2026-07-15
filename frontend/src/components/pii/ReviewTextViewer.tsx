@@ -2,12 +2,14 @@ import type { PiiManualAddition } from "../../api/piiReview";
 import { buildManualAdditionHighlights, type AnchorBoundPiiHighlightModel } from "../../lib/piiHighlights";
 import { PiiTextViewer } from "./PiiTextViewer";
 
-export type ReviewTextMode = "reading" | "raw" | "layout";
+// Layout-Text is deactivated from the review UI (see roadmap): the raw and canonical reading views
+// cover the first-draft need, and dropping it removes a whole class of projection edge cases. The
+// backend still produces layout data; it is simply no longer surfaced here.
+export type ReviewTextMode = "reading" | "raw";
 
 interface ReviewTextViewerProps {
   rawText: string;
   readingText?: string | null;
-  layoutText?: string | null;
   highlightModel: AnchorBoundPiiHighlightModel;
   mode: ReviewTextMode;
   onModeChange: (mode: ReviewTextMode) => void;
@@ -30,7 +32,6 @@ const MODE_BUTTON_BASE = "rounded-md px-3 py-1.5 text-xs font-medium transition-
 export function ReviewTextViewer({
   rawText,
   readingText,
-  layoutText,
   highlightModel,
   mode,
   onModeChange,
@@ -41,20 +42,14 @@ export function ReviewTextViewer({
   onTextSelected,
 }: ReviewTextViewerProps) {
   const hasReadingText = readingText != null;
-  const hasLayoutText = layoutText != null;
   const activeMode: ReviewTextMode =
-    mode === "layout" && hasLayoutText
-      ? "layout"
-      : mode === "reading" && hasReadingText
-        ? "reading"
-        : "raw";
+    mode === "reading" && hasReadingText ? "reading" : "raw";
   const manualAdditionHighlights = buildManualAdditionHighlights(manualAdditions);
   const rawHighlights = [...highlightModel.byView.technical_raw_text, ...manualAdditionHighlights.raw];
   const readingHighlights = [
     ...highlightModel.byView.canonical_reading_text,
     ...manualAdditionHighlights.canonical,
   ];
-  const layoutHighlights = highlightModel.byView.layout_text;
   const hasMissingCanonicalMapping =
     highlightModel.summary.missing_canonical_count > 0 ||
     highlightModel.summary.partial_canonical_count > 0 ||
@@ -64,7 +59,6 @@ export function ReviewTextViewer({
     highlightModel.summary.partial_binding_count > 0 ||
     highlightModel.summary.ambiguous_binding_count > 0;
   const hasEvidenceOnlyFallback = highlightModel.summary.evidence_only_count > 0;
-  const hasMissingLayoutRanges = highlightModel.summary.missing_layout_count > 0;
 
   return (
     <section className="min-w-0" aria-labelledby="text-viewer-heading">
@@ -105,21 +99,6 @@ export function ReviewTextViewer({
             >
               {devMode ? "Technischer Rohtext" : "Technische Ansicht"}
             </button>
-            {devMode && (
-              <button
-                type="button"
-                onClick={() => onModeChange("layout")}
-                aria-pressed={activeMode === "layout"}
-                disabled={!hasLayoutText}
-                className={`${MODE_BUTTON_BASE} ${
-                  activeMode === "layout"
-                    ? "bg-card text-ink shadow-sm"
-                    : "text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
-                }`}
-              >
-                Layout-Text
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -127,13 +106,10 @@ export function ReviewTextViewer({
       {/* Diagnostic hints about anchor binding, contract ranges, and view semantics are developer
           material: in user view a single plain-language sentence covers the one case that changes
           what the reader sees (a highlight only visible in the technical view). */}
-      {devMode && activeMode !== "raw" && (
+      {devMode && activeMode === "reading" && (
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent-dark">
-          {activeMode === "reading"
-            ? "Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen kommen aus dem anchor-gebundenen Entity-Vertrag."
-            : layoutHighlights.length > 0
-              ? "Der Layout-Text dient der Orientierung. Markierungen erscheinen nur, wenn der Entity-Vertrag Layout-Ranges liefert."
-              : "Der Layout-Text dient der Orientierung. Für diese Entities liefert der Vertrag keine Layout-Ranges."}
+          Der Lesetext ist die lesefreundliche Hauptansicht. Markierungen kommen aus dem
+          anchor-gebundenen Entity-Vertrag.
         </p>
       )}
       {!devMode && activeMode === "reading" && hasMissingCanonicalMapping && (
@@ -146,12 +122,6 @@ export function ReviewTextViewer({
         <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
           Kanonische Ranges fehlen, sind teilweise oder mehrdeutig. Fehlende Lesetext-Markierungen
           werden hier nicht geraten.
-        </p>
-      )}
-      {devMode && activeMode === "layout" && hasMissingLayoutRanges && (
-        <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-xs text-ink">
-          Layout-Ranges fehlen oder sind nicht verfügbar. Der Vertrag liefert nur markierbare
-          Layout-Ranges, wenn die Anchor-Zuordnung sicher ist.
         </p>
       )}
       {devMode && hasMissingAnchorBinding && (
@@ -177,24 +147,7 @@ export function ReviewTextViewer({
           its own scrollbar, a cut-off sheet). Jump-to-entity scrolls the page itself. */}
       <div className="mt-3">
         <div className="mx-auto max-w-[210mm] rounded-md border border-card-border bg-card px-6 py-8 shadow-[0_1px_3px_rgba(17,24,39,0.08),0_16px_40px_rgba(17,24,39,0.10)] sm:px-10 sm:py-12">
-          {activeMode === "layout" ? (
-            layoutText ? (
-              layoutHighlights.length > 0 ? (
-                <PiiTextViewer
-                  text={layoutText}
-                  highlights={layoutHighlights}
-                  showEntityMeta={showEntityMeta}
-                  onSelectEntity={onSelectEntity}
-                />
-              ) : (
-                <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-ink">
-                  {layoutText}
-                </pre>
-              )
-            ) : (
-              <p className="text-sm text-muted">Der Layout-Text ist leer.</p>
-            )
-          ) : activeMode === "reading" ? (
+          {activeMode === "reading" ? (
             readingText ? (
               <PiiTextViewer
                 text={readingText}
