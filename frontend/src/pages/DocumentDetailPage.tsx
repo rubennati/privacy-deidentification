@@ -416,6 +416,14 @@ export default function DocumentDetailPage() {
   const reviewInteractive = piiStatus === "current";
   const showSecondColumn = isDevView;
 
+  // The detected value shown in the decision popover, whitespace-normalized so a line-wrapped span
+  // reads on one line. A detector occurrence reads the raw text at its own raw span (the
+  // authoritative detection); a manual addition reads the reader-selected span from the reading text.
+  const rawTextValue = text?.content.text ?? "";
+  const readingTextValue = text?.content.reading_text ?? "";
+  const sliceValue = (source: string, start: number, end: number): string =>
+    Array.from(source).slice(start, end).join("").replace(/\s+/g, " ").trim();
+
   // Resolve the clicked highlight against the *current* review result: a manual addition decides
   // itself; an occurrence with an individual override decides that occurrence; everything else
   // decides its whole entity group (same value everywhere in the document).
@@ -434,6 +442,7 @@ export default function DocumentDetailPage() {
         scope: "manual_addition",
         targetId: addition.addition_id,
         entityType: addition.entity_type,
+        text: sliceValue(readingTextValue, addition.canonical_start, addition.canonical_end),
         occurrenceCount: 1,
         reviewStatus: addition.review_status,
         currentDecision: addition.review_decision ?? "pseudonymize",
@@ -450,6 +459,7 @@ export default function DocumentDetailPage() {
         scope: "occurrence",
         targetId: occurrence.occurrence_id,
         entityType: occurrence.entity_type,
+        text: sliceValue(rawTextValue, occurrence.raw_start, occurrence.raw_end),
         occurrenceCount: 1,
         reviewStatus: occurrence.review_status,
         currentDecision: occurrence.review_decision ?? "pseudonymize",
@@ -465,6 +475,7 @@ export default function DocumentDetailPage() {
       scope: "entity_group",
       targetId: group.entity_group_id,
       entityType: group.entity_type,
+      text: sliceValue(rawTextValue, occurrence.raw_start, occurrence.raw_end),
       occurrenceCount: group.occurrence_count,
       reviewStatus: group.review_status,
       currentDecision: group.review_decision ?? "pseudonymize",

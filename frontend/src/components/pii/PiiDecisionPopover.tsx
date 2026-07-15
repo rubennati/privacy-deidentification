@@ -19,6 +19,9 @@ export interface PiiDecisionTarget {
   scope: PiiReviewDecisionScope;
   targetId: string;
   entityType: string;
+  /** The detected text itself (whitespace-normalized), so the reviewer can see exactly what was
+   *  marked before deciding — the one thing needed to judge whether the detection is right. */
+  text: string;
   occurrenceCount: number;
   reviewStatus: PiiReviewStatus;
   currentDecision: PiiReviewDecisionValue;
@@ -199,6 +202,12 @@ export function PiiDecisionPopover({
           ×
         </button>
       </div>
+
+      {target.text && (
+        <p className="mt-2 max-h-24 overflow-y-auto break-words rounded-md bg-dropzone px-2 py-1 text-sm text-ink">
+          „{target.text}"
+        </p>
+      )}
 
       <p className="mt-2">
         <span
