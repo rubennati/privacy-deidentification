@@ -36,8 +36,8 @@ separately under `./volumes/document-store`. All host storage lives under a sing
 (default `./volumes`).
 
 > **Scope:** This version provides upload/document management, structural Audit v1, worker-based
-> OCR/Text, detection-only PII (default local GLiNER NER) with an anchor-bound review entity
-> contract, and a manual review workflow — grouped per-entity decisions (pseudonymize / keep / false
+> OCR/Text, detection-only PII (default local GLiNER NER) projected precisely onto a clean reading
+> text, and a manual review workflow — grouped per-entity decisions (pseudonymize / keep / false
 > positive) plus manual add of missed entities, recorded in an immutable review result.
 > Pseudonymization, redaction, and export remain separate later steps.
 
@@ -62,6 +62,23 @@ Redaction **L0**.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+  Browser -->|"http :8080"| frontend["frontend<br/>nginx + React SPA"]
+  frontend -->|"/api/*"| api
+  subgraph isolated["internal network · no internet egress"]
+    api["api<br/>FastAPI · runs PII"]
+    worker["ocr-worker<br/>OCR, one job at a time"]
+  end
+  api <-->|"enqueue / read"| jobs[("jobs.sqlite3")]
+  worker -->|"claim OCR jobs"| jobs
+  api --> store[("document-store<br/>artifacts + review")]
+  worker --> store
+  api --> uploads[("uploads<br/>original bytes")]
+```
+
+<details><summary>Text diagram + storage layout</summary>
+
 ```text
 Browser ──http://localhost:8080──▶ frontend (nginx)
                                      ├─ /       → React/Vite SPA
@@ -80,6 +97,8 @@ Shared local storage (under DATA_ROOT, default ./volumes):
   ./volumes/ocr-models      local PaddleOCR models, mounted read-only
 ```
 
+</details>
+
 * **frontend** — React 18 + Vite + TypeScript + Tailwind, served by nginx. The frontend is the only public entry point and proxies API calls to the API.
 * **api** — Python 3.12 + FastAPI. Validates uploads, stores originals, enqueues OCR jobs, exposes safe job status, runs PII synchronously, and manages immutable result artifacts.
 * **ocr-worker** — the isolated OCR process. It claims pending OCR jobs from SQLite and writes the same immutable `text_result` artifacts the API used to create in-process.
@@ -87,6 +106,31 @@ Shared local storage (under DATA_ROOT, default ./volumes):
 * **runtime data** — a single host `DATA_ROOT` (default `./volumes`) is mapped onto stable internal container paths: `${DATA_ROOT}/uploads` → `/data/uploads` (originals only), `${DATA_ROOT}/document-store` → `/data/document-store` (metadata, artifacts, review/feedback sidecars), and `${DATA_ROOT}/job-state` → `/data/job-state` (the SQLite job DB `jobs.sqlite3`). The API and OCR worker share these exact mounts, so job state and artifacts never split. Nothing under `DATA_ROOT` is committed (see `.gitignore`).
 
 See [`docs/adr/0001-stack-and-architecture.md`](docs/adr/0001-stack-and-architecture.md) for the stack decision and rationale.
+
+## Status & roadmap
+
+**Working today (fully local, offline):**
+
+- Upload & document management; structural audit of the original.
+- OCR/Text extraction with a clean, human-readable reading text.
+- PII detection — local GLiNER for names/organisations plus deterministic patterns for structured
+  identifiers (IBAN, e-mail, phone, UID, tax number, …) — with precise per-entity highlights.
+- Manual review: per-entity decisions (pseudonymize / keep / not PII) and manual add of a missed
+  entity, recorded in an immutable review result.
+
+**Detection quality** (synthetic benchmark, indicative): ~90 % recall at ~85 % precision; structured
+identifiers near 100 %. The design deliberately favours **recall** — catching PII matters most, and
+an over-mark is corrected with one click in review.
+
+**Next on the roadmap:**
+
+- Pseudonymization / redaction and export (copy / PDF), replacing each value across all occurrences.
+- Detection tuning toward 95 % (organisation & date recall; optional reference-list gazetteers as a
+  soft, human-in-the-loop signal for the long tail).
+- Optional: split PII into its own worker (like OCR) as the pipeline grows.
+
+For the detailed capability model, metrics, and target architecture see
+[`docs/engine/`](docs/engine/README.md).
 
 ## Requirements
 
@@ -116,6 +160,28 @@ make up                     # start frontend + api + ocr-worker → http://127.0
 
 `make help` lists everything. Start/stop never build, so the daily loop is fast; only `update` /
 `rebuild` build.
+
+Prefer plain Docker Compose (no `make`)? The targets map 1:1 — run `make runtime-dirs` once to
+create the `./volumes` folders, then:
+
+```bash
+docker compose up -d                            # = make up
+docker compose build && docker compose up -d    # = make update
+```
+
+### Update to the latest version
+
+This works from **any** previous state (even weeks behind) and preserves your data:
+
+```bash
+git checkout main && git pull   # get the newest curated state
+make models                     # only if new models are needed — safe/idempotent to re-run
+make update                     # rebuild the changed layers and restart
+```
+
+`make update` rebuilds only what changed; if an update ever looks inconsistent, `make rebuild`
+forces a clean full rebuild. Uploaded documents, artifacts, and job state under `./volumes` are
+kept across updates. On **Windows**, run `& "$HOME\PrivacyDeID\deid.ps1" update` — it does the same.
 
 ### Developer vs production-local
 
@@ -484,10 +550,11 @@ artifact lineage visible, marks stale downstream results, and only overlays PII 
 artifact matches the displayed text. PII highlighting uses Unicode codepoint offsets and renders
 plain React text nodes—no HTML injection or source-text logging.
 
-The default User View shows **Kanonischer Lesetext** when a new OCR/Text artifact provides it.
-Dev View keeps separate **Technischer Rohtext**, **Kanonischer Lesetext**, and **Layout-Text** modes.
-Current PII detection and highlights still use the byte-stable technical raw text; reading text is a
-future input candidate only after a tested lineage map exists.
+The default User View shows the **Kanonischer Lesetext** (clean, human-readable reading text) with
+precise per-entity highlights; a **Technischer Rohtext** view shows the raw OCR text. PII is detected
+on the byte-stable raw text — so every occurrence is caught for later redaction — and projected onto
+the reading text with exact per-entity offsets: a reading-view highlight is either exactly right or
+shown only in the technical view (never a whole paragraph).
 
 With `ENABLE_DEV_ENGINE_SETTINGS=true`, the detail page also exposes one-run PII profile selection
 and per-entity feedback. Feedback is restored from the local side-channel described above; it does
