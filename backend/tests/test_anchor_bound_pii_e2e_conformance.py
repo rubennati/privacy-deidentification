@@ -188,7 +188,9 @@ def _save_e2e(
     )
 
     projected = _sorted_entities(
-        project_pii_entities_to_reading_text(entities, reading_map, reading_text=reading)
+        project_pii_entities_to_reading_text(
+            entities, reading_map, reading_text=reading, raw_text=raw
+        )
     )
     counts: dict[str, int] = {}
     for entity in projected:
@@ -326,16 +328,16 @@ def test_every_reordered_entity_highlights_in_both_views(
 # --- 3. A missing canonical range only for a specific structural reason ---------------------------
 
 
-def test_missing_canonical_range_only_for_a_structural_reason(
+def test_repeated_value_maps_each_occurrence_by_order(
     client: TestClient, settings: Settings
 ) -> None:
-    """A value that genuinely repeats in both views (header + footer) cannot be uniquely located in
-    the reading view, so its canonical range is missing *with* a repeated-token reason code — while
-    a non-repeated value in the same document still propagates cleanly. Missing is never silent."""
+    """A value that repeats (header + footer) is placed per occurrence by order: the k-th raw match
+    maps to the k-th reading match. Any matched span is a valid occurrence of the same value, so
+    both are highlighted (the review decision is per group and redaction is per value). A
+    non-repeated value in the same document still propagates cleanly."""
     document_id = _upload_document(client)
     # Reordered views (raw != reading, so there is no trivial offset-preserving 1:1 map) with the
-    # company name repeated (header + footer). The repeat cannot be uniquely located in the reading
-    # view without positional evidence, so its canonical range is structurally ambiguous.
+    # company name repeated (header + footer).
     raw = (
         "Muster Handels GmbH\n"
         "office@muster.at\n"
@@ -358,13 +360,11 @@ def test_missing_canonical_range_only_for_a_structural_reason(
     assert len(org_entities) == 2  # never dropped
 
     for org in org_entities:
-        assert org["display"]["canonical_highlight_range"] is None
-        assert "canonical_range_missing" in org["binding_reasons"]
-        # The structural reason is explicit: the repeated token could not be uniquely mapped.
-        assert "repeated_token_ambiguity" in org["binding_reasons"]
-        assert org["mapping_status"] in ("missing", "ambiguous")
+        canonical = org["display"]["canonical_highlight_range"]
+        assert canonical is not None
+        assert reading[canonical["start"] : canonical["end"]] == "Muster Handels GmbH"
 
-    # The non-repeated email in the same document still propagates — the repeat does not poison it.
+    # The non-repeated email in the same document still propagates.
     email = _by_value(body, "office@muster.at")
     assert email["display"]["canonical_highlight_range"] is not None
     assert "canonical_range_missing" not in email["binding_reasons"]
@@ -424,7 +424,9 @@ def test_layout_range_propagates_when_layout_view_is_available(
         ),
     )
     projected = _sorted_entities(
-        project_pii_entities_to_reading_text(entities, reading_map, reading_text=reading)
+        project_pii_entities_to_reading_text(
+            entities, reading_map, reading_text=reading, raw_text=raw
+        )
     )
     save_pii_artifact(
         settings,
@@ -598,7 +600,9 @@ def _save_with_geometry_projection(
         ),
     )
     projected = _sorted_entities(
-        project_pii_entities_to_reading_text(entities, reading_map, reading_text=reading)
+        project_pii_entities_to_reading_text(
+            entities, reading_map, reading_text=reading, raw_text=raw
+        )
     )
     counts: dict[str, int] = {}
     for entity in projected:
@@ -752,23 +756,27 @@ def test_trailing_newline_and_repeated_interior_token_still_highlight_in_both_vi
     org_again = _by_value(body_again, "Sanierungsbau Perchtoldsdorf GmbH\n")
     assert org_again["entity_id"] == org["entity_id"]
 
-    # A standalone occurrence of the same repeated word, with no unique boundary of its own to
-    # bridge from, correctly keeps no canonical range -- the repeat is never silently resolved.
+    # The standalone occurrence of the repeated word maps to *its* reading occurrence by order (one
+    # preceding match — the one inside the company name — so it resolves to the standalone one).
     location = _by_value(body, "Perchtoldsdorf")
     assert location["binding_status"] == "exact"
-    assert location["display"]["canonical_highlight_range"] is None
-    assert "repeated_token_ambiguity" in location["binding_reasons"]
+    loc_canonical = location["display"]["canonical_highlight_range"]
+    assert loc_canonical is not None
+    assert _TRAILING_READING[loc_canonical["start"] : loc_canonical["end"]] == "Perchtoldsdorf"
 
-    # 7: a genuinely duplicated company name (identical value, twice) has no unique boundary
-    # anchors either, so both occurrences correctly stay without a canonical range -- never
-    # guessed by textual order.
+    # 7: a genuinely duplicated company name (identical value, twice) is placed per occurrence by
+    # order -- each matched span is a valid occurrence of the same value, so both are highlighted.
     duplicates = [
         entity for entity in body["entities"] if entity["value"] == "Sicherheitsdienst Wien KG"
     ]
     assert len(duplicates) == 2
     for duplicate in duplicates:
-        assert duplicate["display"]["canonical_highlight_range"] is None
-        assert "canonical_range_missing" in duplicate["binding_reasons"]
+        dup_canonical = duplicate["display"]["canonical_highlight_range"]
+        assert dup_canonical is not None
+        assert (
+            _TRAILING_READING[dup_canonical["start"] : dup_canonical["end"]]
+            == "Sicherheitsdienst Wien KG"
+        )
 
     # 8: ordinary entities elsewhere in the same document remain unaffected.
     for value in ("office@sanierungsbau-p.at", "+43 1 5551234"):
@@ -877,6 +885,9 @@ def _save_with_row_construction_lineage(
                 # row-construction lineage is available to the anchor graph in this fixture.
             ),
         ),
+    )
+    entities = project_pii_entities_to_reading_text(
+        entities, [], reading_text=reading.text, raw_text=raw
     )
     counts: dict[str, int] = {}
     for entity in entities:
@@ -1056,6 +1067,9 @@ def _save_with_normalized_row_lineage(
                 reading_text_row_lineage_map=row_lineage_map,
             ),
         ),
+    )
+    entities = project_pii_entities_to_reading_text(
+        entities, [], reading_text=reading.text, raw_text=raw
     )
     counts: dict[str, int] = {}
     for entity in entities:

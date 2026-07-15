@@ -37,6 +37,10 @@ from app.schemas import (
     TextContent,
 )
 from app.services.pii_overlap import resolve_pii_overlaps
+from app.services.reading_text_projection import (
+    build_reading_text_map,
+    project_pii_entities_to_reading_text,
+)
 
 _CONTRACT_URL = "/api/documents/{document_id}/pii/entity-contract"
 
@@ -199,6 +203,14 @@ def _save_pii_over_text(
         layout_text=layout_text,
         map_reading=map_reading,
     )
+    # Populate per-entity reading offsets the way a real PII run does before persisting, so the
+    # contract's canonical display range comes from the precise projection (not the retired anchor
+    # envelope). When there is no reading text, entities stay unprojected (raw-only), as in reality.
+    if reading_text is not None:
+        reading_map = build_reading_text_map(raw, reading_text, []) if map_reading else []
+        entities = project_pii_entities_to_reading_text(
+            entities, reading_map, reading_text=reading_text, raw_text=raw
+        )
     _save_pii(
         settings,
         document_id,
@@ -566,12 +578,14 @@ def test_missing_canonical_range_is_reason_coded_without_guessing(
     client: TestClient, settings: Settings
 ) -> None:
     document_id = _upload_document(client)
+    # The reading text does not contain the entity's value at all, so neither the offset map nor the
+    # per-entity text-match fallback can place it — the honest "no canonical range" case.
     _save_pii_over_text(
         settings,
         document_id,
         "Wien Graz",
         [_entity("LOCATION", "Wien", 0)],
-        reading_text="Wien Graz",
+        reading_text="Graz Salzburg",
         map_reading=False,
     )
 

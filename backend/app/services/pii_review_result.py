@@ -39,7 +39,6 @@ from app.services.document_text_anchors import build_document_text_anchor_graph
 from app.services.document_text_package import build_document_text_package
 from app.services.pii_anchor_binding import bind_pii_entities_to_anchors
 from app.services.pii_entity_display import (
-    anchor_display_range,
     classify_mapping_status,
     identity_reason_codes,
 )
@@ -88,16 +87,7 @@ def build_detected_entries(
         entity = entity_by_id[occurrence.occurrence_id]
         bound = bound_by_occurrence[occurrence.occurrence_id]
 
-        anchor_canonical = anchor_display_range(bound, "canonical_reading_text")
-        anchor_canonical_range = anchor_canonical[0] if anchor_canonical is not None else None
-        anchor_canonical_exact = anchor_canonical[1] if anchor_canonical is not None else True
-        mapping_status = classify_mapping_status(
-            entity,
-            canonical_available,
-            reading_text,
-            anchor_canonical_range=anchor_canonical_range,
-            anchor_canonical_exact=anchor_canonical_exact,
-        )
+        mapping_status = classify_mapping_status(entity, canonical_available, reading_text)
         identity_status, reason_codes, anchor_entity_id = _detected_identity(bound, mapping_status)
 
         entries.append(

@@ -42,23 +42,17 @@ def classify_mapping_status(
     entity: PiiEntity,
     canonical_available: bool,
     reading_text: str | None,
-    *,
-    anchor_canonical_range: PiiEntityDisplaySpan | None,
-    anchor_canonical_exact: bool,
 ) -> PiiEntityMappingStatus:
-    """Classify how the entity's raw span connects to the canonical reading text (display view).
+    """Classify how the entity's raw span projects onto the canonical reading text (display view).
 
-    ``not_applicable`` when the run produced no canonical text at all; otherwise a mapped
-    (``exact``/``projected``) or unmapped (``partial``/``missing``/``ambiguous``) state. An unmapped
-    entity whose exact value appears more than once in the canonical text is ``ambiguous`` (multiple
-    candidate positions), else ``missing`` — never dropped in any case. An anchor-derived range is
-    ``exact`` only when every contributing anchor's canonical range was itself byte-exact;
-    ``anchor_canonical_exact=False`` (a reformatted/merged row-lineage or geometry-projection
-    segment bridged the range) downgrades it to the honest ``projected`` state instead — never
-    claiming ``exact`` for a canonical line that does not read byte-for-byte like the raw span.
+    Uses the entity's own per-entity projection only (``reading_text_projection``): ``exact`` for a
+    byte-exact offset-map projection, ``projected`` for a unique text-match, otherwise the unmapped
+    states ``partial``/``ambiguous``/``missing`` — never dropped. ``not_applicable`` when the run
+    produced no canonical text at all. The anchor graph is deliberately NOT consulted here anymore:
+    its bridged canonical range was line/block-granular and over-marked whole paragraphs (see the
+    scan experiment 2026-07-15). Detection still runs on the faithful raw text, so a ``missing``
+    display mapping never means a missed detection — only a mark shown in the technical view.
     """
-    if anchor_canonical_range is not None:
-        return "exact" if anchor_canonical_exact else "projected"
     if not canonical_available:
         return "not_applicable"
     if entity.projection_status == "exact":
@@ -73,11 +67,13 @@ def classify_mapping_status(
 def canonical_display_range(
     entity: PiiEntity,
     mapping_status: PiiEntityMappingStatus,
-    *,
-    anchor_canonical_range: PiiEntityDisplaySpan | None,
 ) -> PiiEntityDisplaySpan | None:
-    if anchor_canonical_range is not None:
-        return anchor_canonical_range
+    """The reading-view highlight range: the entity's own precise reading offset, or ``None``.
+
+    A mark is either exactly right (the per-entity offset projection resolved) or absent (then it
+    shows in the technical raw view plus the "only visible technically" notice). The anchor-derived
+    envelope is no longer used — it spanned whole lines/blocks and could bind to the wrong block.
+    """
     if mapping_status not in ("exact", "projected"):
         return None
     if entity.reading_start_offset is None or entity.reading_end_offset is None:
