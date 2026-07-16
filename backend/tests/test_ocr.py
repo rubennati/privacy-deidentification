@@ -552,6 +552,37 @@ def test_failed_supplement_rendering_degrades_without_failing(
     assert adapter.calls == []
 
 
+def test_ocr_routed_page_with_image_is_never_double_ocred(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    adapter.outputs = ["Scan Inhalt"]
+    # No text layer at all -> the page routes to the normal full-page OCR path; the embedded
+    # image must not additionally trigger the supplement (guards against a refactor moving the
+    # supplement call out of the text-layer branch).
+    upload, _ = _upload_and_audit(
+        client,
+        "scan-only.pdf",
+        _pdf_pages_with_optional_image_bytes((None, True)),
+        "application/pdf",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    page = content["pages"][0]
+    assert page["source"] == "paddleocr"
+    assert page["ocr_used"] is True
+    assert page["ocr_supplement_status"] is None
+    assert page["ocr_supplement_char_count"] is None
+    assert "ocr_image_supplement" not in content["flags"]
+    # Exactly one render + one OCR pass for this page.
+    assert renderer.calls == [1]
+    assert len(adapter.calls) == 1
+
+
 def test_supplement_keeps_following_page_offsets_and_lineage_intact(
     client: TestClient,
     ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
