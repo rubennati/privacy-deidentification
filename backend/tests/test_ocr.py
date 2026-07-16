@@ -13,7 +13,7 @@ from docx import Document as DocxDocument
 from fastapi.testclient import TestClient
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, NumberObject
 
 from app.api.ocr import provide_ocr_adapter
 from app.config import Settings
@@ -248,6 +248,8 @@ def test_pdf_text_layer_creates_text_artifact_without_ocr(
             "text_char_count": len("Digital text"),
             "ocr_confidence": None,
             "ocr_line_confidences": [],
+            "ocr_supplement_status": None,
+            "ocr_supplement_char_count": None,
         }
     ]
     assert content["tool_versions"]["pypdf"]
@@ -365,6 +367,218 @@ def test_mixed_pdf_routes_each_page_and_preserves_order(
         path.suffix == ".json" or path.name == "current-artifacts"
         for path in artifact_directory.rglob("*")
     )
+
+
+def _pdf_pages_with_optional_image_bytes(*page_specs: tuple[str | None, bool]) -> bytes:
+    """Pages with an optional text layer and an optional significant embedded image.
+
+    The image XObject declares a scan-sized ``/Width``/``/Height``; its stream data is a stub —
+    the significant-image detector reads only the dictionary and the fake renderer never rasterizes
+    the real page, so no decodable pixels are required.
+    """
+    writer = PdfWriter()
+    for text, with_image in page_specs:
+        page = writer.add_blank_page(width=200, height=200)
+        resources = DictionaryObject()
+        if text is not None:
+            font = DictionaryObject(
+                {
+                    NameObject("/Type"): NameObject("/Font"),
+                    NameObject("/Subtype"): NameObject("/Type1"),
+                    NameObject("/BaseFont"): NameObject("/Helvetica"),
+                }
+            )
+            resources[NameObject("/Font")] = DictionaryObject(
+                {NameObject("/F1"): writer._add_object(font)}
+            )
+            stream = DecodedStreamObject()
+            stream.set_data(f"BT /F1 12 Tf 10 100 Td ({text}) Tj ET".encode())
+            page[NameObject("/Contents")] = writer._add_object(stream)
+        if with_image:
+            image = DecodedStreamObject()
+            image[NameObject("/Type")] = NameObject("/XObject")
+            image[NameObject("/Subtype")] = NameObject("/Image")
+            image[NameObject("/Width")] = NumberObject(600)
+            image[NameObject("/Height")] = NumberObject(800)
+            image[NameObject("/ColorSpace")] = NameObject("/DeviceGray")
+            image[NameObject("/BitsPerComponent")] = NumberObject(8)
+            image.set_data(b"\x00" * 16)
+            resources[NameObject("/XObject")] = DictionaryObject(
+                {NameObject("/Im0"): writer._add_object(image)}
+            )
+        page[NameObject("/Resources")] = resources
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def test_text_layer_page_with_embedded_scan_gets_ocr_supplement(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    # Full-page OCR re-reads the typed line and additionally sees the embedded scan's content.
+    adapter.outputs = ["Digital text\nIBAN AT61 1904 3002 3457 3201\nSteuernummer 12 345/6789"]
+    upload, _ = _upload_and_audit(
+        client,
+        "mixed-content.pdf",
+        _pdf_pages_with_optional_image_bytes(("Digital text", True)),
+        "application/pdf",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    page = content["pages"][0]
+    # The page keeps its text-layer identity; the supplement is additive.
+    assert page["source"] == "pdf_text_layer"
+    assert page["has_text_layer"] is True
+    assert page["ocr_used"] is False
+    assert page["ocr_confidence"] is None
+    supplement = "IBAN AT61 1904 3002 3457 3201\nSteuernummer 12 345/6789"
+    assert page["text"] == f"Digital text\n\n{supplement}"
+    assert page["text_char_count"] == len(page["text"])
+    assert page["ocr_supplement_status"] == "added"
+    assert page["ocr_supplement_char_count"] == len(supplement)
+    # Document level: source stays text-layer, the supplement is an explicit flag, and the OCR
+    # tool versions are recorded for reproducibility because OCR actually ran.
+    assert content["source"] == "pdf_text_layer"
+    assert content["text"] == page["text"]
+    assert "ocr_image_supplement" in content["flags"]
+    assert "ocr_used" not in content["flags"]
+    assert content["tool_versions"]["paddleocr"] == "test"
+    assert renderer.calls == [1]
+    assert len(adapter.calls) == 1
+    # The supplement participates in the derived reading text so review can show it.
+    assert "IBAN AT61 1904 3002 3457 3201" in content["reading_text"]
+
+
+def test_text_layer_page_without_significant_image_never_invokes_ocr(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    upload, _ = _upload_and_audit(
+        client,
+        "text-only.pdf",
+        _pdf_pages_with_optional_image_bytes(("Digital text", False)),
+        "application/pdf",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    assert content["pages"][0]["ocr_supplement_status"] is None
+    assert content["pages"][0]["ocr_supplement_char_count"] is None
+    assert content["pages"][0]["text"] == "Digital text"
+    assert "ocr_image_supplement" not in content["flags"]
+    assert adapter.calls == []
+    assert renderer.calls == []
+
+
+def test_fully_duplicated_supplement_records_empty_and_keeps_text(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    # OCR sees only the typed text (image without readable content): nothing new to add.
+    adapter.outputs = ["Digital  TEXT"]
+    upload, _ = _upload_and_audit(
+        client,
+        "photo-only.pdf",
+        _pdf_pages_with_optional_image_bytes(("Digital text", True)),
+        "application/pdf",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    page = content["pages"][0]
+    assert page["text"] == "Digital text"
+    assert page["ocr_supplement_status"] == "empty"
+    assert page["ocr_supplement_char_count"] is None
+    assert "ocr_image_supplement" not in content["flags"]
+    assert renderer.calls == [1]
+
+
+def test_unavailable_ocr_runtime_degrades_supplement_without_failing(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, _renderer = ocr_fakes
+    adapter.unavailable = True
+    upload, _ = _upload_and_audit(
+        client,
+        "mixed-content.pdf",
+        _pdf_pages_with_optional_image_bytes(("Digital text", True)),
+        "application/pdf",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    # Unlike the needs-OCR route (503), the supplement degrades to the working text layer and
+    # records the honest per-page status instead of failing the document.
+    assert response.status_code == 201
+    content = response.json()["content"]
+    page = content["pages"][0]
+    assert page["text"] == "Digital text"
+    assert page["ocr_supplement_status"] == "unavailable"
+    assert "ocr_image_supplement" not in content["flags"]
+
+
+def test_failed_supplement_rendering_degrades_without_failing(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    renderer.fail = True
+    upload, _ = _upload_and_audit(
+        client,
+        "mixed-content.pdf",
+        _pdf_pages_with_optional_image_bytes(("Digital text", True)),
+        "application/pdf",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    page = content["pages"][0]
+    assert page["text"] == "Digital text"
+    assert page["ocr_supplement_status"] == "failed"
+    assert adapter.calls == []
+
+
+def test_supplement_keeps_following_page_offsets_and_lineage_intact(
+    client: TestClient,
+    ocr_fakes: tuple[FakeOcrAdapter, FakePdfRenderer],
+) -> None:
+    adapter, renderer = ocr_fakes
+    adapter.outputs = ["Erste Seite\nRechnung Nr. 4711"]
+    upload, _ = _upload_and_audit(
+        client,
+        "two-pages.pdf",
+        _pdf_pages_with_optional_image_bytes(("Erste Seite", True), ("Zweite Seite", False)),
+        "application/pdf",
+    )
+
+    response = client.post(f"/api/documents/{upload['id']}/ocr")
+
+    assert response.status_code == 201
+    content = response.json()["content"]
+    # The canonical document text joins the supplemented page and the untouched second page.
+    assert content["text"] == "Erste Seite\n\nRechnung Nr. 4711\n\nZweite Seite"
+    assert [page["ocr_supplement_status"] for page in content["pages"]] == ["added", None]
+    # The construction-lineage path still verifies byte-identically: the typed prefix keeps its
+    # extraction offsets and the reading text renders without falling apart.
+    assert content["reading_text"] is not None
+    assert "Erste Seite" in content["reading_text"]
+    assert "Zweite Seite" in content["reading_text"]
+    assert "Rechnung Nr. 4711" in content["reading_text"]
+    assert renderer.calls == [1]
 
 
 def test_docx_extracts_paragraphs_without_ocr(
