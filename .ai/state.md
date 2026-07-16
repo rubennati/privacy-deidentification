@@ -168,7 +168,13 @@ file; re-confirm the next three PRs every third PR.
 - **Landing-page promise gap analysed:** the sold "kontextbewahrende Pseudonymisierung" is unbuilt
   (Redaction L0) → decided next milestone L0→L1, Track A. See `decisions.md`.
 - Windows installer hardening: uninstall doc (#100), ExecutionPolicy fix (#101), public/private
-  auto-detect + gh-auth + coloured output (#102) — in `dev`, release to `main` pending.
+  auto-detect + gh-auth + coloured output (#102) — released to `main` (#104) with the `.ai`
+  workspace refresh (#103).
+- **Mixed-page OCR supplement:** a text-layer PDF page carrying a significant embedded image (a
+  pasted scan — Word → PDF exports) additionally gets a full-page OCR pass; the deduplicated
+  remainder is appended to the page text so PII detection sees the image's content. Failures
+  degrade to the working text layer with an honest per-page status (`ocr_supplement_status`),
+  never a 503. Detection heuristic reads XObject dictionaries only (no image decode).
 
 ## Dev maintenance
 
