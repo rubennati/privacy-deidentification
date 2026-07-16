@@ -26,6 +26,9 @@ Current open work. Delivered history is condensed in `state.md` (Milestone log) 
   flips visibility + invites the collaborator (access control, owner action). Installer already
   auto-detects public/private.
 - [ ] **PII worker split** — give PII its own worker like OCR as the pipeline grows (deferred).
+- [ ] **DOCX embedded-image OCR** — native `.docx` uploads with pasted scans: extract image parts
+  and OCR them directly (the PDF mixed-page supplement covers Word → PDF exports; native DOCX
+  extraction still reads text only).
 
 ## Later
 

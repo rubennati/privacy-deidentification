@@ -482,6 +482,14 @@ class TextPageResult(BaseModel):
     # these fields; non-OCR pages keep ``None``/an empty list.
     ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     ocr_line_confidences: list[OcrLineConfidence] = Field(default_factory=list)
+    # Mixed-page OCR supplement (additive; legacy artifacts omit both fields). A text-layer page
+    # that carries a significant embedded image (e.g. a pasted scan) additionally gets a full-page
+    # OCR pass; the deduplicated remainder is appended to ``text`` so PII detection sees the
+    # image's content. ``added`` = supplement text appended; ``empty`` = OCR found nothing new;
+    # ``unavailable``/``failed`` = the pass could not run — recorded honestly, never raised, so an
+    # optional recall improvement cannot break a previously working document.
+    ocr_supplement_status: Literal["added", "empty", "unavailable", "failed"] | None = None
+    ocr_supplement_char_count: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _validate_page_summary(self) -> TextPageResult:
@@ -497,6 +505,12 @@ class TextPageResult(BaseModel):
         line_indexes = [line.line_index for line in self.ocr_line_confidences]
         if line_indexes != sorted(set(line_indexes)):
             raise ValueError("OCR line confidence indexes must be unique and ordered")
+        if self.ocr_supplement_status is not None and self.source != "pdf_text_layer":
+            raise ValueError("only text-layer pages can carry an OCR supplement status")
+        if (self.ocr_supplement_char_count is not None) != (
+            self.ocr_supplement_status == "added"
+        ):
+            raise ValueError("OCR supplement char count must accompany exactly the added status")
         return self
 
 

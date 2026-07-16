@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Literal
 from uuid import uuid4
 
 from docx import Document as DocxDocument
@@ -38,9 +39,15 @@ from app.services.layout_text import (
     build_ocr_layout_blocks,
     build_pdf_layout_blocks,
 )
-from app.services.ocr_adapters import OcrAdapter, OcrExtractionResult, extract_ocr_result
+from app.services.ocr_adapters import (
+    OcrAdapter,
+    OcrExtractionResult,
+    OcrUnavailableError,
+    extract_ocr_result,
+)
 from app.services.ocr_quality import build_quality_evidence
 from app.services.original_artifact_service import get_verified_original
+from app.services.pdf_page_images import build_ocr_supplement, count_significant_images
 from app.services.pdf_renderer import PdfRenderer
 from app.services.pii_input_text import build_page_pii_input_text
 from app.services.quality_report_service import build_quality_report
@@ -63,6 +70,9 @@ from app.services.text_geometry import (
 )
 
 _OCR_WORKSPACE_ROOT = Path("/tmp")
+
+# Mirrors ``TextPageResult.ocr_supplement_status`` (mixed-page OCR supplement outcome).
+OcrSupplementStatus = Literal["added", "empty", "unavailable", "failed"]
 
 
 class OcrConflictError(ApiError):
@@ -204,11 +214,14 @@ def _extract_pdf(
     pii_input_entries: list[tuple[int, str | None, str]] = []
     with TemporaryDirectory(prefix="ocr-", dir=_OCR_WORKSPACE_ROOT) as temporary_directory:
         output_dir = Path(temporary_directory)
+        supplement_ocr_ran = False
         for page_number, (page, audit_page) in enumerate(
             zip(reader.pages, audit_pages, strict=True), start=1
         ):
             if audit_page.page_number != page_number:
                 raise OcrConflictError("PDF audit page list is inconsistent.")
+            supplement_status: OcrSupplementStatus | None = None
+            supplement_char_count: int | None = None
             if _page_needs_ocr(audit_page):
                 # Empty and broken/encoded text layers are routed to OCR. When OCR is required but
                 # its runtime is unavailable the adapter raises 503 — we never silently fall back
@@ -249,6 +262,24 @@ def _extract_pdf(
                 )
                 reading_rows.extend(collect_pdf_reading_rows(page, page_number, text))
                 ocr_result = None
+                # Mixed-page recall: a usable text layer can still hide a pasted scan (Word → PDF
+                # exports). When the page carries a significant embedded image, run the normal
+                # full-page OCR additionally and append only the lines the text layer does not
+                # already contain, so PII detection sees the image's content. All layers built
+                # above use the pure extraction text; their offsets stay valid as an unchanged
+                # prefix of the final page text.
+                if count_significant_images(page) > 0:
+                    text, supplement_status, supplement_char_count, ocr_ran = (
+                        _apply_ocr_supplement(
+                            text,
+                            original_path,
+                            page_number,
+                            output_dir,
+                            ocr_adapter,
+                            pdf_renderer,
+                        )
+                    )
+                    supplement_ocr_ran = supplement_ocr_ran or ocr_ran
             pages.append(
                 TextPageResult(
                     page_number=page_number,
@@ -263,6 +294,8 @@ def _extract_pdf(
                     ocr_line_confidences=(
                         _line_confidences(ocr_result) if ocr_result is not None else []
                     ),
+                    ocr_supplement_status=supplement_status,
+                    ocr_supplement_char_count=supplement_char_count,
                 )
             )
             layout_entries.append((page_number, layout_segment, text))
@@ -278,7 +311,7 @@ def _extract_pdf(
         "paddleocr" if used_ocr else "pdf_text_layer"
     )
     tool_versions = {"pypdf": version("pypdf")}
-    if used_ocr:
+    if used_ocr or supplement_ocr_ran:
         tool_versions["pdf2image"] = version("pdf2image")
         tool_versions.update(ocr_adapter.tool_versions())
     text = "\n\n".join(page.text for page in pages)
@@ -291,7 +324,14 @@ def _extract_pdf(
     )
     flags = [
         flag
-        for flag, used in (("pdf_mixed", source == "pdf_mixed"), ("ocr_used", used_ocr))
+        for flag, used in (
+            ("pdf_mixed", source == "pdf_mixed"),
+            ("ocr_used", used_ocr),
+            (
+                "ocr_image_supplement",
+                any(page.ocr_supplement_status == "added" for page in pages),
+            ),
+        )
         if used
     ]
     return _text_content(
@@ -311,6 +351,35 @@ def _extract_pdf(
         structured_content=structured_content,
         reading_rows=reading_rows,
     )
+
+
+def _apply_ocr_supplement(
+    text: str,
+    original_path: Path,
+    page_number: int,
+    output_dir: Path,
+    ocr_adapter: OcrAdapter,
+    pdf_renderer: PdfRenderer,
+) -> tuple[str, OcrSupplementStatus | None, int | None, bool]:
+    """OCR a text-layer page that carries a significant embedded image; append what's new.
+
+    Returns ``(final_text, supplement_status, supplement_char_count, ocr_ran)``. Unlike the
+    needs-OCR route (which fails with 503 when the runtime is missing), the supplement degrades
+    to the working text layer and records the honest per-page status instead of raising: an
+    additive recall improvement must not break a previously working document.
+    """
+    try:
+        image_path = pdf_renderer.render_page(original_path, page_number, output_dir)
+        supplement_result = extract_ocr_result(ocr_adapter, image_path)
+    except OcrUnavailableError:
+        return text, "unavailable", None, False
+    except Exception:
+        return text, "failed", None, False
+    supplement = build_ocr_supplement(text, supplement_result.text)
+    if not supplement:
+        return text, "empty", None, True
+    combined = f"{text}\n\n{supplement}" if text else supplement
+    return combined, "added", len(supplement), True
 
 
 _PAGE_MARKER = "----- page {page_number} -----"
